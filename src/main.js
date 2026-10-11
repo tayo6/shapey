@@ -41,6 +41,7 @@ const SHAPE_KEYS = Object.keys(SHAPE_FILES).filter((k) => k !== 'mystery');
 const DESTROY_FRAME_X = [3, 292, 585, 877, 1172, 1467];
 
 // Frames of "dust frame.png" (3 puffs, each 480 x 189) - landing dust for new shapes.
+// The whole sheet is shown 310px wide, aligned to the bottom edge of the landed shape.
 const DUST_FRAME_X = [0, 555, 1116];
 
 const randomItem = (list) => list[Math.floor(Math.random() * list.length)];
@@ -432,7 +433,7 @@ class GameScene extends Phaser.Scene {
         await this.sleep(i * step);
         this.tiles[tile.row][tile.col] = null;
         const fx = this.add.sprite(tile.x, tile.y, 'tileDestroy', 'd0').setDepth(13);
-        fx.setScale(TILE_SIZE / 249); // the plank in the fx frames is ~249px wide
+        fx.setScale(TILE_SIZE / 241); // constraint size: frame height = 90px (frame is 241px tall)
         this.removeRing(tile);
         tile.destroy();
         fx.play('tileDestroy');
@@ -495,8 +496,8 @@ class GameScene extends Phaser.Scene {
 
   // Dust cloud at the bottom edge of a tile that just landed.
   spawnDust(x, tileY) {
-    const puff = this.add.sprite(x, tileY + TILE_SIZE / 2 + 6, 'dust', 'u0').setOrigin(0.5, 1).setDepth(13);
-    puff.setScale(0.25);
+    const puff = this.add.sprite(x, tileY + TILE_SIZE / 2, 'dust', 'u0').setOrigin(0.5, 1).setDepth(13);
+    puff.setScale(310 / 1596); // constraint size: the 3-frame sheet is 310px wide (about 103 x 36 per frame)
     puff.play('dustPuff');
     puff.once('animationcomplete', () => puff.destroy());
   }
