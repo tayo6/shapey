@@ -37,6 +37,16 @@ const SHAPE_FILES = {
   x:       'x.png',
 };
 
+// Returns a new board with the same shapes in a random order (Fisher-Yates shuffle).
+function shuffleBoard(board) {
+  const flat = board.flat();
+  for (let i = flat.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [flat[i], flat[j]] = [flat[j], flat[i]];
+  }
+  return Array.from({ length: GRID_ROWS }, (_, r) => flat.slice(r * GRID_COLS, (r + 1) * GRID_COLS));
+}
+
 class GameScene extends Phaser.Scene {
   constructor() {
     super('GameScene');
@@ -61,7 +71,7 @@ class GameScene extends Phaser.Scene {
     this.load.image('btnSettings', 'ui/settings.png');
     this.load.image('btnSubmit', 'ui/submit.png');
     this.load.image('btnPolls', 'ui/polls.png');
-    this.load.image('btnChat', 'ui/chat.png');
+    this.load.image('btnInventory', 'ui/inventory.png');
 
     // shapes
     for (const [key, file] of Object.entries(SHAPE_FILES)) {
@@ -114,7 +124,7 @@ class GameScene extends Phaser.Scene {
       fontSize: size + 'px',
       color: '#ffffff',
       stroke: '#3a2412',
-      strokeThickness: Math.round(size / 9),
+      strokeThickness: Math.round(size / 4.5), // double the previous outline
     }).setOrigin(0.5).setDepth(11);
   }
 
@@ -158,7 +168,7 @@ class GameScene extends Phaser.Scene {
       ['btnSettings', 136],
       ['btnSubmit', 296],
       ['btnPolls', 449],
-      ['btnChat', 602],
+      ['btnInventory', 602],
     ];
     this.buttons = {};
     for (const [key, x] of buttons) {
@@ -172,15 +182,16 @@ class GameScene extends Phaser.Scene {
   createBoard() {
     const startX = this.tray.x - ((GRID_COLS - 1) * TILE_PITCH) / 2;
     const startY = this.tray.y - ((GRID_ROWS - 1) * TILE_PITCH) / 2;
+    const layout = shuffleBoard(BOARD); // random arrangement on every load
     this.tiles = [];
     for (let r = 0; r < GRID_ROWS; r++) {
       this.tiles[r] = [];
       for (let c = 0; c < GRID_COLS; c++) {
         const tile = this.add
-          .image(startX + c * TILE_PITCH, startY + r * TILE_PITCH, 'shape_' + BOARD[r][c])
+          .image(startX + c * TILE_PITCH, startY + r * TILE_PITCH, 'shape_' + layout[r][c])
           .setDisplaySize(TILE_SIZE, TILE_SIZE)
           .setDepth(10);
-        tile.setData({ row: r, col: c, shape: BOARD[r][c] });
+        tile.setData({ row: r, col: c, shape: layout[r][c] });
         this.tiles[r][c] = tile;
       }
     }
