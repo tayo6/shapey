@@ -11,7 +11,7 @@ This document describes the recommended rules for turning the current Phaser pro
 - A wrong shape resets the current selection, but does not immediately end the turn. This preserves the memory challenge without making one mis-tap fatal.
 - If the timer expires without a valid submitted match, award no points and pass the turn.
 - The Submit button confirms a valid group. Remove the current prototype's separate 10-second idle auto-submit; the 45-second turn timer should be the only automatic deadline.
-- The match is won by the first player to **15 points**. Use a short victory sequence and a rematch option. In online play, the server—not the browser timer—must be authoritative.
+- The match is a race to a target score chosen before play. The default target is **100 points**; players can choose any target from 100 to **1,000**. In a two-player match, the first player to reach the selected target wins. Use a short victory sequence and a rematch option. In online play, the server—not the browser timer—must be authoritative.
 
 ### Suggested scoring
 
@@ -60,12 +60,16 @@ A same-device **Pass & Play** mode is a useful interim option while the online s
 
 ## 3. Stars, streaks, and the inventory
 
-Treat **Stars as a persistent currency**, not as the five decorative icons beside the score. The five icons should show progress or a capped streak indicator; the inventory screen should display the actual spendable star balance and owned item cards.
+Treat **Stars as a persistent currency**, not as the five decorative icons beside the score. Every player starts with **1 free Star**. The inventory screen displays the actual spendable balance and owned item cards.
 
-Recommended definition to avoid ambiguity:
-- A **game victory** means winning a full match by reaching 15 points, not merely submitting one good move.
-- Record consecutive game victories per player. A three-match winning streak awards **3 Stars** to that player.
-- A loss or draw resets the consecutive-win streak. Stars already earned remain in the wallet.
+### Match streak rewards (the recommended clear rule)
+
+This streak is about successful matching turns, not winning whole games:
+- Each completed turn that successfully matches **3 or more normal matching tiles** increases that player's match streak by 1. A match of 4 or 5+ also counts as one successful matching instance.
+- A player's third successful matching turn in a row awards **3 Stars**. Their fourth successful matching turn in the same streak awards **4 additional Stars**; the fifth awards **5 additional Stars**, and so on.
+- A turn that expires without a valid match breaks the streak and resets the streak counter to 0. The next successful match starts a new streak at 1. A wrong tap alone does **not** break the streak if the player later completes a valid match during that same turn.
+- **Stars already earned are never taken away when a streak breaks.** Only the streak counter resets. For example, a player starts with 1 Star, gets three successful matching turns and earns 3 (balance 4), then times out on their next turn: they keep 4 Stars, but their next successful match starts a fresh streak at 1.
+- Award a reward only once when the player first reaches each streak length. Display a clear toast such as “3-match streak! +3 Stars” or “4-match streak! +4 Stars”.
 - Store star balance and inventory per account online. For the offline prototype, local storage can be used for testing, but it is not secure or transferable across devices.
 
 ### Power-up shop and costs
@@ -77,7 +81,7 @@ Buying an item deducts its Stars immediately and puts a card into the player's i
 | **Audience Pick** | 3 Stars | Starts a short fan poll to recommend one of the candidate shapes for the current attempt. |
 | **Double Time** | 3 Stars | Makes the player's next turn 90 seconds instead of 45. |
 | **Double Play** | 4 Stars | After the current turn, the player immediately gets one extra 45-second turn before control passes to the opponent. |
-| **Score Strike** | 5 Stars | Subtracts 10 points from the opponent, with their score floored at 0. Recommend limiting it to once per player per match. |
+| **Score Strike** | 5 Stars | Subtracts 10 points from the opponent, with their score floored at 0. Limit it to once per player per match. |
 
 Double Play must not chain into another Double Play during its bonus turn. Double Time and Double Play should show a visible active badge so players know what is in effect. If a match ends, unused inventory items should remain owned.
 
@@ -90,13 +94,19 @@ Double Play must not chain into another Double Play during its bonus turn. Doubl
 - If no real audience is connected, label the feature **Practice Audience** and simulate an explicitly fictional vote. Never present generated votes as real fans.
 - Real fan polls require a backend, vote validation, rate limiting, and a policy for who may join a poll (for example, invited spectators or followers).
 
-## 4. Give the cancel shape a positive identity
+## 4. Special shapes: Cancel and Counter
 
-The current source includes `cancel` in the regular shape list, which means it behaves like any other shape. Instead, make it a **rare special tile** that never counts toward a normal matching group.
+### Cancel shape = dummy tile, not a power-up
 
-Recommended behavior: finding a cancel tile grants one **Cancel Shield** card to inventory. That card can cancel one incoming opponent power-up, including Score Strike, before it takes effect. It should not subtract points, award negative points, or count as a normal match. Remove the tile after collection and let the board cascade. Limit the board to one or two cancel tiles and announce the pickup clearly.
+Keep the existing cancel image on the board as a **dummy shape**. It participates in the flipping/reveal sequence like every other tile, but it never matches a normal shape, never earns points, and never cancels the flipping sequence.
 
-This makes the symbol's meaning understandable, gives players a counterplay option, and prevents the special tile from feeling like a useless unmatched shape.
+Example: a player reveals `🟨 🟨 X 🟨 🟨`. All five tiles are flipped and revealed, but `X` is ignored for scoring. The player has four yellow matches, so score the play as a four-tile match. The cancel tile does not invalidate the four yellows. If a selection contains only two normal matching tiles plus `X`, it is not a valid three-tile match; the player needs at least three matching normal tiles. Keep it in the board's normal flip flow, and do not give it an inventory effect.
+
+### New rare shape = Counter Shield
+
+Add a separate, very rare **Counter Shield** shape. When a player reveals and collects it, award one Counter Shield card to their inventory. The card can cancel one opponent power-up that would affect the match, specifically **Double Time** or **Score Strike (-10)**, if activated in response before that power-up takes effect. It does not subtract points itself and is consumed only when it successfully counters an effect. It should not counter Double Play or Audience Pick unless those are deliberately added to the shield's rules later.
+
+Use a low spawn rate and a clear pickup animation/sound so it feels exciting but not routine. In online play, the backend must validate the counter and resolve the timing so both clients agree on whether it was used in time.
 
 ## 5. Turn-state rules and edge cases
 
@@ -106,7 +116,7 @@ Every turn should pass through one explicit state machine:
 
 - The 45-second clock starts when ACTIVE_TURN begins, not while a menu or connection is loading.
 - Only the active player may interact with tiles, use a power-up, or submit.
-- A selected group must contain at least 3 normal tiles of the same shape; a cancel tile is resolved immediately as a special pickup.
+- A valid match must contain at least 3 normal tiles of the same shape. The cancel dummy tile may be flipped as part of the sequence but is excluded from the matching count and score. A Counter Shield tile is resolved as a rare inventory pickup, not a normal match.
 - Prevent duplicate submits while animations are running.
 - At timeout, ignore late taps and submissions, clear highlights, finish safe animations, and pass turn exactly once.
 - Use an absolute `turnEndsAt` timestamp for UI countdowns. Online, the backend owns that timestamp.
@@ -118,10 +128,10 @@ Every turn should pass through one explicit state machine:
 
 - `src/main.js` currently has one real `this.score` value; Player 2's score is not part of a real turn system.
 - The 45-second timer is a static `00:45` label. There is no running countdown, turn deadline, timeout, or turn hand-off.
-- The five-star rows are images only; there is no streak tracker or inventory currency.
+- The star rows are currently decorative; there is no starting free Star, successful-match streak tracker, or inventory currency.
 - Only Submit has a click handler. Polls, Inventory, and Settings do not yet open working panels.
 - There is no AI, online lobby, live audience/poll service, rematch flow, or match-winner state.
-- The cancel image is currently included in `SHAPE_KEYS` and can be matched for points.
+- The cancel image is currently included in `SHAPE_KEYS` and can be matched for points; the updated design requires it to be a non-scoring dummy tile, plus a separate rare Counter Shield tile.
 - The current idle auto-submit runs after a valid selection has been idle for 10 seconds, even though the design needs a 45-second turn timer. That timer should be removed or repurposed.
 - Player mode, scoring, turn deadline, inventory, streak, and board resolution should be owned by a small game-state layer instead of being scattered across animation callbacks. UI animations should react to resolved state, not decide the result themselves.
 
@@ -129,7 +139,7 @@ Every turn should pass through one explicit state machine:
 
 1. **Core rules:** active player, score per player, 45-second countdown, turn timeout, match end/rematch, correct reset on wrong tiles.
 2. **AI modes:** Easy and Hard using only information each player could reasonably observe.
-3. **Stars and inventory:** persistent wallet, buy/use flows, Double Time, Double Play, Score Strike, Cancel Shield.
+3. **Stars and inventory:** 1 starting Star, successful-match streak rewards, persistent wallet, buy/use flows, Double Time, Double Play, Score Strike, and the rare Counter Shield.
 4. **Audience Pick:** begin with a clearly labelled practice audience; replace it with real voting only after a live backend exists.
 5. **Online play:** room codes, presence, authoritative turn/move validation, persistent accounts and inventory, reconnect handling, and spectator voting.
 6. **Polish:** short tutorial, sound toggle, reduced-motion option, turn hand-off screen, match history, streak celebration, and a post-match rematch button.
