@@ -114,6 +114,10 @@ class GameScene extends Phaser.Scene {
     this.selectedShape = null; // the shape the current attempt is matching
     this.busy = false;        // true while animations run (input is ignored)
     this.autoTimer = null;
+    this.starBalance = this.loadStarBalance();
+    this.inventoryItems = this.loadInventoryItems();
+    this.inventoryUI = [];
+    this.inventoryOpen = false;
 
     this.createBackground();
     this.createHeader();
@@ -216,6 +220,163 @@ class GameScene extends Phaser.Scene {
       this.tweens.add({ targets: submit, scale: base * 0.93, duration: 70, yoyo: true });
       this.submit();
     });
+
+    // Inventory opens the shop/inventory page.
+    const inventory = this.buttons.btnInventory;
+    inventory.setInteractive({ useHandCursor: true });
+    inventory.on('pointerdown', () => this.openInventory());
+  }
+
+  // ---------------------------------------------------------- inventory/shop
+  loadStarBalance() {
+    try {
+      const saved = Number(window.localStorage.getItem('shapey-stars'));
+      return Number.isFinite(saved) && saved >= 0 ? saved : 1;
+    } catch (_) {
+      return 1;
+    }
+  }
+
+  loadInventoryItems() {
+    try {
+      return JSON.parse(window.localStorage.getItem('shapey-inventory') || '{}') || {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  saveInventory() {
+    try {
+      window.localStorage.setItem('shapey-stars', String(this.starBalance));
+      window.localStorage.setItem('shapey-inventory', JSON.stringify(this.inventoryItems));
+    } catch (_) {
+      // Storage may be unavailable in private browsing; the shop still works for this session.
+    }
+  }
+
+  clearInventoryUI() {
+    this.inventoryUI.forEach((object) => object.destroy());
+    this.inventoryUI = [];
+  }
+
+  addInventoryUI(object) {
+    object.setDepth(100);
+    this.inventoryUI.push(object);
+    return object;
+  }
+
+  openInventory() {
+    if (this.inventoryOpen) return;
+    this.inventoryOpen = true;
+    this.clearInventoryUI();
+
+    // Full-page shop uses the same BG.png art as the game background.
+    const pageBg = this.add.image(0, 0, 'bg').setOrigin(0, 0).setDisplaySize(GAME_WIDTH, GAME_HEIGHT);
+    this.addInventoryUI(pageBg);
+
+    // Full-screen input shield prevents taps reaching the board underneath.
+    const shield = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x160d08, 0.34)
+      .setInteractive();
+    this.addInventoryUI(shield);
+
+    const title = this.add.text(GAME_WIDTH / 2, 66, 'INVENTORY & SHOP', {
+      fontFamily: FONT, fontSize: '48px', color: '#fff2c7',
+      stroke: '#4a2814', strokeThickness: 7,
+    }).setOrigin(0.5);
+    this.addInventoryUI(title);
+
+    const balance = this.add.text(GAME_WIDTH / 2, 128, 'YOUR STARS: ' + this.starBalance + ' ★', {
+      fontFamily: FONT, fontSize: '31px', color: '#ffe36e',
+      stroke: '#4a2814', strokeThickness: 5,
+    }).setOrigin(0.5);
+    this.addInventoryUI(balance);
+
+    const closeBg = this.add.rectangle(646, 66, 82, 66, 0x754322, 1)
+      .setStrokeStyle(4, 0xf3d29a).setInteractive({ useHandCursor: true });
+    this.addInventoryUI(closeBg);
+    const closeText = this.add.text(646, 65, 'BACK', {
+      fontFamily: FONT, fontSize: '23px', color: '#ffffff',
+    }).setOrigin(0.5);
+    this.addInventoryUI(closeText);
+    closeBg.on('pointerdown', () => this.closeInventory());
+
+    const offers = [
+      { key: 'audiencePick', name: 'AUDIENCE PICK', price: 3, desc: 'Ask the audience which shape to pursue.' },
+      { key: 'doubleTime', name: 'DOUBLE TIME', price: 3, desc: 'Make your next turn last 90 seconds.' },
+      { key: 'doublePlay', name: 'DOUBLE PLAY', price: 4, desc: 'Take one extra 45-second turn.' },
+      { key: 'scoreStrike', name: 'SCORE STRIKE', price: 5, desc: 'Remove 10 points from your opponent.' },
+    ];
+
+    offers.forEach((offer, index) => {
+      const y = 238 + index * 205;
+      const card = this.add.rectangle(GAME_WIDTH / 2, y, 630, 174, 0x704323, 0.96)
+        .setStrokeStyle(4, 0xd5ad72);
+      this.addInventoryUI(card);
+
+      const name = this.add.text(68, y - 66, offer.name, {
+        fontFamily: FONT, fontSize: '29px', color: '#fff0c7',
+        stroke: '#3a2112', strokeThickness: 4,
+      }).setOrigin(0, 0.5);
+      this.addInventoryUI(name);
+
+      const desc = this.add.text(68, y - 20, offer.desc, {
+        fontFamily: FONT, fontSize: '21px', color: '#ffffff',
+        wordWrap: { width: 405 },
+      }).setOrigin(0, 0.5);
+      this.addInventoryUI(desc);
+
+      const ownedCount = Number(this.inventoryItems[offer.key] || 0);
+      const owned = this.add.text(68, y + 48, 'Owned: ' + ownedCount, {
+        fontFamily: FONT, fontSize: '22px', color: '#ffdf78',
+      }).setOrigin(0, 0.5);
+      this.addInventoryUI(owned);
+
+      const buyBg = this.add.rectangle(554, y + 32, 144, 62,
+        this.starBalance >= offer.price ? 0x3b7c3f : 0x665c50, 1)
+        .setStrokeStyle(3, 0xf3d29a);
+      this.addInventoryUI(buyBg);
+
+      const buyText = this.add.text(554, y + 32, this.starBalance >= offer.price
+        ? 'BUY · ' + offer.price + ' ★' : offer.price + ' ★ NEEDED', {
+        fontFamily: FONT, fontSize: this.starBalance >= offer.price ? '22px' : '16px',
+        color: '#ffffff', align: 'center', wordWrap: { width: 132 },
+      }).setOrigin(0.5);
+      this.addInventoryUI(buyText);
+
+      if (this.starBalance >= offer.price) {
+        buyBg.setInteractive({ useHandCursor: true });
+        buyBg.on('pointerdown', () => {
+          if (this.starBalance < offer.price) return;
+          this.starBalance -= offer.price;
+          this.inventoryItems[offer.key] = Number(this.inventoryItems[offer.key] || 0) + 1;
+          this.saveInventory();
+          this.closeInventory();
+          this.openInventory();
+        });
+      }
+    });
+
+    const counter = this.add.rectangle(GAME_WIDTH / 2, 1090, 630, 118, 0x4b3929, 0.97)
+      .setStrokeStyle(4, 0xd5ad72);
+    this.addInventoryUI(counter);
+    const counterText = this.add.text(GAME_WIDTH / 2, 1080,
+      'CANCEL COUNTER  ·  SPECIAL ITEM\nEarn by collecting a Cancel tile. Use it to block an opponent’s Score Strike, Double Time, or Double Play.', {
+        fontFamily: FONT, fontSize: '20px', color: '#fff0c7',
+        align: 'center', wordWrap: { width: 570 }, lineSpacing: 5,
+      }).setOrigin(0.5);
+    this.addInventoryUI(counterText);
+
+    const note = this.add.text(GAME_WIDTH / 2, 1192,
+      'Purchases are saved on this device. Using power-ups in a match is coming next.', {
+        fontFamily: FONT, fontSize: '17px', color: '#ffffff',
+        align: 'center', wordWrap: { width: 630 },
+      }).setOrigin(0.5);
+    this.addInventoryUI(note);
+  }
+
+  closeInventory() {
+    this.clearInventoryUI();
+    this.inventoryOpen = false;
   }
 
   // ------------------------------------------------------------------ fx
