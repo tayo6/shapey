@@ -520,6 +520,8 @@ class GameScene extends Phaser.Scene {
 
   // Random new shape, favouring shapes with fewer than 3 left so matches stay possible.
   pickShape(counts) {
+    // Occasionally spawn a blank wooden dummy; it never counts toward matches.
+    if (Math.random() < DUMMY_SPAWN_CHANCE) return 'dummy';
     const scarce = SHAPE_KEYS.filter((k) => (counts[k] || 0) < MIN_MATCH);
     return randomItem(scarce.length ? scarce : SHAPE_KEYS);
   }
