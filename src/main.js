@@ -40,6 +40,9 @@ const SHAPE_KEYS = Object.keys(SHAPE_FILES).filter((k) => k !== 'mystery');
 // Frames of "tile destroy frame.png" (x positions, each 256 x 241) - centred on the tile.
 const DESTROY_FRAME_X = [3, 292, 585, 877, 1172, 1467];
 
+// Frames of "dust frame.png" (3 puffs, each 480 x 189) - landing dust for new shapes.
+const DUST_FRAME_X = [0, 555, 1116];
+
 const randomItem = (list) => list[Math.floor(Math.random() * list.length)];
 
 function shuffle(list) {
@@ -94,6 +97,7 @@ class GameScene extends Phaser.Scene {
 
     // fx + audio
     this.load.image('tileDestroy', 'fx/tile destroy frame.png');
+    this.load.image('dust', 'fx/dust frame.png');
     this.load.audio('flip', ['audio/tile_flip_short.ogg', 'audio/tile_flip_short.wav']);
   }
 
@@ -216,6 +220,15 @@ class GameScene extends Phaser.Scene {
       key: 'tileDestroy',
       frames: DESTROY_FRAME_X.map((_, i) => ({ key: 'tileDestroy', frame: 'd' + i })),
       frameRate: 14,
+    });
+
+    // landing dust: 3 frames
+    const dustTex = this.textures.get('dust');
+    DUST_FRAME_X.forEach((x, i) => dustTex.add('u' + i, 0, x, 0, 480, 189));
+    this.anims.create({
+      key: 'dustPuff',
+      frames: DUST_FRAME_X.map((_, i) => ({ key: 'dust', frame: 'u' + i })),
+      frameRate: 11,
     });
 
     // flip sound: a few instances so quick flips can overlap
@@ -461,7 +474,7 @@ class GameScene extends Phaser.Scene {
         const tile = this.createTile(shape, r, c, this.cellX(c), this.cellY(r - empties));
         this.tiles[r][c] = tile;
         fresh.push(tile);
-        fallTweens.push(this.fall(tile, this.cellY(r), 40 * (empties - 1 - r)));
+        fallTweens.push(this.fall(tile, this.cellY(r), 40 * (empties - 1 - r), true));
       }
     }
 
@@ -469,12 +482,23 @@ class GameScene extends Phaser.Scene {
     if (fresh.length) this.startReview(fresh);
   }
 
-  fall(tile, targetY, delay) {
+  // Drops a tile to targetY. With `dust`, a dust puff plays the moment it first lands.
+  fall(tile, targetY, delay, dust = false) {
     const distance = Math.abs(targetY - tile.y) / TILE_PITCH;
-    return this.tweenAsync({
-      targets: tile, y: targetY, delay,
-      duration: 260 + distance * 90, ease: 'Bounce.easeOut',
-    });
+    const duration = 260 + distance * 90;
+    if (dust) {
+      // Bounce.easeOut first touches the ground at 1 / 2.75 of the duration
+      this.time.delayedCall(delay + duration / 2.75, () => this.spawnDust(tile.x, targetY));
+    }
+    return this.tweenAsync({ targets: tile, y: targetY, delay, duration, ease: 'Bounce.easeOut' });
+  }
+
+  // Dust cloud at the bottom edge of a tile that just landed.
+  spawnDust(x, tileY) {
+    const puff = this.add.sprite(x, tileY + TILE_SIZE / 2 + 6, 'dust', 'u0').setOrigin(0.5, 1).setDepth(13);
+    puff.setScale(0.25);
+    puff.play('dustPuff');
+    puff.once('animationcomplete', () => puff.destroy());
   }
 
   // Random new shape, favouring shapes with fewer than 3 left so matches stay possible.
