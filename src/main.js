@@ -21,6 +21,7 @@ const scoreFor = (count) => (count >= 5 ? 5 : count === 4 ? 2 : count === 3 ? 1 
 // texture key -> file in assets/shapes
 const SHAPE_FILES = {
   mystery: 'Mystery.png', // the hidden face (never a real shape)
+  dummy:   'dummy.png',  // blank wooden tile: neutral, non-scoring, and ignored by matching
   cancel:  'cancel.png',
   capsule: 'capsule.png',
   circle:  'circle.png',
@@ -35,7 +36,12 @@ const SHAPE_FILES = {
   star:    'star .png',    // note: space before the dot in the filename
   x:       'x.png',
 };
-const SHAPE_KEYS = Object.keys(SHAPE_FILES).filter((k) => k !== 'mystery');
+const SHAPE_KEYS = Object.keys(SHAPE_FILES).filter((k) => !['mystery', 'dummy'].includes(k));
+const DUMMY_SPAWN_CHANCE = 0.08; // blank wooden tiles are occasional neutral decoys
+
+function randomBoardShape() {
+  return Math.random() < DUMMY_SPAWN_CHANCE ? 'dummy' : randomItem(SHAPE_KEYS);
+}
 
 // Frames of "tile destroy frame.png" (x positions, each 256 x 241) - centred on the tile.
 const DESTROY_FRAME_X = [3, 292, 585, 877, 1172, 1467];
@@ -60,7 +66,7 @@ function makeInitialBoard() {
   const total = GRID_ROWS * GRID_COLS;
   const bag = [];
   SHAPE_KEYS.forEach((k) => bag.push(k, k, k));
-  while (bag.length < total) bag.push(randomItem(SHAPE_KEYS));
+  while (bag.length < total) bag.push(randomBoardShape());
   const flat = shuffle(bag);
   return Array.from({ length: GRID_ROWS }, (_, r) => flat.slice(r * GRID_COLS, (r + 1) * GRID_COLS));
 }
@@ -338,6 +344,16 @@ class GameScene extends Phaser.Scene {
 
   onTileTap(tile) {
     if (this.busy || !tile.active || tile.selected) return;
+
+    // A blank wooden dummy is revealed briefly, but is otherwise as if it
+    // had not been picked: it never joins or resets the current selection.
+    if (tile.shape === 'dummy') {
+      this.flipTile(tile, true);
+      this.time.delayedCall(1100, () => {
+        if (tile.active && !tile.selected) this.flipTile(tile, false);
+      });
+      return;
+    }
 
     const isFirst = this.selection.length === 0;
     const matches = isFirst || tile.shape === this.selectedShape;
