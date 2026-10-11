@@ -116,6 +116,119 @@ The existing `cancel.png` represents the **Cancel Counter**. It is not a normal 
 
 The blank wooden dummy and the Cancel Counter are therefore separate: one does nothing, while the other is a defensive item.
 
+### Required event logic, why it exists, and acceptance tests
+
+This section makes the rules executable for a developer or coding AI. It distinguishes **the intended design** from **what the current prototype already does**. Do not assume a rule is implemented merely because it is documented here. Before coding, inspect the current source and compare it with the status notes in section 6. Implement each event once, in a shared game-state function where possible, rather than duplicating rules in tile-click handlers, UI buttons, and animations.
+
+#### A. Classify every tile before handling a click
+
+Every board tile must be classified as one of these types:
+
+1. **Normal scoring shape** — a color/shape that can be selected as part of a match, counts toward the minimum of three, and can earn points.
+2. **Wooden Dummy** — a neutral decoy. It is not a normal shape and never scores.
+3. **Cancel Counter pickup** — a collectible defensive item. It is not a normal shape and never scores.
+4. **Mystery tile** — keep its behavior explicitly defined by the existing game design; do not accidentally treat it as a normal scoring shape unless its rules say so.
+
+Why this classification is necessary: if all texture keys are treated as ordinary shapes, special tiles can accidentally satisfy a match, break a valid selection, be awarded points, or appear in the “three of every shape” balancing bag. Use an explicit normal-shape allowlist for matching and guaranteed board distribution. Exclude `dummy`, `cancel`, and `mystery` from normal matching unless a later rule explicitly says otherwise. Keep tile type separate from its image filename so visual assets do not become the game rules by accident.
+
+**Click handling order:** first check that the match is active, the current player owns the turn, the board is accepting input, the tile is face-down/revealed in a valid state, and no conflicting animation or resolution is underway. Then route the tile by type. Only normal scoring shapes should enter the normal selection/matching algorithm. A tile must not be processed twice from rapid taps or overlapping pointer events.
+
+#### B. Wooden Dummy: reveal without interfering with a match
+
+**Purpose:** the blank wooden tile creates a brief visual interruption and tests whether the player remembers the real shapes around it. It is deliberately neutral. It must not punish the player just because the board contains a decoy.
+
+**Required behavior:**
+
+1. When a player taps a face-down Wooden Dummy, reveal its wooden image briefly so the player can recognize it.
+2. Do not append the dummy to the player's selected-tile list.
+3. Do not set or change the selected normal shape based on the dummy.
+4. Do not count it toward the minimum of three, add points, subtract points, award Stars, or consume a turn.
+5. Do not clear, restart, or invalidate an existing normal-shape selection.
+6. After the brief reveal, return it to the face-down state unless the tile is being handled by a separate, explicitly specified board-resolution effect.
+7. During its reveal/flip animation, ignore repeated taps on that same dummy so one tap cannot trigger several animations or side effects.
+
+**Example acceptance test:** the player selects yellow, yellow, taps a Wooden Dummy, then selects yellow, yellow. The selection contains four yellow tiles, and the player can submit those four for the normal four-tile score. The dummy is not part of the submitted group. The same rule applies if the dummy appears before the first yellow or between any two normal selections.
+
+**Why this matters:** treating a dummy like a wrong-colored shape would reset the selection and make the player lose progress. Treating it as a normal shape could make a dummy match possible or change the scoring count. Both contradict its role as a harmless decoy.
+
+**Spawning:** the dummy should appear occasionally, not as one of the guaranteed copies of every normal shape. Use a named, configurable spawn probability and apply it only when creating optional/random board tiles or replacements. Avoid adding the dummy to the normal-shape allowlist. Keep the spawn probability in one place so it can be tuned without changing matching logic. Initial-board generation and cascade/refill generation must use consistent classification rules.
+
+#### C. Cancel Counter pickup: board tile becomes an inventory item
+
+**Purpose:** the Cancel tile is a collectible defense, not a scoring shape and not the same thing as the Wooden Dummy. The dummy only interrupts visually; the Cancel pickup grants a resource that can protect the player from certain opponent power-ups later.
+
+**Required pickup flow:**
+
+1. When a face-down Cancel tile is encountered during an active player's turn, reveal and resolve it as a pickup rather than adding it to normal selection.
+2. Grant exactly **one Cancel Counter** to that player's inventory. Store the count as an integer owned by that player, not as a global count shared by both players.
+3. Resolve/remove the pickup tile from the board so it cannot be collected again. Refill that cell according to the board's normal replacement rules; if replacement tiles have a reveal period, show the replacement for the specified 15 seconds before hiding it.
+4. The Cancel tile does not count toward a three-tile match, does not award or subtract points, does not award Stars, and is not submitted as part of a match.
+5. Collecting it must not clear or alter an existing normal-shape selection. It should not count as a wrong shape.
+6. Make the pickup idempotent: one tile instance can grant one counter at most, even if the player taps repeatedly or an animation/event fires twice.
+7. Update the visible inventory count immediately after collection. Persist it for the local prototype if local saving is enabled; in online play, save it in the authoritative match/player state instead of trusting local storage.
+
+**Why this matters:** the board tile and the inventory card are two stages of one mechanic. If the game only displays a Cancel image but never increments inventory, the player has no usable defense. If the tile remains collectible after being picked up, repeated clicks can duplicate items. If it is included in normal matching, it can corrupt selection and scoring.
+
+**Acceptance tests:** tapping one Cancel tile increases only the active player's counter count by one; tapping it again cannot increase the count; it never changes the score; and collecting it between two matching normal shapes does not reset that selection. A player with zero counters cannot activate a counter. A player with two counters who successfully counters one eligible attack ends with one counter.
+
+#### D. Inventory and shop: ownership, purchase, and use are different actions
+
+Keep these concepts separate in code and UI:
+
+- **Stars** are the currency used to buy shop power-ups.
+- **Owned power-up inventory** is a count of items the player has bought and can use.
+- **Cancel Counter inventory** is a defensive count gained from collecting Cancel tiles.
+- **Using an item** spends one owned item; buying an item spends Stars and increases owned inventory. Buying must not automatically activate the item.
+
+Use the documented shop prices: Audience Pick costs 3 Stars, Double Time costs 3 Stars, Double Play costs 4 Stars, and Score Strike costs 5 Stars. A player begins with 1 free Star. The shop must reject purchases when the balance is below the price, must never make the balance negative, and must update the displayed balance and inventory count together after a successful purchase. If persistence is enabled, save the updated balance and counts as one coherent state change so a refresh cannot save one without the other.
+
+A successful purchase flow is: validate price and balance → deduct the price once → increment that item's owned count once → save state → refresh the UI. A failed purchase changes nothing. A successful use flow is: validate that the item is owned and can legally be used in the current match state → create the effect or pending-effect event → consume one item according to the item's rule → update/save state. If validation fails, do not consume the item. Do not let button double-clicks purchase or spend the same item twice.
+
+**Why this matters:** the shop screen alone is not a functioning power-up system. Clear separation prevents Stars from being deducted when an item is used, prevents free activation of unowned items, and makes it possible to test and synchronize multiplayer actions.
+
+LocalStorage is acceptable for a local single-device prototype, but it is not secure or authoritative for online multiplayer. For an online match, the server should validate ownership, prices, timing, targets, and effects. Never trust a browser-provided score or inventory update as the final result.
+
+#### E. Counter response: cancel eligible attacks before they take effect
+
+A Cancel Counter is a response to an opponent's **pending** power-up, not a general undo button. Eligible attacks are **Score Strike, Double Time, and Double Play**. **Audience Pick cannot be countered.**
+
+Use this event sequence for each eligible attack:
+
+1. The attacking player requests to use the power-up. Validate that the player owns it and that it is legal now.
+2. Create a pending effect with a unique action ID, the attacker, the target, and the effect type. Do not apply the effect yet.
+3. Notify the targeted opponent and show a clear response prompt with a short, visible deadline. A 3-second response window is a recommended default; keep the duration in one configurable constant.
+4. If the targeted opponent has at least one Cancel Counter and activates it before the deadline, validate the pending action again, consume exactly one counter, mark the pending action as cancelled, and apply none of its effects.
+5. If the opponent has no counter, does not respond, or the deadline expires, resolve the pending action normally. A late response must not cancel an effect that has already resolved.
+6. Mark the pending action as resolved exactly once. Repeated clicks, duplicated network messages, or two competing responses must not apply the effect twice or consume multiple counters.
+7. Show both players the outcome: cancelled, applied, or rejected. Keep the action result in match state so both clients render the same result.
+
+If a counter is attempted when there is no eligible pending attack, the attack is already resolved, the attack is Audience Pick, or the player has no counters, reject the attempt and consume nothing.
+
+**Why this matters:** without a pending state and response window, the attack might apply immediately before the defender has a chance to react. Without one unique pending-action record, latency or repeated taps can cause duplicate attacks, duplicate counters, or different results on the two players' screens.
+
+For Score Strike, the intended effect is to subtract 10 points from the opponent, subject to the game's score floor of zero, and it can be used at most once per player per match. For Double Time, the intended effect is to make the affected player's next turn 90 seconds instead of 45. For Double Play, the intended effect is to grant the affected player one additional 45-second turn; do not allow the bonus turn to chain into another Double Play unless a future rule explicitly permits it. The code should apply these effects only after the counter window closes without a successful counter. Audience Pick follows its own voting/poll flow and does not open a Cancel Counter response window.
+
+#### F. Keep the turn and board state consistent around special tiles
+
+The special-tile handler must coexist with the normal turn lifecycle. It should not silently submit a match, end a turn, award a match score, or reset the timer unless a specific rule requires it. The 45-second turn timer is the normal deadline; remove the old 10-second idle auto-submit behavior. If time expires while a player has only an incomplete selection, award no match points and pass the turn. A pickup or dummy animation should not create an extra turn or allow input after the turn has ended.
+
+For online play, the server should own the canonical board, active player, turn deadline, score, Stars, inventory, pending power-up, counter response deadline, and match result. Clients may animate and display state, but must not independently decide that an attack was cancelled, a counter was consumed, or a score changed.
+
+#### G. Definition of done for these mechanics
+
+Do not mark these mechanics complete just because the assets or UI exist. Test them in the actual game loop:
+
+- [ ] Dummy can appear in initial/random replacement generation without entering the normal match-shape list.
+- [ ] Dummy reveals briefly, then hides; it neither scores nor interrupts a normal selection.
+- [ ] Cancel pickup grants one counter to the correct player, is removed/refilled, and cannot be collected twice.
+- [ ] Cancel, dummy, and mystery are excluded from guaranteed normal-shape distribution and normal match validation.
+- [ ] Shop purchases deduct the right Stars and add exactly one owned item; insufficient balance changes nothing.
+- [ ] Item use validates ownership and match state; failed use consumes nothing.
+- [ ] A counter blocks Score Strike, Double Time, and Double Play only when used in the response window; it cannot block Audience Pick.
+- [ ] No-counter, late-counter, double-click, duplicate-event, and simultaneous-response cases resolve deterministically.
+- [ ] Scores, turn timers, inventories, and the visible UI agree after each action.
+- [ ] Documentation and UI distinguish implemented prototype behavior from planned behavior.
+
 ## 5. Turn-state rules and edge cases
 
 Every turn should pass through one explicit state machine:
