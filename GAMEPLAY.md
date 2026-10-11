@@ -94,19 +94,27 @@ Double Play must not chain into another Double Play during its bonus turn. Doubl
 - If no real audience is connected, label the feature **Practice Audience** and simulate an explicitly fictional vote. Never present generated votes as real fans.
 - Real fan polls require a backend, vote validation, rate limiting, and a policy for who may join a poll (for example, invited spectators or followers).
 
-## 4. Special shapes: Cancel and Counter
+## 4. Special tiles: Wooden Dummy and Cancel Counter
 
-### Cancel shape = dummy tile, not a power-up
+### Blank wooden dummy = no effect
 
-Keep the existing cancel image on the board as a **dummy shape**. It participates in the flipping/reveal sequence like every other tile, but it never matches a normal shape, never earns points, and never cancels the flipping sequence.
+The new `assets/shapes/dummy.png` is a plain wooden tile with no symbol or shape. It is a **neutral dummy**, not a scoring shape and not a power-up.
 
-Example: a player reveals `🟨 🟨 X 🟨 🟨`. All five tiles are flipped and revealed, but `X` is ignored for scoring. The player has four yellow matches, so score the play as a four-tile match. The cancel tile does not invalidate the four yellows. If a selection contains only two normal matching tiles plus `X`, it is not a valid three-tile match; the player needs at least three matching normal tiles. Keep it in the board's normal flip flow, and do not give it an inventory effect.
+- It can be flipped/revealed during a player's normal selection sequence.
+- It never adds or subtracts points, never counts toward the minimum of 3 matching normal shapes, and never breaks a selection or forces the player to restart.
+- Treat it as though it was not picked for matching. For example, `🟨 🟨 [blank wood] 🟨 🟨` is still a four-yellow match.
+- It should appear occasionally, not dominate the board.
 
-### New rare shape = Counter Shield
+### Existing Cancel tile = defensive inventory card
 
-Add a separate, very rare **Counter Shield** shape. When a player reveals and collects it, award one Counter Shield card to their inventory. The card can cancel one opponent power-up that would affect the match, specifically **Double Time** or **Score Strike (-10)**, if activated in response before that power-up takes effect. It does not subtract points itself and is consumed only when it successfully counters an effect. It should not counter Double Play or Audience Pick unless those are deliberately added to the shield's rules later.
+The existing `cancel.png` represents the **Cancel Counter**. It is not a normal scoring shape and must not be matchable for points. When collected, it grants a Cancel Counter card to the player's inventory. The player can deliberately use that card to cancel an opponent's **Score Strike (-10), Double Time, or Double Play** before the effect takes place.
 
-Use a low spawn rate and a clear pickup animation/sound so it feels exciting but not routine. In online play, the backend must validate the counter and resolve the timing so both clients agree on whether it was used in time.
+- The card is consumed only when it successfully cancels one of those effects.
+- It does not cancel Audience Pick, and it does not itself add or subtract score.
+- Show the card in inventory and provide a clear response window before the opponent's power-up resolves.
+- In online play, the backend must validate card ownership and resolve timing so both clients agree on whether the counter was used in time.
+
+The blank wooden dummy and the Cancel Counter are therefore separate: one does nothing, while the other is a defensive item.
 
 ## 5. Turn-state rules and edge cases
 
@@ -131,7 +139,7 @@ Every turn should pass through one explicit state machine:
 - The star rows are currently decorative; there is no starting free Star, successful-match streak tracker, or inventory currency.
 - Only Submit has a click handler. Polls, Inventory, and Settings do not yet open working panels.
 - There is no AI, online lobby, live audience/poll service, rematch flow, or match-winner state.
-- The cancel image is currently included in `SHAPE_KEYS` and can be matched for points; the updated design requires it to be a non-scoring dummy tile, plus a separate rare Counter Shield tile.
+- The blank wooden dummy now has its own `dummy.png` asset and neutral tap behavior. The existing `cancel.png` should become a defensive inventory card rather than a normal scoring shape; its collection, inventory display, and counter-use flow still need implementation.
 - The current idle auto-submit runs after a valid selection has been idle for 10 seconds, even though the design needs a 45-second turn timer. That timer should be removed or repurposed.
 - Player mode, scoring, turn deadline, inventory, streak, and board resolution should be owned by a small game-state layer instead of being scattered across animation callbacks. UI animations should react to resolved state, not decide the result themselves.
 
