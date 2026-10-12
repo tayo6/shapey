@@ -35,6 +35,15 @@ The current app is a static Phaser 3 browser prototype hosted on GitHub Pages. T
 - Test overrides (milliseconds): `?review=3000` shortens the opening study phase, `?reveal=2000` the spawned-tile reveal, `?swap=500` each swap.
 - The reveal countdown runs **concurrently** with the 45-second turn clock. Each batch of revealed tiles has its own absolute deadline (`RevealTracker`), separate from the turn deadline (`Countdown`), so neither can pause or extend the other. The header shows a "MEMORIZE" countdown while any tiles are face-up.
 - Other test overrides (milliseconds): `?turn=10000` shortens the turn, `?invwindow=20000` shortens the inventory-limit window.
+- Mode and hazard test overrides: `?mode=alone|ai|pvp` skips the mode menu, `?hazard=0.5` sets the hazard spawn chance.
+
+### Scenes, modes and loading
+
+- `BootScene` loads every asset behind a progress bar, then opens `MenuScene` (or `GameScene` directly with `?mode=`). `index.html` shows a CSS "Loading" placeholder immediately, so the screen is never blank while Phaser downloads. The custom font loads in parallel and never blocks the game for more than 2.5 s.
+- Art is stored at about 1.5x its on-screen size (the canvas itself is 720 px wide) to keep downloads and GPU memory small. Keep that in mind before swapping in new art: `setDisplaySize`/`fitToWidth` do the scaling, so any size works, but oversized files slow loading on phones.
+- `MODES` (top of `src/main.js`) defines the three modes: hazard chance, whether there are two players, whether the turn clock runs, and whether the AI plays. Play-alone rules are the `ALONE_*` constants; recording attempts and game over live in `recordAttempt()` and `endGame()`.
+- Spawning: `pickShape()` rolls hazard, then dummy, then draws from `ShapeBag` (see GAMEPLAY.md). `ensureMatchPossible()` is the safety net after a refill.
+- The Easy AI (`aiSee`, `aiChooseGroup`, `aiGuess`, `aiAttempt`, `runAITurn`) only uses tiles it has actually seen, keyed by tile object so memory follows tiles as they fall.
 
 The memory challenge is based on tile identity and location. Do not show exact hidden positions to a player through UI, logs, AI logic, or audience polling.
 

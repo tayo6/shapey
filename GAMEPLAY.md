@@ -14,6 +14,10 @@ This document describes the recommended rules for turning the current Phaser pro
 - The Submit button confirms a valid group. There is no idle auto-submit (the old 10-second one was removed); the 45-second turn timer is the only automatic deadline.
 - The match is a race to a target score chosen before play. The default target is **100 points**; players can choose any target from 100 to **1,000**. In a two-player match, the first player to reach the selected target wins. Use a short victory sequence and a rematch option. In online play, the server—not the browser timer—must be authoritative.
 
+### Which shapes spawn (shuffle bag)
+
+New tiles are not picked purely at random. A shuffle bag deals every normal shape once per round in random order, so the same shape is never dealt twice in a row and a refill is always varied. Shapes with fewer than 3 tiles left on the board get one extra copy per round so matches stay possible. (The earlier rule gave every new tile to the shape that had just been matched away, so refills were all one shape.) Hazards and wooden dummies are rolled first, then the bag supplies the shape. As a safety net, if a refill leaves no shape with 3 tiles, some new tiles are converted to the most common shape.
+
 ### New-tile shuffle (fairness rule)
 
 Showing new tiles for 15 seconds would favour whoever is playing. Instead:
@@ -38,7 +42,34 @@ Keep these existing values initially so the new mechanics can be tested without 
 
 ## 2. Game modes
 
+### Mode menu (implemented)
+
+The game opens on a menu with three modes: **Play alone**, **Player vs AI** and **Player 1 vs Player 2** (same device). Settings (in game) opens a small menu to resume, restart or return here. For testing, `?mode=alone`, `?mode=ai` or `?mode=pvp` skips the menu.
+
+### Play alone (implemented)
+
+- One player, no turn countdown and no Player 2 score plank. The header shows points toward the next checkpoint and the current attempt number.
+- An **attempt** is one try at a match, not one flip: a submitted match, a wrong shape, a submit with fewer than 3 tiles, or a hazard. Flipping a wooden dummy is not an attempt.
+- **Checkpoint every 15 attempts:** the player must have earned at least 15 points (from matches) in that window, otherwise the game is over. After a passed checkpoint a new window starts.
+- **Score floor:** a failed attempt (wrong shape or fewer than 3 submitted) costs 1 point and a hazard costs 2, so the score can go negative. Reaching **−15** is game over.
+- Game over shows the score, attempts and checkpoints cleared, with Play again and Main menu.
+- Constants: `ALONE_ATTEMPT_WINDOW`, `ALONE_POINTS_PER_WINDOW`, `ALONE_SCORE_FLOOR`, `ALONE_MISS_PENALTY`, `HAZARD_PENALTY`.
+
+### Hazard tile (implemented)
+
+`hazard.webp` (skull and crossbones) is a special tile, not a normal shape: it never matches and is excluded from the guaranteed-three distribution. Flipping one reveals it briefly, costs `HAZARD_PENALTY` (2) points, breaks the current selection and then hides it again. It does not end the turn. In the two-player modes the score never drops below 0.
+
+| Mode | Hazard share of tiles |
+|---|---:|
+| Play alone | 15% |
+| Player vs Player | 5% |
+| Player vs AI | 0% |
+
+The starting board gets about that share of hazards, and every newly spawned tile has that chance (`MODES[...].hazard`; `?hazard=0.5` overrides it for testing).
+
 ### Play against AI
+
+**Status:** a simple Easy AI is implemented; Hard and the difficulty picker are not. The Easy AI watches the opening board and new tiles, remembers about 45–60% of them (sometimes wrongly), forgets tiles that get shuffled, plays visibly with pauses, tries up to 3 matches per turn and then passes. See `AI_*` constants and `aiSee`/`aiAttempt` in `src/main.js`.
 
 After selecting AI, show **Easy** and **Hard**. The opponent should take a visible turn, reveal tiles with a short delay, submit its match, and then return control to the player.
 
@@ -271,7 +302,7 @@ Every turn should pass through one explicit state machine:
 - The 45-second turn clock now runs from an absolute deadline, ends the turn on timeout, and runs alongside the 5-second reveal and shuffle of new tiles. Double Time (90 seconds) and a server-authoritative deadline are not implemented.
 - The star rows are currently decorative; there is no starting free Star, successful-match streak tracker, or inventory currency.
 - Only Submit has a click handler. Polls, Inventory, and Settings do not yet open working panels.
-- There is no AI, online lobby, live audience/poll service, rematch flow, or match-winner state.
+- There is no Hard AI, online lobby, live audience/poll service, or match-winner state (play alone has its own game-over flow).
 - The blank wooden dummy now has its own `dummy.webp` asset and neutral tap behavior. The existing `cancel.webp` should become a defensive inventory card rather than a normal scoring shape; its collection, inventory display, and counter-use flow still need implementation.
 - The old 10-second idle auto-submit has been removed, so a valid selection now waits for the Submit button.
 - Player mode, scoring, turn deadline, inventory, streak, and board resolution should be owned by a small game-state layer instead of being scattered across animation callbacks. UI animations should react to resolved state, not decide the result themselves.

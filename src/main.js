@@ -34,6 +34,35 @@ const INVENTORY_OPEN_LIMIT = 2;
 const INVENTORY_WINDOW_MS = Number(urlParams.get('invwindow')) || 5 * 60 * 1000;
 const PLAYER_NAMES = ['Player 1', 'Player 2'];
 
+// ---- Game modes --------------------------------------------------------------
+// hazard = chance that a newly spawned tile is a hazard (skull) tile. Test override: ?hazard=0.5
+const MODES = {
+  alone: { label: 'PLAY ALONE', hint: 'No timer. Score 15 points in every 15 attempts.',
+           hazard: 0.15, twoPlayers: false, turnClock: false, ai: false },
+  ai:    { label: 'PLAYER VS AI', hint: 'Take turns against an Easy computer opponent.',
+           hazard: 0, twoPlayers: true, turnClock: true, ai: true },
+  pvp:   { label: 'PLAYER 1 VS PLAYER 2', hint: 'Two players share this device and take turns.',
+           hazard: 0.05, twoPlayers: true, turnClock: true, ai: false },
+};
+const START_MODE = MODES[urlParams.get('mode')] ? urlParams.get('mode') : null; // ?mode=alone skips the menu
+const HAZARD_OVERRIDE = urlParams.has('hazard') ? Number(urlParams.get('hazard')) : null;
+const HAZARD_PENALTY = 2; // points lost when a hazard tile is flipped (it also breaks the current attempt)
+
+// Play alone: an "attempt" is one try at a match (a submitted match, a wrong shape, a too-small submit
+// or a hazard) - not a single flip. Every 15 attempts the player must have earned 15 points.
+const ALONE_ATTEMPT_WINDOW = 15;
+const ALONE_POINTS_PER_WINDOW = 15;
+const ALONE_SCORE_FLOOR = -15;  // reaching this score is game over
+const ALONE_MISS_PENALTY = 1;   // a failed attempt (wrong shape / fewer than 3 submitted) costs this much
+
+// Easy AI (see GAMEPLAY.md): remembers about half of what it sees, sometimes wrongly, and takes its time.
+const AI_RECALL_RANGE = [0.45, 0.6]; // share of seen tiles it remembers (rolled once per game)
+const AI_MISTAKE_CHANCE = 0.1;       // a remembered tile is recalled as the wrong shape
+const AI_FORGET_ON_SWAP = 0.5;       // a shuffled tile is forgotten this often
+const AI_THINK_MS = 1400;
+const AI_TAP_MS = [700, 1200];
+const AI_MAX_ATTEMPTS = 3;           // match attempts per turn before it passes
+
 // "00:45" style clock text. Rounds up, so "00:00" only shows once time is really up.
 const formatClock = (ms) => {
   const total = Math.max(0, Math.ceil(ms / 1000));
@@ -44,6 +73,7 @@ const formatClock = (ms) => {
 const SHAPE_FILES = {
   mystery: 'Mystery.webp', // the hidden face (never a real shape)
   dummy:   'dummy.webp',  // blank wooden tile: neutral, non-scoring, and ignored by matching
+  hazard:  'hazard.webp', // skull tile: never matchable; flipping it costs points
   cancel:  'cancel.webp',
   capsule: 'capsule.webp',
   circle:  'circle.webp',
@@ -58,7 +88,7 @@ const SHAPE_FILES = {
   star:    'star .webp',    // note: space before the dot in the filename
   x:       'x.webp',
 };
-const SHAPE_KEYS = Object.keys(SHAPE_FILES).filter((k) => !['mystery', 'dummy'].includes(k));
+const SHAPE_KEYS = Object.keys(SHAPE_FILES).filter((k) => !['mystery', 'dummy', 'hazard'].includes(k));
 const DUMMY_SPAWN_CHANCE = 0.08; // blank wooden tiles are occasional neutral decoys
 
 function randomBoardShape() {
@@ -87,14 +117,60 @@ function shuffle(list) {
   return a;
 }
 
-// Starting board: every shape appears at least 3 times, the rest are random.
-function makeInitialBoard() {
+// Starting board: every shape appears at least 3 times, hazards take about `hazardChance` of the
+// board (out of the free slots), and the rest are random.
+function makeInitialBoard(hazardChance = 0) {
   const total = GRID_ROWS * GRID_COLS;
   const bag = [];
   SHAPE_KEYS.forEach((k) => bag.push(k, k, k));
+  const hazards = Math.min(total - bag.length, Math.round(total * hazardChance));
+  for (let i = 0; i < hazards; i++) bag.push('hazard');
   while (bag.length < total) bag.push(randomBoardShape());
   const flat = shuffle(bag);
   return Array.from({ length: GRID_ROWS }, (_, r) => flat.slice(r * GRID_COLS, (r + 1) * GRID_COLS));
+}
+
+// Spawning uses a "shuffle bag" instead of pure randomness: every shape is dealt once per round in a
+// random order, so the same shape is never dealt twice in a row and no shape can dominate a refill.
+// Shapes that are short on the board (fewer than MIN_MATCH) get one extra copy per round, so
+// matches stay possible without flooding the board with the shape that was just removed.
+class ShapeBag {
+  constructor(keys) {
+    this.keys = keys;
+    this.queue = [];
+    this.last = null;
+  }
+  next(scarce = []) {
+    if (!this.queue.some((k) => k !== this.last)) {
+      this.queue.push(...shuffle([...this.keys, ...scarce.filter((k) => this.keys.includes(k))]));
+    }
+    let i = this.queue.length - 1;
+    while (this.queue[i] === this.last) i--; // skip a repeat of the previous shape
+    const [shape] = this.queue.splice(i, 1);
+    this.last = shape;
+    return shape;
+  }
+}
+
+// A wooden button used by the menu, the in-game panel and the game-over screen.
+function woodButton(scene, x, y, w, h, label, fontSize, onTap, depth = 0, sub = null) {
+  const bg = scene.add.rectangle(x, y, w, h, 0x754322, 1).setStrokeStyle(4, 0xf3d29a)
+    .setDepth(depth).setInteractive({ useHandCursor: true });
+  const text = scene.add.text(x, sub ? y - h * 0.17 : y, label, {
+    fontFamily: FONT, fontSize: fontSize + 'px', color: '#ffffff',
+    stroke: '#3a2412', strokeThickness: Math.round(fontSize / 6),
+  }).setOrigin(0.5).setDepth(depth + 1);
+  const objects = [bg, text];
+  if (sub) {
+    objects.push(scene.add.text(x, y + h * 0.25, sub, {
+      fontFamily: FONT, fontSize: '20px', color: '#ffe9b8', align: 'center', wordWrap: { width: w - 40 },
+    }).setOrigin(0.5).setDepth(depth + 1));
+  }
+  bg.on('pointerdown', () => {
+    scene.tweens.add({ targets: [bg, text], scale: 0.96, duration: 70, yoyo: true });
+    onTap();
+  });
+  return objects;
 }
 
 // Plans the shuffle of a batch of `count` new tiles as a list of swaps [i, j] (indexes into the batch).
@@ -195,12 +271,31 @@ class InventoryLimiter {
   }
 }
 
-class GameScene extends Phaser.Scene {
+// Starts loading the custom font right away (in parallel with Phaser and the art). A slow or failed
+// font load never blocks the game for more than 2.5 seconds.
+const fontReady = Promise.race([
+  document.fonts.load(`20px ${FONT}`),
+  new Promise((resolve) => setTimeout(resolve, 2500)),
+]).catch(() => {});
+
+// Loads every asset behind a progress bar, so the player sees something while the game downloads.
+class BootScene extends Phaser.Scene {
   constructor() {
-    super('GameScene');
+    super('BootScene');
   }
 
   preload() {
+    const loading = document.getElementById('boot');
+    if (loading) loading.remove(); // the HTML placeholder is replaced by the in-game loading bar
+    this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x2b1a0f);
+    this.add.text(GAME_WIDTH / 2, 540, 'SHAPEY', {
+      fontFamily: 'sans-serif', fontSize: '96px', fontStyle: 'bold', color: '#fff2c7',
+      stroke: '#4a2814', strokeThickness: 12,
+    }).setOrigin(0.5);
+    this.add.rectangle(GAME_WIDTH / 2, 680, 444, 34, 0x4a2814).setStrokeStyle(4, 0xf3d29a);
+    const fill = this.add.rectangle(GAME_WIDTH / 2 - 216, 680, 4, 20, 0xffe36e).setOrigin(0, 0.5);
+    this.load.on('progress', (value) => { fill.width = Math.max(4, 432 * value); });
+
     this.load.setPath('assets');
 
     // backgrounds
@@ -232,12 +327,73 @@ class GameScene extends Phaser.Scene {
     this.load.audio('flip', ['audio/tile_flip_short.ogg', 'audio/tile_flip_short.wav']);
   }
 
+
+  async create() {
+    await fontReady; // usually already done by now
+    if (START_MODE) this.scene.start('GameScene', { mode: START_MODE });
+    else this.scene.start('MenuScene');
+  }
+}
+
+// Mode picker, shown before the game starts.
+class MenuScene extends Phaser.Scene {
+  constructor() {
+    super('MenuScene');
+  }
+
+  create() {
+    this.add.image(0, 0, 'bg').setOrigin(0, 0).setDisplaySize(GAME_WIDTH, GAME_HEIGHT);
+    this.add.text(GAME_WIDTH / 2, 150, 'SHAPEY', {
+      fontFamily: FONT, fontSize: '120px', color: '#fff2c7', stroke: '#3a2412', strokeThickness: 18,
+    }).setOrigin(0.5);
+
+    // a little row of tiles for decoration
+    ['star', 'circle', 'hazard', 'sphere', 'cross'].forEach((key, i) => {
+      const tile = this.add.image(104 + i * 128, 320, 'shape_' + key).setDisplaySize(104, 104)
+        .setAngle([-6, 4, -3, 6, -5][i]);
+      this.tweens.add({ targets: tile, y: tile.y - 10, duration: 1100 + i * 140, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    });
+
+    this.add.text(GAME_WIDTH / 2, 470, 'CHOOSE A MODE', {
+      fontFamily: FONT, fontSize: '38px', color: '#ffe36e', stroke: '#3a2412', strokeThickness: 7,
+    }).setOrigin(0.5);
+
+    Object.entries(MODES).forEach(([mode, cfg], i) => {
+      woodButton(this, GAME_WIDTH / 2, 640 + i * 200, 620, 160, cfg.label, 42,
+        () => this.scene.start('GameScene', { mode }), 10, cfg.hint);
+    });
+  }
+}
+
+class GameScene extends Phaser.Scene {
+  constructor() {
+    super('GameScene');
+  }
+
+  init(data) {
+    this.mode = (data && data.mode) || START_MODE || 'pvp';
+    this.modeCfg = MODES[this.mode];
+  }
+
   create() {
     this.scores = [0, 0];      // one score per player
     this.activePlayer = 0;     // 0 = Player 1, 1 = Player 2
     this.selection = [];      // tiles the player has picked, in order
     this.selectedShape = null; // the shape the current attempt is matching
     this.busy = false;        // true while animations run (input is ignored)
+    this.names = this.modeCfg.ai ? ['Player 1', 'AI'] : PLAYER_NAMES.slice();
+    this.hazardChance = HAZARD_OVERRIDE !== null ? HAZARD_OVERRIDE : this.modeCfg.hazard;
+    this.shapeBag = new ShapeBag(SHAPE_KEYS);
+    this.gameOver = false;
+    this.panelOpen = false;
+    this.panelUI = [];
+    this.turnId = 0;                 // bumped on every turn so a stale AI loop can tell its turn is over
+    this.attemptsInWindow = 0;       // play alone: attempts since the last checkpoint
+    this.windowPoints = 0;           // play alone: points earned since the last checkpoint
+    this.totalAttempts = 0;
+    this.checkpoints = 0;
+    this.aiMemory = new Map();       // tile -> shape the AI believes it is
+    this.aiRecall = AI_RECALL_RANGE[0] + Math.random() * (AI_RECALL_RANGE[1] - AI_RECALL_RANGE[0]);
     this.starBalance = this.loadStarBalance();
     this.inventoryItems = this.loadInventoryItems();
     this.inventoryUI = [];
@@ -261,6 +417,11 @@ class GameScene extends Phaser.Scene {
     this.createFx();
     this.createBoard();
     this.startTurn(0);
+    if (!this.modeCfg.twoPlayers) {
+      this.updateAloneHUD();
+      this.showToast('Score ' + ALONE_POINTS_PER_WINDOW + ' points in every ' + ALONE_ATTEMPT_WINDOW +
+        ' attempts.\nDon\u2019t fall to ' + ALONE_SCORE_FLOOR + '!', 5000);
+    }
   }
 
   // Runs every frame: flips tiles whose reveal is over, redraws both clocks, and ends the turn on timeout.
@@ -317,21 +478,24 @@ class GameScene extends Phaser.Scene {
 
   // Score planks, timer and stars.
   createHeader() {
-    const SCALE = 0.24;
-
-    const p1 = this.add.image(105, 20, 'playerPlank1').setOrigin(0.5, 0).setScale(SCALE).setDepth(10);
+    // The plank art is stored at about 1.5x its on-screen size (186 x 147 and 198 x 161).
+    const p1 = this.add.image(105, 20, 'playerPlank1').setOrigin(0.5, 0).setDisplaySize(186.24, 147.36).setDepth(10);
     this.p1Score = this.numberText(p1.x + 2, p1.y + p1.displayHeight * 0.35, '0', 46);
     this.p1Name = this.numberText(p1.x - 4, p1.y + p1.displayHeight * 0.83, 'Player 1', 21);
 
-    const p2 = this.add.image(612, 20, 'playerPlank2').setOrigin(0.5, 0).setScale(SCALE).setDepth(10);
+    const p2 = this.add.image(612, 20, 'playerPlank2').setOrigin(0.5, 0).setDisplaySize(197.76, 160.56).setDepth(10);
     this.p2Score = this.numberText(p2.x - 4, p2.y + p2.displayHeight * 0.35, '0', 46);
-    this.p2Name = this.numberText(p2.x - 4, p2.y + p2.displayHeight * 0.83, 'Player 2', 21);
+    this.p2Name = this.numberText(p2.x - 4, p2.y + p2.displayHeight * 0.83, this.names[1], 21);
 
     const timer = this.fitToWidth(this.add.image(GAME_WIDTH / 2, 101, 'timerPlank'), 262).setDepth(10);
     this.timerText = this.numberText(timer.x + 24, timer.y + 2, formatClock(TURN_MS), 46);
 
     // Countdown for newly spawned tiles. It sits under the turn timer and only shows while tiles are face-up.
-    this.revealText = this.numberText(GAME_WIDTH / 2, 188, '', 26).setVisible(false);
+    this.revealText = this.numberText(GAME_WIDTH / 2, 190, '', 26).setVisible(false);
+
+    // Play alone has no countdown: the plank shows points toward the next checkpoint instead,
+    // with the attempt number underneath.
+    this.goalText = this.numberText(GAME_WIDTH / 2, 166, '', 21).setVisible(!this.modeCfg.twoPlayers);
 
     this.p1Stars = this.createStars(38, 213, 5);
     this.p2Stars = this.createStars(546, 213, 5);
@@ -341,6 +505,16 @@ class GameScene extends Phaser.Scene {
       [p1, this.p1Score, this.p1Name, ...this.p1Stars],
       [p2, this.p2Score, this.p2Name, ...this.p2Stars],
     ];
+
+    // Play alone has no second player, so nothing of Player 2 is shown.
+    if (!this.modeCfg.twoPlayers) this.playerUI[1].forEach((object) => object.setVisible(false));
+  }
+
+  // Play alone: points toward the checkpoint on the plank, attempt number underneath.
+  updateAloneHUD() {
+    if (this.modeCfg.twoPlayers) return;
+    this.timerText.setText(this.windowPoints + '/' + ALONE_POINTS_PER_WINDOW);
+    this.goalText.setText('ATTEMPT ' + Math.min(this.attemptsInWindow + 1, ALONE_ATTEMPT_WINDOW) + ' OF ' + ALONE_ATTEMPT_WINDOW);
   }
 
   updateActivePlayerUI() {
@@ -376,8 +550,8 @@ class GameScene extends Phaser.Scene {
 
   // Both clocks are redrawn from their own deadlines, so they can never hold each other up.
   refreshClocks() {
-    const turnLeft = formatClock(this.turnClock.remaining());
-    this.setClockText(this.timerText, turnLeft);
+    const turnLeft = this.modeCfg.turnClock ? formatClock(this.turnClock.remaining()) : '';
+    if (this.modeCfg.turnClock) this.setClockText(this.timerText, turnLeft);
 
     const revealLeft = this.reveals.remaining();
     this.revealText.setVisible(revealLeft > 0 || this.shuffling > 0);
@@ -393,20 +567,33 @@ class GameScene extends Phaser.Scene {
   startTurn(player) {
     this.activePlayer = player;
     this.turnEnding = false;
-    this.turnClock.start(TURN_MS);
+    this.turnId++;
+    // Play alone has no countdown: the "deadline" never arrives.
+    if (this.modeCfg.turnClock) this.turnClock.start(TURN_MS);
+    else this.turnClock.endsAt = Infinity;
     this.updateActivePlayerUI();
+    if (this.modeCfg.ai && player === 1) this.runAITurn(this.turnId);
+  }
+
+  isAITurn() {
+    return this.modeCfg.ai && this.activePlayer === 1;
   }
 
   // Ends the active player's turn exactly once (timeout or a submitted match) and hands over to the other player.
   async endTurn(reason) {
-    if (this.turnEnding) return;
+    if (this.turnEnding || this.gameOver) return;
     this.turnEnding = true; // from here on, late taps and submits are ignored
     if (this.inventoryOpen) this.closeInventory();
     await this.resetSelection(); // flip any picked tiles back (nothing to do after a match)
+    if (this.gameOver) return;
+
+    // Play alone: there is nobody to hand over to, so the player simply keeps playing.
+    if (!this.modeCfg.twoPlayers) { this.turnEnding = false; return; }
 
     const next = 1 - this.activePlayer;
     this.startTurn(next);
-    this.showToast((reason === 'timeout' ? 'Time is up. ' : '') + PLAYER_NAMES[next] + '’s turn');
+    const prefix = reason === 'timeout' ? 'Time is up. ' : reason === 'pass' ? 'The AI passes. ' : '';
+    this.showToast(prefix + this.names[next] + '’s turn');
   }
 
   createStars(startX, y, count) {
@@ -442,10 +629,44 @@ class GameScene extends Phaser.Scene {
       this.submit();
     });
 
+    // Settings opens a small menu: resume, restart or go back to the mode picker.
+    const settings = this.buttons.btnSettings;
+    settings.setInteractive({ useHandCursor: true });
+    settings.on('pointerdown', () => this.openPanel());
+
     // Inventory opens the shop/inventory page.
     const inventory = this.buttons.btnInventory;
     inventory.setInteractive({ useHandCursor: true });
     inventory.on('pointerdown', () => this.openInventory());
+  }
+
+  // ------------------------------------------------------- in-game menu panel
+  openPanel() {
+    if (this.panelOpen || this.gameOver || this.inventoryOpen) return;
+    this.panelOpen = true;
+    const add = (object) => { this.panelUI.push(object); return object; };
+    add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.7)
+      .setDepth(250).setInteractive());
+    add(this.add.rectangle(GAME_WIDTH / 2, 640, 560, 560, 0x4b2d17, 1).setStrokeStyle(5, 0xd5ad72).setDepth(251));
+    add(this.add.text(GAME_WIDTH / 2, 410, 'MENU', {
+      fontFamily: FONT, fontSize: '56px', color: '#fff2c7', stroke: '#3a2412', strokeThickness: 9,
+    }).setOrigin(0.5).setDepth(252));
+    woodButton(this, GAME_WIDTH / 2, 530, 440, 90, 'RESUME', 36, () => this.closePanel(), 252).forEach(add);
+    woodButton(this, GAME_WIDTH / 2, 645, 440, 90, 'RESTART', 36,
+      () => this.scene.restart({ mode: this.mode }), 252).forEach(add);
+    woodButton(this, GAME_WIDTH / 2, 760, 440, 90, 'MAIN MENU', 36,
+      () => this.scene.start('MenuScene'), 252).forEach(add);
+    if (this.modeCfg.turnClock) {
+      add(this.add.text(GAME_WIDTH / 2, 850, 'The turn clock keeps running.', {
+        fontFamily: FONT, fontSize: '20px', color: '#ffe9b8',
+      }).setOrigin(0.5).setDepth(252));
+    }
+  }
+
+  closePanel() {
+    this.panelUI.forEach((object) => object.destroy());
+    this.panelUI = [];
+    this.panelOpen = false;
   }
 
   // ---------------------------------------------------------- inventory/shop
@@ -490,7 +711,7 @@ class GameScene extends Phaser.Scene {
   // Opening the inventory is limited per player (INVENTORY_OPEN_LIMIT per INVENTORY_WINDOW_MS) so it
   // can't be used to stall. Only a successful open is counted; redrawing the shop is not an open.
   openInventory() {
-    if (this.inventoryOpen || this.turnEnding) return;
+    if (this.inventoryOpen || this.turnEnding || this.gameOver || this.panelOpen || this.isAITurn()) return;
     const attempt = this.inventoryLimiter.tryOpen(this.activePlayer);
     if (!attempt.allowed) {
       const windowText = INVENTORY_WINDOW_MS % 60000 === 0
@@ -537,11 +758,13 @@ class GameScene extends Phaser.Scene {
     closeBg.on('pointerdown', () => this.closeInventory());
 
     // The turn clock keeps running while the shop is open, so show it here too.
-    this.inventoryTimerText = this.addInventoryUI(this.add.text(84, 66,
-      'TURN\n' + formatClock(this.turnClock.remaining()), {
-        fontFamily: FONT, fontSize: '24px', color: '#ffe36e',
-        stroke: '#4a2814', strokeThickness: 4, align: 'center',
-      }).setOrigin(0.5));
+    if (this.modeCfg.turnClock) {
+      this.inventoryTimerText = this.addInventoryUI(this.add.text(84, 66,
+        'TURN\n' + formatClock(this.turnClock.remaining()), {
+          fontFamily: FONT, fontSize: '24px', color: '#ffe36e',
+          stroke: '#4a2814', strokeThickness: 4, align: 'center',
+        }).setOrigin(0.5));
+    }
 
     const offers = [
       { key: 'audiencePick', name: 'AUDIENCE PICK', price: 3, desc: 'Ask the audience which shape to pursue.' },
@@ -626,8 +849,8 @@ class GameScene extends Phaser.Scene {
   createFx() {
     // slice the destroy sprite sheet into 6 frames and build the animation
     const tex = this.textures.get('tileDestroy');
-    DESTROY_FRAME_X.forEach((x, i) => tex.add('d' + i, 0, x, 0, 256, 241));
-    this.anims.create({
+    DESTROY_FRAME_X.forEach((x, i) => { if (!tex.has('d' + i)) tex.add('d' + i, 0, x, 0, 256, 241); });
+    if (!this.anims.exists('tileDestroy')) this.anims.create({
       key: 'tileDestroy',
       frames: DESTROY_FRAME_X.map((_, i) => ({ key: 'tileDestroy', frame: 'd' + i })),
       frameRate: 14,
@@ -637,16 +860,17 @@ class GameScene extends Phaser.Scene {
     const dustTex = this.textures.get('dust');
     DUST_FRAME_X.forEach((x, i) => {
       const frameWidth = Math.min(DUST_FRAME_WIDTH, DUST_SHEET_WIDTH - x);
-      dustTex.add('u' + i, 0, x, 0, frameWidth, DUST_FRAME_HEIGHT);
+      if (!dustTex.has('u' + i)) dustTex.add('u' + i, 0, x, 0, frameWidth, DUST_FRAME_HEIGHT);
     });
-    this.anims.create({
+    if (!this.anims.exists('dustPuff')) this.anims.create({
       key: 'dustPuff',
       frames: DUST_FRAME_X.map((_, i) => ({ key: 'dust', frame: 'u' + i })),
       frameRate: 11,
     });
 
     // flip sound: a few instances so quick flips can overlap
-    this.flipSounds = [0, 1, 2, 3].map(() => this.sound.add('flip', { volume: 0.55 }));
+    if (!this.game.flipSounds) this.game.flipSounds = [0, 1, 2, 3].map(() => this.sound.add('flip', { volume: 0.55 }));
+    this.flipSounds = this.game.flipSounds;
     this.flipSoundIndex = 0;
   }
 
@@ -674,7 +898,7 @@ class GameScene extends Phaser.Scene {
     );
     this.boardMask = maskGfx.createGeometryMask();
 
-    const layout = makeInitialBoard();
+    const layout = makeInitialBoard(this.hazardChance);
     this.tiles = [];
     const all = [];
     for (let r = 0; r < GRID_ROWS; r++) {
@@ -685,6 +909,7 @@ class GameScene extends Phaser.Scene {
         all.push(tile);
       }
     }
+    all.forEach((tile) => this.aiSee(tile)); // the AI studies the board too (and forgets about half of it)
     this.startReview(all, REVIEW_MS, false); // study phase: everything face-up for 15s, then flip to mystery (no shuffle)
   }
 
@@ -793,6 +1018,9 @@ class GameScene extends Phaser.Scene {
       const px = -(by - ay) / len;
       const py = (bx - ax) / len;
 
+      // Watching tiles trade places confuses the AI: it may forget what it knew about them.
+      if (this.modeCfg.ai) [a, b].forEach((t) => { if (Math.random() < AI_FORGET_ON_SWAP) this.aiMemory.delete(t); });
+
       // Board data changes first, so the grid always says where each tile belongs.
       const [aRow, aCol, bRow, bCol] = [a.row, a.col, b.row, b.col];
       this.tiles[bRow][bCol] = a;
@@ -849,10 +1077,19 @@ class GameScene extends Phaser.Scene {
     if (tile.ring) { tile.ring.destroy(); tile.ring = null; }
   }
 
-  onTileTap(tile) {
-    // Taps are ignored during hand-over and once the turn clock has run out.
-    // Tiles in the middle of a swap can't be tapped.
-    if (this.busy || this.turnEnding || this.turnClock.expired() || !tile.active || tile.selected || tile.swapping) return;
+  onTileTap(tile, fromAI = false) {
+    // Taps are ignored during hand-over, once the turn clock has run out, after game over and while a
+    // menu is open. Tiles in the middle of a swap can't be tapped, and a human can't tap during the AI's turn.
+    if (this.busy || this.turnEnding || this.gameOver || this.turnClock.expired() || !tile.active || tile.selected || tile.swapping) return;
+    if (!fromAI && (this.panelOpen || this.isAITurn())) return;
+
+    this.aiSee(tile, fromAI); // the AI sees every tile that gets flipped over (certainly its own, only partly the human's)
+
+    // A hazard costs points and breaks the current attempt.
+    if (tile.shape === 'hazard') {
+      this.hazardHit(tile);
+      return;
+    }
 
     // A blank wooden dummy is revealed briefly, but is otherwise as if it
     // had not been picked: it never joins or resets the current selection.
@@ -879,13 +1116,35 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  // A different shape was picked: show it briefly, then flip everything back. No score.
+  // A different shape was picked: show it briefly, then flip everything back. No points (play alone: -1).
   async failAttempt(wrongTile) {
     this.busy = true;
     await this.flipTile(wrongTile, true);
     await this.sleep(500);
     await this.resetSelection();
+    this.penalizeMiss();
     this.busy = false;
+    this.recordAttempt(0);
+  }
+
+  // A hazard (skull) tile: reveal it, take the penalty, lose the current selection, flip it back.
+  async hazardHit(tile) {
+    this.busy = true;
+    await this.flipTile(tile, true);
+    this.applyPenalty(HAZARD_PENALTY);
+    this.showToast('Hazard! \u2212' + HAZARD_PENALTY + ' points');
+    this.tweens.add({ targets: tile, angle: { from: -8, to: 8 }, duration: 70, yoyo: true, repeat: 3,
+      onComplete: () => { if (tile.active) tile.setAngle(0); } });
+    await this.sleep(900);
+    await this.resetSelection();
+    if (tile.active) await this.flipTile(tile, false);
+    this.busy = false;
+    this.recordAttempt(0);
+  }
+
+  // Play alone: a failed attempt costs a point. (Two-player modes keep failed attempts free.)
+  penalizeMiss() {
+    if (!this.modeCfg.twoPlayers) this.applyPenalty(ALONE_MISS_PENALTY);
   }
 
   // Flip every picked tile back to mystery, one after the other.
@@ -903,16 +1162,19 @@ class GameScene extends Phaser.Scene {
   }
 
   // -------------------------------------------------------------- submit
-  async submit() {
+  async submit(fromAI = false) {
     // A late submit (after the turn clock ran out, or during hand-over) is ignored.
-    if (this.busy || this.turnEnding || this.turnClock.expired() || this.selection.length === 0) return;
+    if (this.busy || this.turnEnding || this.gameOver || this.turnClock.expired() || this.selection.length === 0) return;
+    if (!fromAI && (this.panelOpen || this.isAITurn())) return;
     this.busy = true;
 
     const tiles = this.selection;
     if (tiles.length < MIN_MATCH) {
-      // not enough for a match: flip back, no score
+      // not enough for a match: flip back, no score (play alone: -1)
       await this.resetSelection();
+      this.penalizeMiss();
       this.busy = false;
+      this.recordAttempt(0);
       return;
     }
 
@@ -921,10 +1183,12 @@ class GameScene extends Phaser.Scene {
     this.selection = [];
     this.selectedShape = null;
 
-    this.addScore(scoreFor(tiles.length));
+    const points = scoreFor(tiles.length);
+    this.addScore(points);
     await this.destroyTiles(tiles);
     await this.cascade();
     this.busy = false;
+    this.recordAttempt(points);
     this.endTurn('match'); // a valid match ends the turn; the new tiles keep revealing during the next turn
   }
 
@@ -941,6 +1205,69 @@ class GameScene extends Phaser.Scene {
       targets: pop, y: pop.y - 120, alpha: 0, duration: 900, ease: 'Sine.easeOut',
       onComplete: () => pop.destroy(),
     });
+  }
+
+  // Takes points off the active player. Two-player modes never go below 0; play alone can go negative
+  // (and the game ends at ALONE_SCORE_FLOOR).
+  applyPenalty(points) {
+    const player = this.activePlayer;
+    const floor = this.modeCfg.twoPlayers ? 0 : -Infinity;
+    const lost = this.scores[player] - Math.max(floor, this.scores[player] - points);
+    if (lost <= 0) return;
+    this.scores[player] -= lost;
+    const label = player === 0 ? this.p1Score : this.p2Score;
+    label.setText(String(this.scores[player]));
+    this.tweens.add({ targets: label, scale: 1.35, duration: 120, yoyo: true });
+
+    const pop = this.numberText(GAME_WIDTH / 2, this.tray.y, '\u2212' + lost, 90).setDepth(20).setColor('#ff8a7a');
+    this.tweens.add({
+      targets: pop, y: pop.y - 120, alpha: 0, duration: 900, ease: 'Sine.easeOut',
+      onComplete: () => pop.destroy(),
+    });
+  }
+
+  // Play alone: counts one attempt and checks the two ways to lose. `gained` = points the attempt earned.
+  recordAttempt(gained) {
+    if (this.modeCfg.twoPlayers || this.gameOver) return;
+    this.attemptsInWindow++;
+    this.totalAttempts++;
+    this.windowPoints += gained;
+    this.updateAloneHUD();
+
+    if (this.scores[0] <= ALONE_SCORE_FLOOR) {
+      this.endGame('Your score fell to ' + ALONE_SCORE_FLOOR + '.');
+    } else if (this.attemptsInWindow >= ALONE_ATTEMPT_WINDOW) {
+      if (this.windowPoints < ALONE_POINTS_PER_WINDOW) {
+        this.endGame('You earned ' + this.windowPoints + ' of the ' + ALONE_POINTS_PER_WINDOW +
+          ' points needed in ' + ALONE_ATTEMPT_WINDOW + ' attempts.');
+      } else {
+        this.checkpoints++;
+        this.showToast('Checkpoint ' + this.checkpoints + ' cleared with ' + this.windowPoints +
+          ' points!\nNext ' + ALONE_ATTEMPT_WINDOW + ' attempts start now.', 3200);
+        this.attemptsInWindow = 0;
+        this.windowPoints = 0;
+        this.updateAloneHUD();
+      }
+    }
+  }
+
+  endGame(reason) {
+    if (this.gameOver) return;
+    this.gameOver = true;
+    if (this.inventoryOpen) this.closeInventory();
+    this.closePanel();
+    const text = (y, message, size, color = '#ffffff') => this.add.text(GAME_WIDTH / 2, y, message, {
+      fontFamily: FONT, fontSize: size + 'px', color, stroke: '#3a2412', strokeThickness: Math.round(size / 6),
+      align: 'center', wordWrap: { width: 600 },
+    }).setOrigin(0.5).setDepth(301);
+    this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.85)
+      .setDepth(300).setInteractive();
+    text(330, 'GAME OVER', 84, '#ff8a7a');
+    text(450, reason, 32, '#fff2c7');
+    text(600, 'Score: ' + this.scores[0] + '\nAttempts: ' + this.totalAttempts +
+      '\nCheckpoints cleared: ' + this.checkpoints, 40, '#ffe36e');
+    woodButton(this, GAME_WIDTH / 2, 810, 500, 110, 'PLAY AGAIN', 44, () => this.scene.restart({ mode: this.mode }), 301);
+    woodButton(this, GAME_WIDTH / 2, 950, 500, 110, 'MAIN MENU', 44, () => this.scene.start('MenuScene'), 301);
   }
 
   // Burn the matched tiles away with the destroy animation.
@@ -998,7 +1325,26 @@ class GameScene extends Phaser.Scene {
     }
 
     await Promise.all(fallTweens);
+    this.ensureMatchPossible(fresh);
+    fresh.forEach((tile) => this.aiSee(tile)); // the AI watches the new tiles being revealed
     if (fresh.length) this.startReview(fresh);
+  }
+
+  // Safety net: if a refill leaves no shape with 3 tiles, turn some new tiles into the most common
+  // shape so the board never becomes unplayable.
+  ensureMatchPossible(fresh) {
+    const counts = {};
+    for (const row of this.tiles) for (const t of row) if (t && SHAPE_KEYS.includes(t.shape)) counts[t.shape] = (counts[t.shape] || 0) + 1;
+    if (Object.values(counts).some((n) => n >= MIN_MATCH)) return;
+    const best = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || SHAPE_KEYS[0];
+    let need = MIN_MATCH - (counts[best] || 0);
+    for (const tile of fresh) {
+      if (need <= 0) break;
+      if (tile.shape === best) continue;
+      tile.shape = best;
+      tile.setTexture('shape_' + best); // still face-up at this point
+      need--;
+    }
   }
 
   // Drops a tile to targetY. With `dust`, a dust puff plays the moment it first lands.
@@ -1020,27 +1366,130 @@ class GameScene extends Phaser.Scene {
     puff.once('animationcomplete', () => puff.destroy());
   }
 
-  // Random new shape, favouring shapes with fewer than 3 left so matches stay possible.
+  // New tile: a hazard (per-mode chance), occasionally a blank wooden dummy, otherwise the next shape
+  // from the shuffle bag (see ShapeBag) so spawns stay varied.
   pickShape(counts) {
-    // Occasionally spawn a blank wooden dummy; it never counts toward matches.
+    if (Math.random() < this.hazardChance) return 'hazard';
     if (Math.random() < DUMMY_SPAWN_CHANCE) return 'dummy';
-    const scarce = SHAPE_KEYS.filter((k) => (counts[k] || 0) < MIN_MATCH);
-    return randomItem(scarce.length ? scarce : SHAPE_KEYS);
+    return this.shapeBag.next(SHAPE_KEYS.filter((k) => (counts[k] || 0) < MIN_MATCH));
+  }
+
+  // ------------------------------------------------------------------ easy AI
+  // The AI only knows what it has seen: the opening board, new tiles while they are face-up, and every
+  // tile that gets flipped. It remembers about half of it, sometimes wrongly, and forgets tiles that
+  // get shuffled. Memory is kept per tile (not per grid cell), so it follows tiles as they fall.
+  aiSee(tile, certain = false) {
+    if (!this.modeCfg.ai || !tile.active) return;
+    if (!certain && Math.random() > this.aiRecall) return;
+    const slip = !certain && Math.random() < AI_MISTAKE_CHANCE;
+    this.aiMemory.set(tile, slip ? randomItem(SHAPE_KEYS) : tile.shape);
+  }
+
+  aiCanTap(tile) {
+    return tile.active && !tile.selected && !tile.swapping && !tile.faceUp;
+  }
+
+  // Remembered, still available tiles of one shape.
+  aiKnown(shape) {
+    const list = [];
+    for (const [tile, remembered] of this.aiMemory) {
+      if (!tile.active) this.aiMemory.delete(tile);
+      else if (remembered === shape && this.aiCanTap(tile)) list.push(tile);
+    }
+    return list;
+  }
+
+  // A shape it remembers at least 3 of. Easy rarely goes for the biggest group.
+  aiChooseGroup() {
+    const groups = {};
+    for (const [tile, shape] of this.aiMemory) {
+      if (!tile.active) { this.aiMemory.delete(tile); continue; }
+      if (shape === 'dummy' || shape === 'hazard' || !this.aiCanTap(tile)) continue;
+      (groups[shape] = groups[shape] || []).push(tile);
+    }
+    const ready = Object.values(groups).filter((list) => list.length >= MIN_MATCH);
+    if (!ready.length) return null;
+    ready.sort((a, b) => b.length - a.length);
+    return Math.random() < 0.2 ? ready[0] : randomItem(ready);
+  }
+
+  // A plausible guess: any hidden tile it doesn't remember as something else (and never a remembered dummy/hazard).
+  aiGuess(shape = null) {
+    const pool = [];
+    for (const row of this.tiles) {
+      for (const tile of row) {
+        if (!tile || !this.aiCanTap(tile)) continue;
+        const remembered = this.aiMemory.get(tile);
+        if (remembered === 'dummy' || remembered === 'hazard') continue;
+        if (shape && remembered && remembered !== shape) continue;
+        pool.push(tile);
+      }
+    }
+    return pool.length ? randomItem(pool) : null;
+  }
+
+  async aiIdle(alive) {
+    while (this.busy && alive()) await this.sleep(100);
+  }
+
+  // One visible tap after a human-like pause.
+  async aiTap(tile, alive) {
+    await this.sleep(AI_TAP_MS[0] + Math.random() * (AI_TAP_MS[1] - AI_TAP_MS[0]));
+    await this.aiIdle(alive);
+    if (!alive()) return false;
+    this.onTileTap(tile, true);
+    await this.sleep(250);
+    await this.aiIdle(alive); // a wrong tap resets the attempt before the AI carries on
+    return alive();
+  }
+
+  // One match attempt. Returns true when it submitted a match (submit() then ends the turn).
+  async aiAttempt(alive) {
+    const group = this.aiChooseGroup();
+    const first = group ? group[0] : this.aiGuess();
+    if (!first || !(await this.aiTap(first, alive))) return false;
+
+    const wantFourth = Math.random() < 0.3;
+    while (alive() && this.selection.length > 0) {
+      const known = this.aiKnown(this.selectedShape);
+      const enough = this.selection.length >= MIN_MATCH;
+      if (enough && !(wantFourth && this.selection.length === MIN_MATCH && known.length)) break;
+      const next = known.length ? randomItem(known) : (enough ? null : this.aiGuess(this.selectedShape));
+      if (!next || !(await this.aiTap(next, alive))) break;
+    }
+    if (!alive()) return false;
+    if (this.selection.length >= MIN_MATCH) {
+      await this.sleep(700);
+      await this.submit(true);
+      return true;
+    }
+    return false;
+  }
+
+  async runAITurn(turnId) {
+    const alive = () => turnId === this.turnId && !this.turnEnding && !this.gameOver;
+    await this.sleep(AI_THINK_MS);
+    for (let i = 0; i < AI_MAX_ATTEMPTS && alive(); i++) {
+      await this.aiIdle(alive);
+      if (!alive()) return;
+      if (await this.aiAttempt(alive)) return;
+      await this.sleep(700);
+    }
+    if (alive()) this.endTurn('pass');
   }
 }
 
-// Wait for the custom font so the first frame already uses it.
-document.fonts.load(`20px ${FONT}`).catch(() => {}).finally(() => {
-  window.game = new Phaser.Game({
-    type: Phaser.AUTO,
-    parent: 'game',
-    width: GAME_WIDTH,
-    height: GAME_HEIGHT,
-    backgroundColor: '#000000',
-    scale: {
-      mode: Phaser.Scale.FIT,
-      autoCenter: Phaser.Scale.CENTER_BOTH,
-    },
-    scene: [GameScene],
-  });
+// The game starts immediately (the font and art load behind a progress bar), instead of waiting for the font first.
+window.game = new Phaser.Game({
+  type: Phaser.AUTO,
+  parent: 'game',
+  width: GAME_WIDTH,
+  height: GAME_HEIGHT,
+  backgroundColor: '#2b1a0f',
+  banner: false,
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+  },
+  scene: [BootScene, MenuScene, GameScene],
 });
