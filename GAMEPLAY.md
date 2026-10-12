@@ -44,7 +44,17 @@ Keep these existing values initially so the new mechanics can be tested without 
 
 ### Mode menu (implemented)
 
-The game opens on a menu with three modes: **Play alone**, **Player vs AI** and **Player 1 vs Player 2** (same device). Settings (in game) opens a small menu to resume, restart or return here. For testing, `?mode=alone`, `?mode=ai` or `?mode=pvp` skips the menu.
+The game opens on a menu with four modes: **Play alone**, **Player vs AI**, **Player 1 vs Player 2** (same device) and **Tag: 2 vs 2** (same device). Choosing Player vs AI first opens a **Choose difficulty** panel (Easy / Professional / Back). Settings (in game) opens a small menu to resume, restart (keeping the chosen difficulty) or return here. For testing, `?mode=alone`, `?mode=ai`, `?mode=pvp` or `?mode=tag` skips the menu; `?mode=ai` starts on Easy unless `?level=pro` is added.
+
+### Tag: 2 vs 2 (implemented)
+
+Two teams of two share one device (online play is still future work). Team 1 is Player 1 and Player 2; Team 2 is Player 3 and Player 4.
+
+- **Turn order:** the teams alternate, and each team's partners take turns, so the sequence is Player 1 → Player 3 → Player 2 → Player 4 → Player 1 → ... A partner "tags in" every other turn.
+- **One score per team.** A match scores for the team of whoever played it, so partners add to the same score. The header planks read TEAM 1 / TEAM 2, and a line under the timer names the team and partner whose turn it is (for example "TEAM 1: PLAYER 2"). The turn toast says the same.
+- **Everything else matches Player vs Player:** 45-second turns, 5% hazards, same scoring, shuffle and timeout rules. A timeout passes to the next player in the sequence.
+- **Inventory limit is per player:** each of the four players has their own 2-opens-per-5-minutes allowance (`limiterSlot()`).
+- Not implemented yet: stars, streaks and inventory are still one shared balance, there is no target score or winner screen in any mode yet, and there is no hand-off screen hiding the board between players.
 
 ### Play alone (implemented)
 
@@ -57,21 +67,38 @@ The game opens on a menu with three modes: **Play alone**, **Player vs AI** and 
 
 ### Hazard tile (implemented)
 
-`hazard.webp` (skull and crossbones) is a special tile, not a normal shape: it never matches and is excluded from the guaranteed-three distribution. Flipping one reveals it briefly, costs `HAZARD_PENALTY` (2) points, breaks the current selection and then hides it again. It does not end the turn. In the two-player modes the score never drops below 0.
+`hazard.webp` (skull and crossbones) is a special tile, not a normal shape: it never matches, never joins the selection and is excluded from the guaranteed-three distribution. What it does depends on whether other shapes are already picked:
+
+- **Flipped on its own (nothing picked):** it reveals briefly, costs `HAZARD_PENALTY` (2) points and hides again. It does not end the turn.
+- **Flipped while other shapes are picked:** it **destroys itself and every picked tile, with no reward** (`hazardBlast()` in `src/main.js`). No points are won *and none are lost*. The tiles burst with the normal destroy effect, the board falls and refills, the new tiles get the usual 5-second reveal and shuffle, and the turn is spent like a match (play passes on; play alone counts it as one attempt). This is deliberately different from a wrong shape, which only flips the picks back, and from a match, which pays points.
+
+In the two-player and Tag modes the score never drops below 0.
 
 | Mode | Hazard share of tiles |
 |---|---:|
 | Play alone | 15% |
 | Player vs Player | 5% |
+| Tag: 2 vs 2 | 5% |
 | Player vs AI | 0% |
 
 The starting board gets about that share of hazards, and every newly spawned tile has that chance (`MODES[...].hazard`; `?hazard=0.5` overrides it for testing).
 
 ### Play against AI
 
-**Status:** a simple Easy AI is implemented; Hard and the difficulty picker are not. The Easy AI watches the opening board and new tiles, remembers about 45–60% of them (sometimes wrongly), forgets tiles that get shuffled, plays visibly with pauses, tries up to 3 matches per turn and then passes. See `AI_*` constants and `aiSee`/`aiAttempt` in `src/main.js`.
+**Status:** both levels and the difficulty picker are implemented. After choosing Player vs AI the player picks **Easy** or **Professional** (the "Hard" design below, named Professional in the game). The level is shown on the AI's plank ("AI Easy" / "AI Pro") and is kept by Restart and Play again. Every number that differs between the levels lives in the `AI_LEVELS` table in `src/main.js` (see `aiSee`/`aiChooseGroup`/`aiAttempt`). The opponent takes a visible turn, reveals tiles with a short delay, submits its match, and then returns control to the player.
 
-After selecting AI, show **Easy** and **Hard**. The opponent should take a visible turn, reveal tiles with a short delay, submit its match, and then return control to the player.
+| | Easy | Professional |
+|---|---|---|
+| Share of seen tiles remembered | 45–60% | 95–100% |
+| Remembers a tile as the wrong shape | 10% | 1% |
+| Forgets a shuffled tile | 50% | 10% |
+| Thinking pause / pause per tap | 1.4 s / 0.7–1.2 s | 0.9 s / 0.45–0.8 s |
+| Match attempts per turn | up to 3 | up to 5 |
+| Picks the biggest remembered group | 20% of the time | always |
+| Reaches for | 3 tiles, sometimes 4 | 5 tiles (the 5+ score) |
+| With no full match remembered | guesses | starts from the shape it remembers most copies of, then explores tiles it has no memory of |
+
+Neither level reaches for a bigger match when under 6 seconds of the turn is left (`AI_SPARE_MS`). Inventory power-ups are not used by either level yet, because power-ups have no in-match effect for humans either.
 
 **Easy**
 - Remembers roughly 45–60% of the tiles it saw, with intentional memory mistakes.
@@ -302,7 +329,7 @@ Every turn should pass through one explicit state machine:
 - The 45-second turn clock now runs from an absolute deadline, ends the turn on timeout, and runs alongside the 5-second reveal and shuffle of new tiles. Double Time (90 seconds) and a server-authoritative deadline are not implemented.
 - The star rows are currently decorative; there is no starting free Star, successful-match streak tracker, or inventory currency.
 - Only Submit has a click handler. Polls, Inventory, and Settings do not yet open working panels.
-- There is no Hard AI, online lobby, live audience/poll service, or match-winner state (play alone has its own game-over flow).
+- There is no online lobby, live audience/poll service, or match-winner state (play alone has its own game-over flow). Easy and Professional AI, Tag mode and the hazard rules are implemented (section 2).
 - The blank wooden dummy now has its own `dummy.webp` asset and neutral tap behavior. The existing `cancel.webp` should become a defensive inventory card rather than a normal scoring shape; its collection, inventory display, and counter-use flow still need implementation.
 - The old 10-second idle auto-submit has been removed, so a valid selection now waits for the Submit button.
 - Player mode, scoring, turn deadline, inventory, streak, and board resolution should be owned by a small game-state layer instead of being scattered across animation callbacks. UI animations should react to resolved state, not decide the result themselves.
@@ -310,7 +337,7 @@ Every turn should pass through one explicit state machine:
 ## 7. Recommended implementation order
 
 1. **Core rules:** active player, score per player, 45-second countdown, turn timeout, match end/rematch, correct reset on wrong tiles.
-2. **AI modes:** Easy and Hard using only information each player could reasonably observe.
+2. **AI modes:** Easy and Hard (Professional) using only information each player could reasonably observe. *(Done, except power-up use.)*
 3. **Stars and inventory:** 1 starting Star, successful-match streak rewards, persistent wallet, buy/use flows, Double Time, Double Play, Score Strike, and the rare Counter Shield.
 4. **Audience Pick:** begin with a clearly labelled practice audience; replace it with real voting only after a live backend exists.
 5. **Online play:** room codes, presence, authoritative turn/move validation, persistent accounts and inventory, reconnect handling, and spectator voting.

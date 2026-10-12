@@ -7,7 +7,8 @@
 
 Shapey is intended to be a competitive, turn-based memory-and-matching game with a candy-crush-style board cascade. Players study a board of symbols, wait for the symbols to turn face-down, then use memory to uncover three or more tiles of the same normal shape. Players race to a score target. The long-term design supports:
 
-- Player versus AI, with Easy and Hard difficulty.
+- Player versus AI, with Easy and Professional (Hard) difficulty.
+- Tag: two teams of two on one device (same-device for now).
 - Online human versus human using a shared backend.
 - A configurable score target.
 - Stars, streak rewards, an inventory/shop, and tactical power-ups.
@@ -35,7 +36,7 @@ The current app is a static Phaser 3 browser prototype hosted on GitHub Pages. T
 - Test overrides (milliseconds): `?review=3000` shortens the opening study phase, `?reveal=2000` the spawned-tile reveal, `?swap=500` each swap.
 - The reveal countdown runs **concurrently** with the 45-second turn clock. Each batch of revealed tiles has its own absolute deadline (`RevealTracker`), separate from the turn deadline (`Countdown`), so neither can pause or extend the other. The header shows a "MEMORIZE" countdown while any tiles are face-up.
 - Other test overrides (milliseconds): `?turn=10000` shortens the turn, `?invwindow=20000` shortens the inventory-limit window.
-- Mode and hazard test overrides: `?mode=alone|ai|pvp` skips the mode menu, `?hazard=0.5` sets the hazard spawn chance.
+- Mode and hazard test overrides: `?mode=alone|ai|pvp|tag` skips the mode menu, `?level=easy|pro` picks the AI difficulty when `?mode=ai` is used (default Easy), `?hazard=0.5` sets the hazard spawn chance.
 
 ### Scenes, modes and loading
 
@@ -43,9 +44,12 @@ The current app is a static Phaser 3 browser prototype hosted on GitHub Pages. T
 - **Branding rule:** the Shapey logo image (`shapey logo.webp`) is used for every Shapey logo (loading screens, menu, README, favicon `shapey icon.webp`); do not draw "SHAPEY" as text. The load rectangle image is the only loading bar.
 - Landing dust (`assets/fx/dusty.webp`) is 7 equal 304 x 156 cells, each puff centred on its cell's middle and sitting on the bottom edge, so the cloud grows in place instead of drifting sideways. If the sheet is replaced, repack it the same way (equal cells, shared anchor) rather than slicing on a guessed grid.
 - Art is stored at about 1.5x its on-screen size (the canvas itself is 720 px wide) to keep downloads and GPU memory small. Keep that in mind before swapping in new art: `setDisplaySize`/`fitToWidth` do the scaling, so any size works, but oversized files slow loading on phones.
-- `MODES` (top of `src/main.js`) defines the three modes: hazard chance, whether there are two players, whether the turn clock runs, and whether the AI plays. Play-alone rules are the `ALONE_*` constants; recording attempts and game over live in `recordAttempt()` and `endGame()`.
+- `MODES` (top of `src/main.js`) defines the four modes: hazard chance, whether there are two players, whether the turn clock runs, whether the AI plays, and `teams` (Tag). The menu is built from it, so a new entry appears automatically (the menu spaces four 140px buttons 165px apart; a fifth needs the layout in `MenuScene.create()` revisited). Play-alone rules are the `ALONE_*` constants; recording attempts and game over live in `recordAttempt()` and `endGame()`.
+- **Sides vs players.** `activePlayer` is the *side* that is playing (0 or 1) and drives scores, planks, dimming and the AI. In Tag a side is a team, and `activeMember` (0 or 1, from `turnNumber`) says which partner is playing; `turnLabel()` turns the pair into "Team 1: Player 2" and `limiterSlot()` gives each of the four players their own inventory-limit slot. `startTurn()` is the only place that advances `turnNumber`. `TEAM_PLAYERS` holds the names.
+- **Difficulty.** Player vs AI opens a "Choose difficulty" panel (`MenuScene.openDifficulty()`) built from `AI_LEVELS`, then starts `GameScene` with `{ mode: 'ai', difficulty }`. `GameScene.init()` stores it as `this.difficulty` and `this.ai` (the level's settings object); Restart and Play again pass it back so the level survives.
 - Spawning: `pickShape()` rolls hazard, then dummy, then draws from `ShapeBag` (see GAMEPLAY.md). `ensureMatchPossible()` is the safety net after a refill.
-- The Easy AI (`aiSee`, `aiChooseGroup`, `aiGuess`, `aiAttempt`, `runAITurn`) only uses tiles it has actually seen, keyed by tile object so memory follows tiles as they fall.
+- **Hazards.** `onTileTap()` routes a hazard to `hazardBlast()` when something is already picked (the hazard and all picked tiles are destroyed with no points won or lost, then the board refills and the turn ends, like a match with no reward) and to `hazardHit()` when nothing is picked (`HAZARD_PENALTY` points, the hazard flips back, the turn continues). The blast reuses `destroyTiles()` and `cascade()` from the submit path, and calls `cancelShuffles()` first for the same reason `submit()` does.
+- The AI (`aiSee`, `aiGroups`, `aiChooseGroup`, `aiGuess`, `aiAttempt`, `runAITurn`) only uses tiles it has actually seen, keyed by tile object so memory follows tiles as they fall. Everything that differs between Easy and Professional is a field of the `AI_LEVELS` entry in `this.ai`; do not branch on the difficulty name in the code.
 
 The memory challenge is based on tile identity and location. Do not show exact hidden positions to a player through UI, logs, AI logic, or audience polling.
 
@@ -251,7 +255,7 @@ Asset: `assets/shapes/cancel.webp`; code key: `cancel`.
 
 ## 8. AI opponent design
 
-The game should offer **Easy** and **Hard**. Both use the same board odds, score rules, timers, and item costs as a human.
+The game offers **Easy** and **Professional** (the "Hard" design below) through a difficulty panel after Player vs AI is chosen. **Both are implemented**, except for using inventory items (power-ups have no in-match effect yet, for humans either). Both use the same board odds, score rules, timers, and item costs as a human. The exact numbers are in `AI_LEVELS` in `src/main.js` and are tabulated in `GAMEPLAY.md`.
 
 ### Easy AI
 
@@ -261,9 +265,9 @@ The game should offer **Easy** and **Hard**. Both use the same board odds, score
 - Uses realistic tap delays rather than instantly completing a turn.
 - Rarely optimizes for the largest match.
 
-### Hard AI
+### Hard AI (Professional in the game)
 
-- Remembers almost all tiles it legitimately saw.
+- Remembers almost all tiles it legitimately saw (95–100%, with a 1% chance of misremembering a tile; when it taps a tile that turns out to be a different shape it adapts to what it now knows rather than giving up).
 - Still cannot inspect hidden board state it has not observed.
 - Prioritizes known matches of 5+, then 4, then 3, while leaving enough time to submit.
 - Tracks tile identities through cascades so memory follows moved pieces.
@@ -312,6 +316,10 @@ The following reflects the current repository state at the time this guide was w
 - Per-player scores, an active-player indicator, and turn hand-over after a submitted match or timeout (same-device pass-and-play).
 - A running 45-second turn countdown that works concurrently with the 5-second "MEMORIZE" reveal countdown for new tiles, followed by the sequential 2-second-per-swap shuffle with square strokes around the swapping pair.
 - Inventory access limit: 2 opens per player per rolling 5 minutes, with the turn clock still running while the shop is open.
+- Four-mode menu: Play alone, Player vs AI, Player 1 vs Player 2 and **Tag: 2 vs 2**.
+- **Tag mode:** two teams of two on one device, partners alternating (Player 1, 3, 2, 4), one shared score per team, a header line naming the active player, and a separate inventory limit for each of the four players.
+- **AI difficulty picker** (Easy / Professional) and a distinct **Professional AI**; both levels are configured by `AI_LEVELS`.
+- **Hazard rules:** a lone hazard costs `HAZARD_PENALTY` points; a hazard flipped while shapes are picked destroys itself and all picked tiles with no reward (`hazardBlast()`).
 
 ### Not yet implemented or incomplete
 
@@ -322,7 +330,8 @@ The following reflects the current repository state at the time this guide was w
 - In-match use/effects for the purchased power-ups.
 - Real Cancel tile pickup, Counter inventory item, and response/cancellation flow.
 - Removing Cancel from normal match generation.
-- AI Easy/Hard.
+- AI use of inventory items (Easy and Professional play without power-ups).
+- Online Tag/PvP; a hand-off screen between the four same-device Tag players.
 - Online rooms, shared board, server-authoritative state, reconnect handling, accounts, and secure persistent inventory.
 - Audience Pick interaction, Practice Audience voting, and real spectator voting.
 - Complete settings and sound controls.

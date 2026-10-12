@@ -36,17 +36,24 @@ const PLAYER_NAMES = ['Player 1', 'Player 2'];
 
 // ---- Game modes --------------------------------------------------------------
 // hazard = chance that a newly spawned tile is a hazard (skull) tile. Test override: ?hazard=0.5
+// teams = Tag mode: two teams of two share the device, and each team's partners take turns (see turnLabel()).
 const MODES = {
   alone: { label: 'PLAY ALONE', hint: 'No timer. Score 15 points in every 15 attempts.',
            hazard: 0.15, twoPlayers: false, turnClock: false, ai: false },
-  ai:    { label: 'PLAYER VS AI', hint: 'Take turns against an Easy computer opponent.',
+  ai:    { label: 'PLAYER VS AI', hint: 'Take turns against the computer. Pick Easy or Professional.',
            hazard: 0, twoPlayers: true, turnClock: true, ai: true },
   pvp:   { label: 'PLAYER 1 VS PLAYER 2', hint: 'Two players share this device and take turns.',
            hazard: 0.05, twoPlayers: true, turnClock: true, ai: false },
+  tag:   { label: 'TAG: 2 VS 2', hint: 'Two teams of two share this device. Partners tag in on every other turn.',
+           hazard: 0.05, twoPlayers: true, turnClock: true, ai: false, teams: true },
 };
+const TEAM_PLAYERS = [['Player 1', 'Player 2'], ['Player 3', 'Player 4']]; // Tag: Team 1 and Team 2
 const START_MODE = MODES[urlParams.get('mode')] ? urlParams.get('mode') : null; // ?mode=alone skips the menu
 const HAZARD_OVERRIDE = urlParams.has('hazard') ? Number(urlParams.get('hazard')) : null;
-const HAZARD_PENALTY = 2; // points lost when a hazard tile is flipped (it also breaks the current attempt)
+// A hazard tile has two effects (see hazardHit / hazardBlast):
+// - flipped on its own it costs this many points and breaks the attempt;
+// - flipped while other shapes are picked, it destroys itself and every picked tile, with no points won or lost.
+const HAZARD_PENALTY = 2;
 
 // Play alone: an "attempt" is one try at a match (a submitted match, a wrong shape, a too-small submit
 // or a hazard) - not a single flip. Every 15 attempts the player must have earned 15 points.
@@ -55,13 +62,28 @@ const ALONE_POINTS_PER_WINDOW = 15;
 const ALONE_SCORE_FLOOR = -15;  // reaching this score is game over
 const ALONE_MISS_PENALTY = 1;   // a failed attempt (wrong shape / fewer than 3 submitted) costs this much
 
-// Easy AI (see GAMEPLAY.md): remembers about half of what it sees, sometimes wrongly, and takes its time.
-const AI_RECALL_RANGE = [0.45, 0.6]; // share of seen tiles it remembers (rolled once per game)
-const AI_MISTAKE_CHANCE = 0.1;       // a remembered tile is recalled as the wrong shape
-const AI_FORGET_ON_SWAP = 0.5;       // a shuffled tile is forgotten this often
-const AI_THINK_MS = 1400;
-const AI_TAP_MS = [700, 1200];
-const AI_MAX_ATTEMPTS = 3;           // match attempts per turn before it passes
+// AI difficulty (see GAMEPLAY.md). Both levels play by the same rules and only ever know what they have seen;
+// they differ in memory and decisions. The picker in MenuScene is built from this table.
+//   recall       share of seen tiles it remembers (rolled once per game)
+//   mistake      a remembered tile is recalled as the wrong shape this often
+//   forgetOnSwap a shuffled tile is forgotten this often
+//   thinkMs / tapMs / gapMs / submitMs   human-like pauses (before the turn, per tap, between attempts, before Submit)
+//   maxAttempts  match attempts per turn before it passes
+//   bestGroupChance  chance it picks the biggest remembered group (otherwise a random one)
+//   goBig        always reaches for a 5-tile match when it remembers enough tiles (Easy only sometimes tries for 4)
+//   followHunch  with no full match remembered, starts from the shape it remembers most copies of
+//   preferUnknown  when exploring, flips tiles it has no memory of first
+const AI_LEVELS = {
+  easy: { label: 'EASY', tag: 'Easy', hint: 'Forgets a lot, guesses often and plays slowly.',
+          recall: [0.45, 0.6], mistake: 0.1, forgetOnSwap: 0.5,
+          thinkMs: 1400, tapMs: [700, 1200], gapMs: 700, submitMs: 700, maxAttempts: 3,
+          bestGroupChance: 0.2, goBig: false, followHunch: false, preferUnknown: false },
+  pro:  { label: 'PROFESSIONAL', tag: 'Pro', hint: 'Remembers almost every tile and goes for the biggest match.',
+          recall: [0.95, 1], mistake: 0.01, forgetOnSwap: 0.1,
+          thinkMs: 900, tapMs: [450, 800], gapMs: 400, submitMs: 450, maxAttempts: 5,
+          bestGroupChance: 1, goBig: true, followHunch: true, preferUnknown: true },
+};
+const AI_SPARE_MS = 6000; // the AI stops reaching for a bigger match when this little of its turn is left
 
 // "00:45" style clock text. Rounds up, so "00:00" only shows once time is really up.
 const formatClock = (ms) => {
@@ -402,10 +424,35 @@ class MenuScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '38px', color: '#ffe36e', stroke: '#3a2412', strokeThickness: 7,
     }).setOrigin(0.5);
 
+    // Four modes: 140px buttons every 165px. Player vs AI first asks for a difficulty.
+    this.pickerUI = [];
     Object.entries(MODES).forEach(([mode, cfg], i) => {
-      woodButton(this, GAME_WIDTH / 2, 640 + i * 200, 620, 160, cfg.label, 42,
-        () => this.scene.start('GameScene', { mode }), 10, cfg.hint);
+      woodButton(this, GAME_WIDTH / 2, 600 + i * 165, 620, 140, cfg.label, 42,
+        () => (cfg.ai ? this.openDifficulty() : this.scene.start('GameScene', { mode })), 10, cfg.hint);
     });
+  }
+
+  // "Choose difficulty" panel for Player vs AI (Easy / Professional, built from AI_LEVELS).
+  openDifficulty() {
+    if (this.pickerUI.length) return;
+    const add = (object) => { this.pickerUI.push(object); return object; };
+    add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.8)
+      .setDepth(50).setInteractive()); // shield: taps must not reach the mode buttons underneath
+    add(this.add.rectangle(GAME_WIDTH / 2, 640, 640, 700, 0x4b2d17, 1).setStrokeStyle(5, 0xd5ad72).setDepth(51));
+    add(this.add.text(GAME_WIDTH / 2, 380, 'CHOOSE DIFFICULTY', {
+      fontFamily: FONT, fontSize: '46px', color: '#fff2c7', stroke: '#3a2412', strokeThickness: 8,
+    }).setOrigin(0.5).setDepth(52));
+    Object.entries(AI_LEVELS).forEach(([difficulty, level], i) => {
+      woodButton(this, GAME_WIDTH / 2, 530 + i * 190, 560, 160, level.label, 42,
+        () => this.scene.start('GameScene', { mode: 'ai', difficulty }), 52, level.hint).forEach(add);
+    });
+    woodButton(this, GAME_WIDTH / 2, 530 + Object.keys(AI_LEVELS).length * 190, 560, 90, 'BACK', 36,
+      () => this.closeDifficulty(), 52).forEach(add);
+  }
+
+  closeDifficulty() {
+    this.pickerUI.forEach((object) => object.destroy());
+    this.pickerUI = [];
   }
 }
 
@@ -417,6 +464,10 @@ class GameScene extends Phaser.Scene {
   init(data) {
     this.mode = (data && data.mode) || START_MODE || 'pvp';
     this.modeCfg = MODES[this.mode];
+    // Player vs AI difficulty comes from the picker (or ?level=pro for testing); Easy is the default.
+    const level = (data && data.difficulty) || urlParams.get('level');
+    this.difficulty = AI_LEVELS[level] ? level : 'easy';
+    this.ai = AI_LEVELS[this.difficulty];
   }
 
   create() {
@@ -425,7 +476,10 @@ class GameScene extends Phaser.Scene {
     this.selection = [];      // tiles the player has picked, in order
     this.selectedShape = null; // the shape the current attempt is matching
     this.busy = false;        // true while animations run (input is ignored)
-    this.names = this.modeCfg.ai ? ['Player 1', 'AI'] : PLAYER_NAMES.slice();
+    this.names = this.modeCfg.teams ? ['TEAM 1', 'TEAM 2']
+      : this.modeCfg.ai ? ['Player 1', 'AI ' + this.ai.tag] : PLAYER_NAMES.slice();
+    this.turnNumber = -1;            // counts turns from 0; in Tag the partners of a team alternate every other turn
+    this.activeMember = 0;           // Tag: which partner (0 or 1) of the active team is playing
     this.hazardChance = HAZARD_OVERRIDE !== null ? HAZARD_OVERRIDE : this.modeCfg.hazard;
     this.shapeBag = new ShapeBag(SHAPE_KEYS);
     this.gameOver = false;
@@ -437,7 +491,7 @@ class GameScene extends Phaser.Scene {
     this.totalAttempts = 0;
     this.checkpoints = 0;
     this.aiMemory = new Map();       // tile -> shape the AI believes it is
-    this.aiRecall = AI_RECALL_RANGE[0] + Math.random() * (AI_RECALL_RANGE[1] - AI_RECALL_RANGE[0]);
+    this.aiRecall = this.ai.recall[0] + Math.random() * (this.ai.recall[1] - this.ai.recall[0]);
     this.starBalance = this.loadStarBalance();
     this.inventoryItems = this.loadInventoryItems();
     this.inventoryUI = [];
@@ -453,7 +507,8 @@ class GameScene extends Phaser.Scene {
     this.shuffleToken = 0;              // bumped to cancel shuffles that are queued or running
     this.shuffling = 0;                 // number of shuffles running (for the SHUFFLING label)
     this.activeSwap = null;
-    this.inventoryLimiter = new InventoryLimiter(INVENTORY_OPEN_LIMIT, INVENTORY_WINDOW_MS, PLAYER_NAMES.length);
+    // Limits are per player: two players normally, four in Tag.
+    this.inventoryLimiter = new InventoryLimiter(INVENTORY_OPEN_LIMIT, INVENTORY_WINDOW_MS, this.modeCfg.teams ? 4 : PLAYER_NAMES.length);
 
     this.createBackground();
     this.createHeader();
@@ -465,6 +520,8 @@ class GameScene extends Phaser.Scene {
       this.updateAloneHUD();
       this.showToast('Score ' + ALONE_POINTS_PER_WINDOW + ' points in every ' + ALONE_ATTEMPT_WINDOW +
         ' attempts.\nDon\u2019t fall to ' + ALONE_SCORE_FLOOR + '!', 5000);
+    } else if (this.modeCfg.teams) {
+      this.showToast('Tag: partners tag in on every other turn.\n' + this.turnLabel() + ' starts.', 4000);
     }
   }
 
@@ -525,7 +582,7 @@ class GameScene extends Phaser.Scene {
     // The plank art is stored at about 1.5x its on-screen size (186 x 147 and 198 x 161).
     const p1 = this.add.image(105, 20, 'playerPlank1').setOrigin(0.5, 0).setDisplaySize(186.24, 147.36).setDepth(10);
     this.p1Score = this.numberText(p1.x + 2, p1.y + p1.displayHeight * 0.35, '0', 46);
-    this.p1Name = this.numberText(p1.x - 4, p1.y + p1.displayHeight * 0.83, 'Player 1', 21);
+    this.p1Name = this.numberText(p1.x - 4, p1.y + p1.displayHeight * 0.83, this.names[0], 21);
 
     const p2 = this.add.image(612, 20, 'playerPlank2').setOrigin(0.5, 0).setDisplaySize(197.76, 160.56).setDepth(10);
     this.p2Score = this.numberText(p2.x - 4, p2.y + p2.displayHeight * 0.35, '0', 46);
@@ -538,8 +595,9 @@ class GameScene extends Phaser.Scene {
     this.revealText = this.numberText(GAME_WIDTH / 2, 190, '', 26).setVisible(false);
 
     // Play alone has no countdown: the plank shows points toward the next checkpoint instead,
-    // with the attempt number underneath.
-    this.goalText = this.numberText(GAME_WIDTH / 2, 166, '', 21).setVisible(!this.modeCfg.twoPlayers);
+    // with the attempt number underneath. In Tag the same spot names the team and partner whose turn it is.
+    this.goalText = this.numberText(GAME_WIDTH / 2, 166, '', 21)
+      .setVisible(!this.modeCfg.twoPlayers || !!this.modeCfg.teams);
 
     this.p1Stars = this.createStars(38, 213, 5);
     this.p2Stars = this.createStars(546, 213, 5);
@@ -609,15 +667,31 @@ class GameScene extends Phaser.Scene {
     }
   }
 
+  // `player` is the side that plays (0 or 1; a team in Tag). Scores, planks and the AI all work per side.
   startTurn(player) {
     this.activePlayer = player;
+    this.turnNumber++;
+    // Tag: each team's two partners alternate, so the order is Player 1, Player 3, Player 2, Player 4, Player 1 ...
+    this.activeMember = this.modeCfg.teams ? Math.floor(this.turnNumber / 2) % 2 : 0;
     this.turnEnding = false;
     this.turnId++;
     // Play alone has no countdown: the "deadline" never arrives.
     if (this.modeCfg.turnClock) this.turnClock.start(TURN_MS);
     else this.turnClock.endsAt = Infinity;
     this.updateActivePlayerUI();
+    if (this.modeCfg.teams) this.goalText.setText(this.turnLabel().toUpperCase());
     if (this.modeCfg.ai && player === 1) this.runAITurn(this.turnId);
+  }
+
+  // Who is playing, for toasts and the header. Tag names the partner too: "Team 1: Player 2".
+  turnLabel() {
+    if (!this.modeCfg.teams) return this.names[this.activePlayer];
+    return 'Team ' + (this.activePlayer + 1) + ': ' + TEAM_PLAYERS[this.activePlayer][this.activeMember];
+  }
+
+  // The inventory limit is per player, so Tag needs one slot per partner (four in all).
+  limiterSlot() {
+    return this.modeCfg.teams ? this.activePlayer * 2 + this.activeMember : this.activePlayer;
   }
 
   isAITurn() {
@@ -637,8 +711,9 @@ class GameScene extends Phaser.Scene {
 
     const next = 1 - this.activePlayer;
     this.startTurn(next);
-    const prefix = reason === 'timeout' ? 'Time is up. ' : reason === 'pass' ? 'The AI passes. ' : '';
-    this.showToast(prefix + this.names[next] + '’s turn');
+    const prefix = reason === 'timeout' ? 'Time is up. ' : reason === 'pass' ? 'The AI passes. '
+      : reason === 'hazard' ? 'Hazard! No reward. ' : '';
+    this.showToast(prefix + this.turnLabel() + '’s turn');
   }
 
   createStars(startX, y, count) {
@@ -698,7 +773,7 @@ class GameScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(252));
     woodButton(this, GAME_WIDTH / 2, 530, 440, 90, 'RESUME', 36, () => this.closePanel(), 252).forEach(add);
     woodButton(this, GAME_WIDTH / 2, 645, 440, 90, 'RESTART', 36,
-      () => this.scene.restart({ mode: this.mode }), 252).forEach(add);
+      () => this.scene.restart({ mode: this.mode, difficulty: this.difficulty }), 252).forEach(add);
     woodButton(this, GAME_WIDTH / 2, 760, 440, 90, 'MAIN MENU', 36,
       () => this.scene.start('MenuScene'), 252).forEach(add);
     if (this.modeCfg.turnClock) {
@@ -757,7 +832,7 @@ class GameScene extends Phaser.Scene {
   // can't be used to stall. Only a successful open is counted; redrawing the shop is not an open.
   openInventory() {
     if (this.inventoryOpen || this.turnEnding || this.gameOver || this.panelOpen || this.isAITurn()) return;
-    const attempt = this.inventoryLimiter.tryOpen(this.activePlayer);
+    const attempt = this.inventoryLimiter.tryOpen(this.limiterSlot());
     if (!attempt.allowed) {
       const windowText = INVENTORY_WINDOW_MS % 60000 === 0
         ? INVENTORY_WINDOW_MS / 60000 + ' min' : INVENTORY_WINDOW_MS / 1000 + ' s';
@@ -1064,7 +1139,7 @@ class GameScene extends Phaser.Scene {
       const py = (bx - ax) / len;
 
       // Watching tiles trade places confuses the AI: it may forget what it knew about them.
-      if (this.modeCfg.ai) [a, b].forEach((t) => { if (Math.random() < AI_FORGET_ON_SWAP) this.aiMemory.delete(t); });
+      if (this.modeCfg.ai) [a, b].forEach((t) => { if (Math.random() < this.ai.forgetOnSwap) this.aiMemory.delete(t); });
 
       // Board data changes first, so the grid always says where each tile belongs.
       const [aRow, aCol, bRow, bCol] = [a.row, a.col, b.row, b.col];
@@ -1130,9 +1205,10 @@ class GameScene extends Phaser.Scene {
 
     this.aiSee(tile, fromAI); // the AI sees every tile that gets flipped over (certainly its own, only partly the human's)
 
-    // A hazard costs points and breaks the current attempt.
+    // A hazard flipped while other shapes are picked destroys them all (no reward); on its own it costs points.
     if (tile.shape === 'hazard') {
-      this.hazardHit(tile);
+      if (this.selection.length > 0) this.hazardBlast(tile);
+      else this.hazardHit(tile);
       return;
     }
 
@@ -1172,7 +1248,31 @@ class GameScene extends Phaser.Scene {
     this.recordAttempt(0);
   }
 
-  // A hazard (skull) tile: reveal it, take the penalty, lose the current selection, flip it back.
+  // A hazard (skull) flipped while other shapes are picked: the hazard and every picked tile are destroyed.
+  // Nothing is won or lost (no points, no penalty), so it is the opposite of a match, and it never joins the
+  // selection. Like a submitted match it spends the turn: the board falls and refills, the new tiles are
+  // revealed and shuffled as usual, and play passes on. Play alone counts it as one attempt.
+  async hazardBlast(hazard) {
+    this.busy = true;
+    this.cancelShuffles(); // the board is about to change: stop any shuffle and settle the swap in progress
+    const tiles = [...this.selection, hazard];
+    this.selection = [];
+    this.selectedShape = null;
+    hazard.selected = true; // nothing else may pick it while it is being destroyed
+    await this.flipTile(hazard, true);
+    this.showToast('Hazard! It destroys everything you picked.\nNo reward.');
+    this.tweens.add({ targets: hazard, angle: { from: -8, to: 8 }, duration: 70, yoyo: true, repeat: 3,
+      onComplete: () => { if (hazard.active) hazard.setAngle(0); } });
+    await this.sleep(900);
+    await Promise.all(tiles.map((t) => t.flipChain)); // let any flips finish
+    await this.destroyTiles(tiles);
+    await this.cascade();
+    this.busy = false;
+    this.recordAttempt(0);
+    this.endTurn('hazard');
+  }
+
+  // A lone hazard (skull) tile: reveal it, take the penalty, flip it back. (Nothing is picked, so nothing is lost.)
   async hazardHit(tile) {
     this.busy = true;
     await this.flipTile(tile, true);
@@ -1311,7 +1411,8 @@ class GameScene extends Phaser.Scene {
     text(450, reason, 32, '#fff2c7');
     text(600, 'Score: ' + this.scores[0] + '\nAttempts: ' + this.totalAttempts +
       '\nCheckpoints cleared: ' + this.checkpoints, 40, '#ffe36e');
-    woodButton(this, GAME_WIDTH / 2, 810, 500, 110, 'PLAY AGAIN', 44, () => this.scene.restart({ mode: this.mode }), 301);
+    woodButton(this, GAME_WIDTH / 2, 810, 500, 110, 'PLAY AGAIN', 44,
+      () => this.scene.restart({ mode: this.mode, difficulty: this.difficulty }), 301);
     woodButton(this, GAME_WIDTH / 2, 950, 500, 110, 'MAIN MENU', 44, () => this.scene.start('MenuScene'), 301);
   }
 
@@ -1419,14 +1520,15 @@ class GameScene extends Phaser.Scene {
     return this.shapeBag.next(SHAPE_KEYS.filter((k) => (counts[k] || 0) < MIN_MATCH));
   }
 
-  // ------------------------------------------------------------------ easy AI
+  // ------------------------------------------------------------------ AI (Easy / Professional)
   // The AI only knows what it has seen: the opening board, new tiles while they are face-up, and every
-  // tile that gets flipped. It remembers about half of it, sometimes wrongly, and forgets tiles that
-  // get shuffled. Memory is kept per tile (not per grid cell), so it follows tiles as they fall.
+  // tile that gets flipped. How much of that it keeps depends on the level (this.ai, from AI_LEVELS):
+  // Easy remembers about half, sometimes wrongly; Professional remembers almost everything. Shuffled tiles
+  // may be forgotten. Memory is kept per tile (not per grid cell), so it follows tiles as they fall.
   aiSee(tile, certain = false) {
     if (!this.modeCfg.ai || !tile.active) return;
     if (!certain && Math.random() > this.aiRecall) return;
-    const slip = !certain && Math.random() < AI_MISTAKE_CHANCE;
+    const slip = !certain && Math.random() < this.ai.mistake;
     this.aiMemory.set(tile, slip ? randomItem(SHAPE_KEYS) : tile.shape);
   }
 
@@ -1444,21 +1546,27 @@ class GameScene extends Phaser.Scene {
     return list;
   }
 
-  // A shape it remembers at least 3 of. Easy rarely goes for the biggest group.
-  aiChooseGroup() {
+  // Remembered, still available tiles grouped by shape: one list per shape (never dummies or hazards).
+  aiGroups() {
     const groups = {};
     for (const [tile, shape] of this.aiMemory) {
       if (!tile.active) { this.aiMemory.delete(tile); continue; }
       if (shape === 'dummy' || shape === 'hazard' || !this.aiCanTap(tile)) continue;
       (groups[shape] = groups[shape] || []).push(tile);
     }
-    const ready = Object.values(groups).filter((list) => list.length >= MIN_MATCH);
+    return Object.values(groups);
+  }
+
+  // A shape it remembers at least 3 of. Easy rarely goes for the biggest group; Professional always does.
+  aiChooseGroup() {
+    const ready = this.aiGroups().filter((list) => list.length >= MIN_MATCH);
     if (!ready.length) return null;
     ready.sort((a, b) => b.length - a.length);
-    return Math.random() < 0.2 ? ready[0] : randomItem(ready);
+    return Math.random() < this.ai.bestGroupChance ? ready[0] : randomItem(ready);
   }
 
   // A plausible guess: any hidden tile it doesn't remember as something else (and never a remembered dummy/hazard).
+  // Professional starts a fresh attempt on a tile it has no memory of, where it can still learn something.
   aiGuess(shape = null) {
     const pool = [];
     for (const row of this.tiles) {
@@ -1470,6 +1578,10 @@ class GameScene extends Phaser.Scene {
         pool.push(tile);
       }
     }
+    if (!shape && this.ai.preferUnknown) {
+      const unknown = pool.filter((tile) => !this.aiMemory.has(tile));
+      if (unknown.length) return randomItem(unknown);
+    }
     return pool.length ? randomItem(pool) : null;
   }
 
@@ -1479,7 +1591,7 @@ class GameScene extends Phaser.Scene {
 
   // One visible tap after a human-like pause.
   async aiTap(tile, alive) {
-    await this.sleep(AI_TAP_MS[0] + Math.random() * (AI_TAP_MS[1] - AI_TAP_MS[0]));
+    await this.sleep(this.ai.tapMs[0] + Math.random() * (this.ai.tapMs[1] - this.ai.tapMs[0]));
     await this.aiIdle(alive);
     if (!alive()) return false;
     this.onTileTap(tile, true);
@@ -1490,21 +1602,29 @@ class GameScene extends Phaser.Scene {
 
   // One match attempt. Returns true when it submitted a match (submit() then ends the turn).
   async aiAttempt(alive) {
-    const group = this.aiChooseGroup();
+    let group = this.aiChooseGroup();
+    if (!group && this.ai.followHunch) {
+      // No full match remembered: start from the shape it remembers most copies of (two or more), so it
+      // has fewer new tiles left to find.
+      const partial = this.aiGroups().sort((a, b) => b.length - a.length)[0];
+      if (partial && partial.length >= 2) group = partial;
+    }
     const first = group ? group[0] : this.aiGuess();
     if (!first || !(await this.aiTap(first, alive))) return false;
 
-    const wantFourth = Math.random() < 0.3;
+    // How many tiles it reaches for: 5 (the 5+ score) for Professional, 3 or sometimes 4 for Easy.
+    const goal = this.ai.goBig ? 5 : (Math.random() < 0.3 ? 4 : MIN_MATCH);
     while (alive() && this.selection.length > 0) {
       const known = this.aiKnown(this.selectedShape);
-      const enough = this.selection.length >= MIN_MATCH;
-      if (enough && !(wantFourth && this.selection.length === MIN_MATCH && known.length)) break;
-      const next = known.length ? randomItem(known) : (enough ? null : this.aiGuess(this.selectedShape));
+      const have = this.selection.length;
+      // Once it has a match it only keeps going while it remembers more tiles of that shape and has time to spare.
+      if (have >= MIN_MATCH && (have >= goal || !known.length || this.turnClock.remaining() < AI_SPARE_MS)) break;
+      const next = known.length ? randomItem(known) : this.aiGuess(this.selectedShape);
       if (!next || !(await this.aiTap(next, alive))) break;
     }
     if (!alive()) return false;
     if (this.selection.length >= MIN_MATCH) {
-      await this.sleep(700);
+      await this.sleep(this.ai.submitMs);
       await this.submit(true);
       return true;
     }
@@ -1513,12 +1633,12 @@ class GameScene extends Phaser.Scene {
 
   async runAITurn(turnId) {
     const alive = () => turnId === this.turnId && !this.turnEnding && !this.gameOver;
-    await this.sleep(AI_THINK_MS);
-    for (let i = 0; i < AI_MAX_ATTEMPTS && alive(); i++) {
+    await this.sleep(this.ai.thinkMs);
+    for (let i = 0; i < this.ai.maxAttempts && alive(); i++) {
       await this.aiIdle(alive);
       if (!alive()) return;
       if (await this.aiAttempt(alive)) return;
-      await this.sleep(700);
+      await this.sleep(this.ai.gapMs);
     }
     if (alive()) this.endTurn('pass');
   }
