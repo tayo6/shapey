@@ -48,7 +48,7 @@ The game opens on a menu with three modes: **Play alone**, **Player vs AI** and 
 
 ### Play alone (implemented)
 
-- One player, no turn countdown and no Player 2 score plank. The header shows points toward the next checkpoint and the current attempt number.
+- One player, no countdown of any kind (no turn clock; the "MEMORIZE" cue for new tiles shows without numbers) and no Player 2 score plank. The header shows points toward the next checkpoint and the current attempt number.
 - An **attempt** is one try at a match, not one flip: a submitted match, a wrong shape, a submit with fewer than 3 tiles, or a hazard. Flipping a wooden dummy is not an attempt.
 - **Checkpoint every 15 attempts:** the player must have earned at least 15 points (from matches) in that window, otherwise the game is over. After a passed checkpoint a new window starts.
 - **Score floor:** a failed attempt (wrong shape or fewer than 3 submitted) costs 1 point and a hazard costs 2, so the score can go negative. Reaching **−15** is game over.

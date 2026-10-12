@@ -555,7 +555,8 @@ class GameScene extends Phaser.Scene {
 
     const revealLeft = this.reveals.remaining();
     this.revealText.setVisible(revealLeft > 0 || this.shuffling > 0);
-    if (revealLeft > 0) this.setClockText(this.revealText, 'MEMORIZE ' + formatClock(revealLeft));
+    // Play alone has no countdown at all: the cue stays, the numbers go.
+    if (revealLeft > 0) this.setClockText(this.revealText, this.modeCfg.turnClock ? 'MEMORIZE ' + formatClock(revealLeft) : 'MEMORIZE');
     else if (this.shuffling > 0) this.setClockText(this.revealText, 'SHUFFLING');
 
     // The shop covers the header, so it shows the turn clock too: opening it never stops the clock.
@@ -833,7 +834,8 @@ class GameScene extends Phaser.Scene {
 
     const note = this.add.text(GAME_WIDTH / 2, 1192,
       'Purchases are saved on this device. Using power-ups in a match is coming next.\nThe inventory can be opened ' +
-      INVENTORY_OPEN_LIMIT + ' times per 5 minutes, and your turn clock keeps running while it is open.', {
+      INVENTORY_OPEN_LIMIT + ' times per 5 minutes' +
+      (this.modeCfg.turnClock ? ', and your turn clock keeps running while it is open.' : '.'), {
         fontFamily: FONT, fontSize: '17px', color: '#ffffff',
         align: 'center', wordWrap: { width: 630 },
       }).setOrigin(0.5);
