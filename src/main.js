@@ -98,13 +98,21 @@ function randomBoardShape() {
 // Frames of "tile destroy frame.webp" (x positions, each 256 x 241) - centred on the tile.
 const DESTROY_FRAME_X = [3, 292, 585, 877, 1172, 1467];
 
-// Frames of "dusty.webp" (8 frames across a 1895 x 156 sheet) - landing dust for new shapes.
-// The full sheet is constrained to 758px wide when displayed.
-const DUST_SHEET_WIDTH = 1895;
-const DUST_FRAME_WIDTH = 237;
+// Frames of "dusty.webp" - landing dust for new shapes: 7 equal 304 x 156 cells in a 2128 x 156 sheet.
+// Every puff is centred on the same point (the middle of its base) and sits on the bottom edge of its cell,
+// so the cloud grows in place instead of drifting sideways. (The original sheet had unevenly spaced puffs.)
+const DUST_FRAME_COUNT = 7;
+const DUST_FRAME_WIDTH = 304;
 const DUST_FRAME_HEIGHT = 156;
-const DUST_DISPLAY_WIDTH = 758;
-const DUST_FRAME_X = [0, 237, 474, 711, 948, 1185, 1422, 1659];
+const DUST_SCALE = 0.4;      // on-screen size: 304 x 156 art -> about 122 x 62 px
+const DUST_FRAME_RATE = 10;
+
+// Shapey logo and the loading bar. index.html draws the same layout while Phaser is still downloading.
+const LOGO_W = 520, LOGO_Y = 470;
+const LOAD_BAR_W = 560, LOAD_BAR_Y = 720;
+// The dark slot of "load rectangle.webp", as fractions of the image: the progress fill goes inside it.
+const LOAD_TRACK = { x0: 0.0745, x1: 0.9255, y0: 0.302, y1: 0.698 };
+const LOAD_MIN_FILL = 0.06; // share of the slot that is already filled at 0%, so the bar never looks empty
 
 const randomItem = (list) => list[Math.floor(Math.random() * list.length)];
 
@@ -278,23 +286,61 @@ const fontReady = Promise.race([
   new Promise((resolve) => setTimeout(resolve, 2500)),
 ]).catch(() => {});
 
-// Loads every asset behind a progress bar, so the player sees something while the game downloads.
+// Stage 1: fetches only the logo and the loading bar (two small images), while the HTML placeholder is still up.
 class BootScene extends Phaser.Scene {
   constructor() {
     super('BootScene');
   }
 
   preload() {
-    const loading = document.getElementById('boot');
-    if (loading) loading.remove(); // the HTML placeholder is replaced by the in-game loading bar
+    this.load.setPath('assets');
+    this.load.image('logo', 'ui/shapey logo.webp');
+    this.load.image('loadRect', 'ui/load rectangle.webp');
+  }
+
+  create() {
+    this.scene.start('LoadScene');
+  }
+}
+
+// Stage 2: shows the logo and the load bar (Phaser draws the same picture as index.html), then loads
+// everything else while the bar fills.
+class LoadScene extends Phaser.Scene {
+  constructor() {
+    super('LoadScene');
+  }
+
+  preload() {
     this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x2b1a0f);
-    this.add.text(GAME_WIDTH / 2, 540, 'SHAPEY', {
-      fontFamily: 'sans-serif', fontSize: '96px', fontStyle: 'bold', color: '#fff2c7',
-      stroke: '#4a2814', strokeThickness: 12,
-    }).setOrigin(0.5);
-    this.add.rectangle(GAME_WIDTH / 2, 680, 444, 34, 0x4a2814).setStrokeStyle(4, 0xf3d29a);
-    const fill = this.add.rectangle(GAME_WIDTH / 2 - 216, 680, 4, 20, 0xffe36e).setOrigin(0, 0.5);
-    this.load.on('progress', (value) => { fill.width = Math.max(4, 432 * value); });
+    const logo = this.add.image(GAME_WIDTH / 2, LOGO_Y, 'logo');
+    logo.setScale(LOGO_W / logo.width);
+
+    const bar = this.add.image(GAME_WIDTH / 2, LOAD_BAR_Y, 'loadRect');
+    const k = LOAD_BAR_W / bar.width;
+    bar.setScale(k);
+    const left = bar.x - bar.displayWidth / 2;
+    const top = bar.y - bar.displayHeight / 2;
+    const slotX = left + LOAD_TRACK.x0 * bar.displayWidth;
+    const slotW = (LOAD_TRACK.x1 - LOAD_TRACK.x0) * bar.displayWidth;
+    const slotY = top + LOAD_TRACK.y0 * bar.displayHeight;
+    const slotH = (LOAD_TRACK.y1 - LOAD_TRACK.y0) * bar.displayHeight;
+    // gold fill with a lighter top half for a glossy look; both grow with the load progress
+    const fill = this.add.rectangle(slotX, slotY, slotW * LOAD_MIN_FILL, slotH, 0xf2b84b).setOrigin(0, 0);
+    const gloss = this.add.rectangle(slotX, slotY, slotW * LOAD_MIN_FILL, slotH * 0.45, 0xffe3a0, 0.7).setOrigin(0, 0);
+    const setProgress = (value) => {
+      const w = slotW * (LOAD_MIN_FILL + (1 - LOAD_MIN_FILL) * value);
+      fill.width = w;
+      gloss.width = w;
+    };
+    this.load.on('progress', setProgress);
+
+    // the load animation: the logo gently bobs and the fill pulses while the game downloads
+    this.tweens.add({ targets: logo, y: LOGO_Y - 8, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    this.tweens.add({ targets: [fill, gloss], alpha: { from: 0.75, to: 1 }, duration: 500, yoyo: true, repeat: -1 });
+
+    // Hand over from the HTML placeholder only once this scene has been drawn, so there is no blank flash.
+    const boot = document.getElementById('boot');
+    if (boot) this.game.events.once('postrender', () => requestAnimationFrame(() => boot.remove()));
 
     this.load.setPath('assets');
 
@@ -327,7 +373,6 @@ class BootScene extends Phaser.Scene {
     this.load.audio('flip', ['audio/tile_flip_short.ogg', 'audio/tile_flip_short.wav']);
   }
 
-
   async create() {
     await fontReady; // usually already done by now
     if (START_MODE) this.scene.start('GameScene', { mode: START_MODE });
@@ -343,13 +388,12 @@ class MenuScene extends Phaser.Scene {
 
   create() {
     this.add.image(0, 0, 'bg').setOrigin(0, 0).setDisplaySize(GAME_WIDTH, GAME_HEIGHT);
-    this.add.text(GAME_WIDTH / 2, 150, 'SHAPEY', {
-      fontFamily: FONT, fontSize: '120px', color: '#fff2c7', stroke: '#3a2412', strokeThickness: 18,
-    }).setOrigin(0.5);
+    const logo = this.add.image(GAME_WIDTH / 2, 150, 'logo');
+    logo.setScale(560 / logo.width);
 
     // a little row of tiles for decoration
     ['star', 'circle', 'hazard', 'sphere', 'cross'].forEach((key, i) => {
-      const tile = this.add.image(104 + i * 128, 320, 'shape_' + key).setDisplaySize(104, 104)
+      const tile = this.add.image(104 + i * 128, 352, 'shape_' + key).setDisplaySize(104, 104)
         .setAngle([-6, 4, -3, 6, -5][i]);
       this.tweens.add({ targets: tile, y: tile.y - 10, duration: 1100 + i * 140, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
     });
@@ -858,16 +902,15 @@ class GameScene extends Phaser.Scene {
       frameRate: 14,
     });
 
-    // landing dust: 8 frames; the last frame is 236px wide because the sheet is 1895px wide.
+    // landing dust: equal cells, each puff centred on the cell's middle (see DUST_FRAME_WIDTH)
     const dustTex = this.textures.get('dust');
-    DUST_FRAME_X.forEach((x, i) => {
-      const frameWidth = Math.min(DUST_FRAME_WIDTH, DUST_SHEET_WIDTH - x);
-      if (!dustTex.has('u' + i)) dustTex.add('u' + i, 0, x, 0, frameWidth, DUST_FRAME_HEIGHT);
-    });
+    for (let i = 0; i < DUST_FRAME_COUNT; i++) {
+      if (!dustTex.has('u' + i)) dustTex.add('u' + i, 0, i * DUST_FRAME_WIDTH, 0, DUST_FRAME_WIDTH, DUST_FRAME_HEIGHT);
+    }
     if (!this.anims.exists('dustPuff')) this.anims.create({
       key: 'dustPuff',
-      frames: DUST_FRAME_X.map((_, i) => ({ key: 'dust', frame: 'u' + i })),
-      frameRate: 11,
+      frames: Array.from({ length: DUST_FRAME_COUNT }, (_, i) => ({ key: 'dust', frame: 'u' + i })),
+      frameRate: DUST_FRAME_RATE,
     });
 
     // flip sound: a few instances so quick flips can overlap
@@ -1363,7 +1406,7 @@ class GameScene extends Phaser.Scene {
   // Dust cloud at the bottom edge of a tile that just landed.
   spawnDust(x, tileY) {
     const puff = this.add.sprite(x, tileY + TILE_SIZE / 2, 'dust', 'u0').setOrigin(0.5, 1).setDepth(13);
-    puff.setScale(DUST_DISPLAY_WIDTH / DUST_SHEET_WIDTH); // constrain the 8-frame sheet to 758px wide
+    puff.setScale(DUST_SCALE);
     puff.play('dustPuff');
     puff.once('animationcomplete', () => puff.destroy());
   }
@@ -1493,5 +1536,5 @@ window.game = new Phaser.Game({
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [BootScene, MenuScene, GameScene],
+  scene: [BootScene, LoadScene, MenuScene, GameScene],
 });

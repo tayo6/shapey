@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/ui/shapey%20logo.webp" alt="Shapey" width="360" /></p>
+
 # Shapey
 
 A memory-and-matching game built with Phaser 3. Play it at https://tayo6.github.io/shapey/
