@@ -10,6 +10,7 @@ This document describes the recommended rules for turning the current Phaser pro
 - A valid submitted match ends that player's turn, awards points, removes those tiles, and causes the board to cascade. Newly spawned tiles are shown for 15 seconds before hiding.
 - A wrong shape resets the current selection, but does not immediately end the turn. This preserves the memory challenge without making one mis-tap fatal.
 - If the timer expires without a valid submitted match, award no points and pass the turn.
+- **Two clocks run at the same time.** The player's 45-second turn clock and the 15-second "memorize" reveal of newly spawned tiles are independent countdowns. A new batch of tiles revealing never pauses, resets, or extends the turn, and the turn ending never cuts a reveal short. Both are shown on screen (the turn timer, plus a "MEMORIZE" countdown while tiles are face-up).
 - The Submit button confirms a valid group. Remove the current prototype's separate 10-second idle auto-submit; the 45-second turn timer should be the only automatic deadline.
 - The match is a race to a target score chosen before play. The default target is **100 points**; players can choose any target from 100 to **1,000**. In a two-player match, the first player to reach the selected target wins. Use a short victory sequence and a rematch option. In online play, the server—not the browser timer—must be authoritative.
 
@@ -61,6 +62,13 @@ A same-device **Pass & Play** mode is a useful interim option while the online s
 ## 3. Stars, streaks, and the inventory
 
 Treat **Stars as a persistent currency**, not as the five decorative icons beside the score. Every player starts with **1 free Star**. The inventory screen displays the actual spendable balance and owned item cards.
+
+### Inventory access limit (anti-stalling)
+
+- Each player may **open the inventory at most 2 times in any rolling 5-minute window**. Only a successful open counts; a refused attempt is not recorded, and buying an item while the shop is open does not count as another open.
+- The turn clock **keeps running while the inventory is open** (the shop shows the live turn clock). If the turn times out while the shop is open, the shop closes and the turn passes.
+- When the limit is reached, show a short message with when the inventory is available again.
+- Limits are per player. Opening is attributed to the player whose turn it is.
 
 ### Match streak rewards (the recommended clear rule)
 
@@ -247,8 +255,8 @@ Every turn should pass through one explicit state machine:
 
 ## 6. Code review findings in the current prototype
 
-- `src/main.js` currently has one real `this.score` value; Player 2's score is not part of a real turn system.
-- The 45-second timer is a static `00:45` label. There is no running countdown, turn deadline, timeout, or turn hand-off.
+- `src/main.js` now keeps a separate score per player and passes the turn (same-device pass-and-play) after a submitted match or a timeout. There is still no target score, winner state, AI, or online play.
+- The 45-second turn clock now runs from an absolute deadline, ends the turn on timeout, and runs alongside the 15-second reveal of new tiles. Double Time (90 seconds) and a server-authoritative deadline are not implemented.
 - The star rows are currently decorative; there is no starting free Star, successful-match streak tracker, or inventory currency.
 - Only Submit has a click handler. Polls, Inventory, and Settings do not yet open working panels.
 - There is no AI, online lobby, live audience/poll service, rematch flow, or match-winner state.

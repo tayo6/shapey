@@ -18,6 +18,24 @@ const MIN_MATCH = 3;          // smallest scoring match
 // 3 matched = 1 point, 4 matched = 2 points, 5 or more = 5 points
 const scoreFor = (count) => (count >= 5 ? 5 : count === 4 ? 2 : count === 3 ? 1 : 0);
 
+// ---- Turn clock and inventory limits ----------------------------------------
+// Every turn lasts 45 seconds. The turn clock and the 15 second "memorize" reveal of newly spawned
+// tiles each run on their own absolute deadline, so they always tick side by side: a new batch
+// being revealed never pauses, resets or extends the turn, and the turn ending never cuts a reveal short.
+// Test overrides: ?turn=10000 (turn length) and ?invwindow=20000 (inventory window), in milliseconds.
+const TURN_MS = Number(urlParams.get('turn')) || 45000;
+// Anti-stalling: a player may open the inventory at most 2 times in any rolling 5 minutes.
+// The turn clock keeps running while the inventory is open.
+const INVENTORY_OPEN_LIMIT = 2;
+const INVENTORY_WINDOW_MS = Number(urlParams.get('invwindow')) || 5 * 60 * 1000;
+const PLAYER_NAMES = ['Player 1', 'Player 2'];
+
+// "00:45" style clock text. Rounds up, so "00:00" only shows once time is really up.
+const formatClock = (ms) => {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  return String(Math.floor(total / 60)).padStart(2, '0') + ':' + String(total % 60).padStart(2, '0');
+};
+
 // texture key -> file in assets/shapes
 const SHAPE_FILES = {
   mystery: 'Mystery.png', // the hidden face (never a real shape)
@@ -71,6 +89,65 @@ function makeInitialBoard() {
   return Array.from({ length: GRID_ROWS }, (_, r) => flat.slice(r * GRID_COLS, (r + 1) * GRID_COLS));
 }
 
+// A countdown to an absolute deadline (never a tick counter), so it stays correct however
+// often the screen redraws and can run alongside any other countdown.
+class Countdown {
+  constructor(clock = Date.now) {
+    this.clock = clock;
+    this.endsAt = 0;
+  }
+  start(ms) { this.endsAt = this.clock() + ms; }
+  remaining() { return Math.max(0, this.endsAt - this.clock()); }
+  expired() { return this.clock() >= this.endsAt; }
+}
+
+// Tracks the "memorize" countdown of every batch of newly revealed tiles. Each batch has its own
+// 15 second deadline, independent of the turn clock.
+class RevealTracker {
+  constructor(clock = Date.now) {
+    this.clock = clock;
+    this.batches = [];
+  }
+  add(tiles, ms) { this.batches.push({ tiles, endsAt: this.clock() + ms }); }
+  // Longest time left among the batches still being shown (0 when nothing is being revealed).
+  remaining() {
+    const now = this.clock();
+    return this.batches.reduce((most, b) => Math.max(most, b.endsAt - now), 0);
+  }
+  // Batches whose reveal time is over; they are removed from the tracker.
+  takeDue() {
+    const now = this.clock();
+    const due = this.batches.filter((b) => b.endsAt <= now);
+    this.batches = this.batches.filter((b) => b.endsAt > now);
+    return due.map((b) => b.tiles);
+  }
+}
+
+// Rolling-window cap on how often each player may open the inventory.
+class InventoryLimiter {
+  constructor(limit, windowMs, playerCount, clock = Date.now) {
+    this.limit = limit;
+    this.windowMs = windowMs;
+    this.clock = clock;
+    this.opens = Array.from({ length: playerCount }, () => []); // open timestamps per player
+  }
+  recent(player) {
+    const cutoff = this.clock() - this.windowMs;
+    this.opens[player] = this.opens[player].filter((t) => t > cutoff);
+    return this.opens[player];
+  }
+  // Records an open when allowed. When refused, nothing is recorded and retryInMs says how long to wait.
+  tryOpen(player) {
+    const recent = this.recent(player);
+    if (recent.length >= this.limit) {
+      const retryInMs = recent[recent.length - this.limit] + this.windowMs - this.clock();
+      return { allowed: false, left: 0, retryInMs: Math.max(0, retryInMs) };
+    }
+    recent.push(this.clock());
+    return { allowed: true, left: this.limit - recent.length, retryInMs: 0 };
+  }
+}
+
 class GameScene extends Phaser.Scene {
   constructor() {
     super('GameScene');
@@ -109,7 +186,8 @@ class GameScene extends Phaser.Scene {
   }
 
   create() {
-    this.score = 0;
+    this.scores = [0, 0];      // one score per player
+    this.activePlayer = 0;     // 0 = Player 1, 1 = Player 2
     this.selection = [];      // tiles the player has picked, in order
     this.selectedShape = null; // the shape the current attempt is matching
     this.busy = false;        // true while animations run (input is ignored)
@@ -118,12 +196,31 @@ class GameScene extends Phaser.Scene {
     this.inventoryItems = this.loadInventoryItems();
     this.inventoryUI = [];
     this.inventoryOpen = false;
+    this.inventoryTimerText = null;
+    this.toast = null;
+    this.toastTween = null;
+
+    // Two independent countdowns that run at the same time (see TURN_MS above).
+    this.turnClock = new Countdown();   // the active player's 45 second turn
+    this.reveals = new RevealTracker(); // the 15 second reveal of each batch of new tiles
+    this.turnEnding = false;            // true while a turn is being handed over: taps/submits are ignored
+    this.inventoryLimiter = new InventoryLimiter(INVENTORY_OPEN_LIMIT, INVENTORY_WINDOW_MS, PLAYER_NAMES.length);
 
     this.createBackground();
     this.createHeader();
     this.createBottomButtons();
     this.createFx();
     this.createBoard();
+    this.startTurn(0);
+  }
+
+  // Runs every frame: flips tiles whose reveal is over, redraws both clocks, and ends the turn on timeout.
+  update() {
+    if (!this.turnClock) return;
+    this.hideFinishedReveals();
+    this.refreshClocks();
+    // A turn that expires mid-animation (a submitted match resolving, a wrong pick flipping back) waits for it.
+    if (!this.turnEnding && !this.busy && this.turnClock.expired()) this.endTurn('timeout');
   }
 
   // ---------------------------------------------------------------- layout
@@ -182,10 +279,85 @@ class GameScene extends Phaser.Scene {
     this.p2Name = this.numberText(p2.x - 4, p2.y + p2.displayHeight * 0.83, 'Player 2', 21);
 
     const timer = this.fitToWidth(this.add.image(GAME_WIDTH / 2, 101, 'timerPlank'), 262).setDepth(10);
-    this.timerText = this.numberText(timer.x + 24, timer.y + 2, '00:45', 46);
+    this.timerText = this.numberText(timer.x + 24, timer.y + 2, formatClock(TURN_MS), 46);
+
+    // Countdown for newly spawned tiles. It sits under the turn timer and only shows while tiles are face-up.
+    this.revealText = this.numberText(GAME_WIDTH / 2, 188, '', 26).setVisible(false);
 
     this.p1Stars = this.createStars(38, 213, 5);
     this.p2Stars = this.createStars(546, 213, 5);
+
+    // Everything that belongs to one player, so the inactive player can be dimmed.
+    this.playerUI = [
+      [p1, this.p1Score, this.p1Name, ...this.p1Stars],
+      [p2, this.p2Score, this.p2Name, ...this.p2Stars],
+    ];
+  }
+
+  updateActivePlayerUI() {
+    this.playerUI.forEach((group, player) => {
+      group.forEach((object) => object.setAlpha(player === this.activePlayer ? 1 : 0.55));
+    });
+  }
+
+  // A short message in the free strip between the header and the board.
+  showToast(message, holdMs = 2600) {
+    if (this.toastTween) this.toastTween.stop();
+    if (this.toast) this.toast.destroy();
+    const toast = this.add.text(GAME_WIDTH / 2, 256, message, {
+      fontFamily: FONT, fontSize: '24px', color: '#fff2c7',
+      stroke: '#3a2412', strokeThickness: 5, align: 'center', wordWrap: { width: 660 },
+    }).setOrigin(0.5).setDepth(200);
+    this.toast = toast;
+    this.toastTween = this.tweens.add({
+      targets: toast, alpha: 0, delay: holdMs, duration: 400,
+      onComplete: () => {
+        toast.destroy();
+        if (this.toast === toast) { this.toast = null; this.toastTween = null; }
+      },
+    });
+  }
+
+  // ------------------------------------------------------- clocks and turns
+  setClockText(textObject, value) {
+    if (textObject.lastClock === value) return; // only redraw the text when it changes
+    textObject.lastClock = value;
+    textObject.setText(value);
+  }
+
+  // Both clocks are redrawn from their own deadlines, so they can never hold each other up.
+  refreshClocks() {
+    const turnLeft = formatClock(this.turnClock.remaining());
+    this.setClockText(this.timerText, turnLeft);
+
+    const revealLeft = this.reveals.remaining();
+    this.revealText.setVisible(revealLeft > 0);
+    if (revealLeft > 0) this.setClockText(this.revealText, 'MEMORIZE ' + formatClock(revealLeft));
+
+    // The shop covers the header, so it shows the turn clock too: opening it never stops the clock.
+    if (this.inventoryTimerText && this.inventoryTimerText.active) {
+      this.setClockText(this.inventoryTimerText, 'TURN\n' + turnLeft);
+    }
+  }
+
+  startTurn(player) {
+    this.activePlayer = player;
+    this.turnEnding = false;
+    this.turnClock.start(TURN_MS);
+    this.updateActivePlayerUI();
+  }
+
+  // Ends the active player's turn exactly once (timeout or a submitted match) and hands over to the other player.
+  async endTurn(reason) {
+    if (this.turnEnding) return;
+    this.turnEnding = true; // from here on, late taps and submits are ignored
+    this.clearAutoSubmit();
+    if (this.inventoryOpen) this.closeInventory();
+    await this.resetSelection(); // flip any picked tiles back (nothing to do after a match)
+
+    const next = 1 - this.activePlayer;
+    this.startTurn(next);
+    this.showToast((reason === 'timeout' ? 'Time is up. ' : '') + PLAYER_NAMES[next] + '’s turn');
   }
 
   createStars(startX, y, count) {
@@ -257,6 +429,7 @@ class GameScene extends Phaser.Scene {
   clearInventoryUI() {
     this.inventoryUI.forEach((object) => object.destroy());
     this.inventoryUI = [];
+    this.inventoryTimerText = null;
   }
 
   addInventoryUI(object) {
@@ -265,9 +438,23 @@ class GameScene extends Phaser.Scene {
     return object;
   }
 
+  // Opening the inventory is limited per player (INVENTORY_OPEN_LIMIT per INVENTORY_WINDOW_MS) so it
+  // can't be used to stall. Only a successful open is counted; redrawing the shop is not an open.
   openInventory() {
-    if (this.inventoryOpen) return;
+    if (this.inventoryOpen || this.turnEnding) return;
+    const attempt = this.inventoryLimiter.tryOpen(this.activePlayer);
+    if (!attempt.allowed) {
+      const windowText = INVENTORY_WINDOW_MS % 60000 === 0
+        ? INVENTORY_WINDOW_MS / 60000 + ' min' : INVENTORY_WINDOW_MS / 1000 + ' s';
+      this.showToast('Inventory limit reached (' + INVENTORY_OPEN_LIMIT + ' per ' + windowText +
+        ').\nAvailable again in ' + formatClock(attempt.retryInMs));
+      return;
+    }
     this.inventoryOpen = true;
+    this.renderInventory();
+  }
+
+  renderInventory() {
     this.clearInventoryUI();
 
     // Full-page shop uses the same BG.png art as the game background.
@@ -299,6 +486,13 @@ class GameScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.addInventoryUI(closeText);
     closeBg.on('pointerdown', () => this.closeInventory());
+
+    // The turn clock keeps running while the shop is open, so show it here too.
+    this.inventoryTimerText = this.addInventoryUI(this.add.text(84, 66,
+      'TURN\n' + formatClock(this.turnClock.remaining()), {
+        fontFamily: FONT, fontSize: '24px', color: '#ffe36e',
+        stroke: '#4a2814', strokeThickness: 4, align: 'center',
+      }).setOrigin(0.5));
 
     const offers = [
       { key: 'audiencePick', name: 'AUDIENCE PICK', price: 3, desc: 'Ask the audience which shape to pursue.' },
@@ -350,8 +544,7 @@ class GameScene extends Phaser.Scene {
           this.starBalance -= offer.price;
           this.inventoryItems[offer.key] = Number(this.inventoryItems[offer.key] || 0) + 1;
           this.saveInventory();
-          this.closeInventory();
-          this.openInventory();
+          this.renderInventory(); // refresh in place: a purchase must not count as a new open
         });
       }
     });
@@ -367,7 +560,8 @@ class GameScene extends Phaser.Scene {
     this.addInventoryUI(counterText);
 
     const note = this.add.text(GAME_WIDTH / 2, 1192,
-      'Purchases are saved on this device. Using power-ups in a match is coming next.', {
+      'Purchases are saved on this device. Using power-ups in a match is coming next.\nThe inventory can be opened ' +
+      INVENTORY_OPEN_LIMIT + ' times per 5 minutes, and your turn clock keeps running while it is open.', {
         fontFamily: FONT, fontSize: '17px', color: '#ffffff',
         align: 'center', wordWrap: { width: 630 },
       }).setOrigin(0.5);
@@ -482,14 +676,20 @@ class GameScene extends Phaser.Scene {
     return tile.flipChain;
   }
 
-  // After REVIEW_MS, flip a batch of new tiles to mystery, one after the other.
-  // Tiles the player is currently using stay face-up.
+  // Starts the REVIEW_MS "memorize" countdown for a batch of new tiles. It runs on its own deadline,
+  // at the same time as the turn clock, and is not affected by whose turn it is.
   startReview(batch) {
-    this.time.delayedCall(REVIEW_MS, () => {
+    this.reveals.add(batch, REVIEW_MS);
+  }
+
+  // Once a batch's reveal time is over, flip its tiles to mystery one after the other.
+  // Tiles the player is currently using stay face-up.
+  hideFinishedReveals() {
+    for (const batch of this.reveals.takeDue()) {
       batch.forEach((tile, i) => {
         if (tile.active && !tile.selected) this.flipTile(tile, false, i * 35);
       });
-    });
+    }
   }
 
   // -------------------------------------------------------------- picking
@@ -504,7 +704,8 @@ class GameScene extends Phaser.Scene {
   }
 
   onTileTap(tile) {
-    if (this.busy || !tile.active || tile.selected) return;
+    // Taps are ignored during hand-over and once the turn clock has run out.
+    if (this.busy || this.turnEnding || this.turnClock.expired() || !tile.active || tile.selected) return;
 
     // A blank wooden dummy is revealed briefly, but is otherwise as if it
     // had not been picked: it never joins or resets the current selection.
@@ -568,7 +769,8 @@ class GameScene extends Phaser.Scene {
 
   // -------------------------------------------------------------- submit
   async submit() {
-    if (this.busy || this.selection.length === 0) return;
+    // A late submit (after the turn clock ran out, or during hand-over) is ignored.
+    if (this.busy || this.turnEnding || this.turnClock.expired() || this.selection.length === 0) return;
     this.clearAutoSubmit();
     this.busy = true;
 
@@ -588,12 +790,16 @@ class GameScene extends Phaser.Scene {
     await this.destroyTiles(tiles);
     await this.cascade();
     this.busy = false;
+    this.endTurn('match'); // a valid match ends the turn; the new tiles keep revealing during the next turn
   }
 
+  // Points go to the player whose turn it is.
   addScore(points) {
-    this.score += points;
-    this.p1Score.setText(String(this.score));
-    this.tweens.add({ targets: this.p1Score, scale: 1.35, duration: 120, yoyo: true });
+    const player = this.activePlayer;
+    const label = player === 0 ? this.p1Score : this.p2Score;
+    this.scores[player] += points;
+    label.setText(String(this.scores[player]));
+    this.tweens.add({ targets: label, scale: 1.35, duration: 120, yoyo: true });
 
     const pop = this.numberText(GAME_WIDTH / 2, this.tray.y, '+' + points, 90).setDepth(20);
     this.tweens.add({

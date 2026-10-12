@@ -33,6 +33,8 @@ The current app is a static Phaser 3 browser prototype hosted on GitHub Pages. T
 - After the study phase, tiles flip to the hidden `mystery` face.
 - Newly spawned tiles after a valid match are also revealed for **15 seconds**, then hidden again.
 - The 15-second reveal duration can currently be overridden for testing with the URL query parameter `?review=3000` (milliseconds).
+- The reveal countdown runs **concurrently** with the 45-second turn clock. Each batch of revealed tiles has its own absolute deadline (`RevealTracker`), separate from the turn deadline (`Countdown`), so neither can pause or extend the other. The header shows a "MEMORIZE" countdown while any tiles are face-up.
+- Other test overrides (milliseconds): `?turn=10000` shortens the turn, `?invwindow=20000` shortens the inventory-limit window.
 
 The memory challenge is based on tile identity and location. Do not show exact hidden positions to a player through UI, logs, AI logic, or audience polling.
 
@@ -81,7 +83,8 @@ The UI should reflect this state rather than deciding game outcomes itself.
 - A timeout with no valid submitted match awards no points, clears the selection, and passes the turn exactly once.
 - Ignore taps and submissions after the deadline.
 - Online, the backend must be the authoritative clock; a browser countdown is display-only.
-- The prototype currently shows a static `00:45` label. It does **not** yet run a complete countdown or switch active players.
+- The prototype now runs a real countdown from an absolute `turnClock` deadline and passes the turn to the other player (same-device pass-and-play) after a submitted match or a timeout. A turn that expires while an animation is resolving waits for it, then ends exactly once. Late taps and submits are ignored. A timeout clears any unsubmitted selection and awards no points.
+- Not yet implemented: the 90-second Double Time turn and an authoritative (server) clock.
 
 ### Picking tiles
 
@@ -187,6 +190,7 @@ Rules and edge cases:
 - Before Score Strike, Double Time, or Double Play resolves against an opponent, allow a brief response window for that opponent to use a Cancel Counter (section 7).
 - Audience Pick is not counterable by Cancel Counter.
 - If the match ends before an item is used, retain the card in inventory.
+- **Inventory access limit (anti-stalling):** each player may open the inventory at most **2 times per rolling 5 minutes** (`INVENTORY_OPEN_LIMIT`, `INVENTORY_WINDOW_MS`, enforced by `InventoryLimiter`). Only successful opens count: refused attempts and in-shop refreshes after a purchase do not. The turn clock keeps running while the inventory is open, and the shop closes if the turn times out. A refused open shows a message with the time until the next allowed open. Online, the server must enforce this limit.
 - Make the effect timing explicit. For example, a queued Double Time should activate when the next eligible turn starts, not retroactively alter a turn already in progress.
 
 ### Audience Pick details
@@ -294,11 +298,14 @@ The following reflects the current repository state at the time this guide was w
 - Local storage of Star balance and item counts using `shapey-stars` and `shapey-inventory`.
 - Shop starts with 1 Star if no saved balance exists.
 - A descriptive Cancel Counter card/explanation in the shop.
+- Per-player scores, an active-player indicator, and turn hand-over after a submitted match or timeout (same-device pass-and-play).
+- A running 45-second turn countdown that works concurrently with the 15-second "MEMORIZE" reveal countdown for new tiles.
+- Inventory access limit: 2 opens per player per rolling 5 minutes, with the turn clock still running while the shop is open.
 
 ### Not yet implemented or incomplete
 
-- Full two-player turn system and active-player input gating.
-- Running 45/90-second countdown, timeout resolution, and authoritative turn deadlines.
+- Per-player stars, inventory, and streaks (the shop still uses one shared balance), plus a hand-off screen that hides the board between pass-and-play turns.
+- The 90-second Double Time turn and authoritative (server) turn deadlines.
 - Player-selected target score, complete victory flow, rematch, and tie policy.
 - Successful-match streak and Star reward logic.
 - In-match use/effects for the purchased power-ups.
