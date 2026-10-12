@@ -63,9 +63,13 @@ function randomBoardShape() {
 // Frames of "tile destroy frame.png" (x positions, each 256 x 241) - centred on the tile.
 const DESTROY_FRAME_X = [3, 292, 585, 877, 1172, 1467];
 
-// Frames of "dust frame.png" (3 puffs, each 480 x 189) - landing dust for new shapes.
-// The whole sheet is shown 310px wide, aligned to the bottom edge of the landed shape.
-const DUST_FRAME_X = [0, 555, 1116];
+// Frames of "dusty.png" (8 frames across a 1895 x 156 sheet) - landing dust for new shapes.
+// The full sheet is constrained to 758px wide when displayed.
+const DUST_SHEET_WIDTH = 1895;
+const DUST_FRAME_WIDTH = 237;
+const DUST_FRAME_HEIGHT = 156;
+const DUST_DISPLAY_WIDTH = 758;
+const DUST_FRAME_X = [0, 237, 474, 711, 948, 1185, 1422, 1659];
 
 const randomItem = (list) => list[Math.floor(Math.random() * list.length)];
 
@@ -180,7 +184,7 @@ class GameScene extends Phaser.Scene {
 
     // fx + audio
     this.load.image('tileDestroy', 'fx/tile destroy frame.png');
-    this.load.image('dust', 'fx/dust frame.png');
+    this.load.image('dust', 'fx/dusty.png');
     this.load.audio('flip', ['audio/tile_flip_short.ogg', 'audio/tile_flip_short.wav']);
   }
 
@@ -581,9 +585,12 @@ class GameScene extends Phaser.Scene {
       frameRate: 14,
     });
 
-    // landing dust: 3 frames
+    // landing dust: 8 frames; the last frame is 236px wide because the sheet is 1895px wide.
     const dustTex = this.textures.get('dust');
-    DUST_FRAME_X.forEach((x, i) => dustTex.add('u' + i, 0, x, 0, 480, 189));
+    DUST_FRAME_X.forEach((x, i) => {
+      const frameWidth = Math.min(DUST_FRAME_WIDTH, DUST_SHEET_WIDTH - x);
+      dustTex.add('u' + i, 0, x, 0, frameWidth, DUST_FRAME_HEIGHT);
+    });
     this.anims.create({
       key: 'dustPuff',
       frames: DUST_FRAME_X.map((_, i) => ({ key: 'dust', frame: 'u' + i })),
@@ -864,7 +871,7 @@ class GameScene extends Phaser.Scene {
   // Dust cloud at the bottom edge of a tile that just landed.
   spawnDust(x, tileY) {
     const puff = this.add.sprite(x, tileY + TILE_SIZE / 2, 'dust', 'u0').setOrigin(0.5, 1).setDepth(13);
-    puff.setScale(310 / 1596); // constraint size: the 3-frame sheet is 310px wide (about 103 x 36 per frame)
+    puff.setScale(DUST_DISPLAY_WIDTH / DUST_SHEET_WIDTH); // constrain the 8-frame sheet to 758px wide
     puff.play('dustPuff');
     puff.once('animationcomplete', () => puff.destroy());
   }
