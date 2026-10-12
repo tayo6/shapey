@@ -42,21 +42,21 @@ const formatClock = (ms) => {
 
 // texture key -> file in assets/shapes
 const SHAPE_FILES = {
-  mystery: 'Mystery.png', // the hidden face (never a real shape)
-  dummy:   'dummy.png',  // blank wooden tile: neutral, non-scoring, and ignored by matching
-  cancel:  'cancel.png',
-  capsule: 'capsule.png',
-  circle:  'circle.png',
-  cross:   'cross.png',
-  divide:  'divide.png',
-  corner:  'four corner.png',
-  marked:  'marked.png',
-  pointer: 'shield.png',   // orange gem (file names are swapped)
-  shield:  'pointer.png',  // red gem
-  sphere:  'sphere.png',
-  square:  'square.png',
-  star:    'star .png',    // note: space before the dot in the filename
-  x:       'x.png',
+  mystery: 'Mystery.webp', // the hidden face (never a real shape)
+  dummy:   'dummy.webp',  // blank wooden tile: neutral, non-scoring, and ignored by matching
+  cancel:  'cancel.webp',
+  capsule: 'capsule.webp',
+  circle:  'circle.webp',
+  cross:   'cross.webp',
+  divide:  'divide.webp',
+  corner:  'four corner.webp',
+  marked:  'marked.webp',
+  pointer: 'shield.webp',   // orange gem (file names are swapped)
+  shield:  'pointer.webp',  // red gem
+  sphere:  'sphere.webp',
+  square:  'square.webp',
+  star:    'star .webp',    // note: space before the dot in the filename
+  x:       'x.webp',
 };
 const SHAPE_KEYS = Object.keys(SHAPE_FILES).filter((k) => !['mystery', 'dummy'].includes(k));
 const DUMMY_SPAWN_CHANCE = 0.08; // blank wooden tiles are occasional neutral decoys
@@ -65,10 +65,10 @@ function randomBoardShape() {
   return Math.random() < DUMMY_SPAWN_CHANCE ? 'dummy' : randomItem(SHAPE_KEYS);
 }
 
-// Frames of "tile destroy frame.png" (x positions, each 256 x 241) - centred on the tile.
+// Frames of "tile destroy frame.webp" (x positions, each 256 x 241) - centred on the tile.
 const DESTROY_FRAME_X = [3, 292, 585, 877, 1172, 1467];
 
-// Frames of "dusty.png" (8 frames across a 1895 x 156 sheet) - landing dust for new shapes.
+// Frames of "dusty.webp" (8 frames across a 1895 x 156 sheet) - landing dust for new shapes.
 // The full sheet is constrained to 758px wide when displayed.
 const DUST_SHEET_WIDTH = 1895;
 const DUST_FRAME_WIDTH = 237;
@@ -204,22 +204,22 @@ class GameScene extends Phaser.Scene {
     this.load.setPath('assets');
 
     // backgrounds
-    this.load.image('bg', 'backgrounds/BG.png');
-    this.load.image('headerShadow', 'backgrounds/header shadow.png');
-    this.load.image('headerPlank1', 'backgrounds/header  plank 1.png'); // two spaces in the filename
-    this.load.image('trayShadow', 'backgrounds/Tray Shadow.png');
-    this.load.image('tray', 'backgrounds/tray.png');
-    this.load.image('bottomNav', 'backgrounds/bottom navigation.png');
+    this.load.image('bg', 'backgrounds/BG.webp');
+    this.load.image('headerShadow', 'backgrounds/header shadow.webp');
+    this.load.image('headerPlank1', 'backgrounds/header  plank 1.webp'); // two spaces in the filename
+    this.load.image('trayShadow', 'backgrounds/Tray Shadow.webp');
+    this.load.image('tray', 'backgrounds/tray.webp');
+    this.load.image('bottomNav', 'backgrounds/bottom navigation.webp');
 
     // ui
-    this.load.image('playerPlank1', 'ui/player plank.png');
-    this.load.image('playerPlank2', 'ui/player plank 2.png');
-    this.load.image('timerPlank', 'ui/timer plank.png');
-    this.load.image('starIcon', 'ui/Star.png');
-    this.load.image('btnSettings', 'ui/settings.png');
-    this.load.image('btnSubmit', 'ui/submit.png');
-    this.load.image('btnPolls', 'ui/polls.png');
-    this.load.image('btnInventory', 'ui/inventory.png');
+    this.load.image('playerPlank1', 'ui/player plank.webp');
+    this.load.image('playerPlank2', 'ui/player plank 2.webp');
+    this.load.image('timerPlank', 'ui/timer plank.webp');
+    this.load.image('starIcon', 'ui/Star.webp');
+    this.load.image('btnSettings', 'ui/settings.webp');
+    this.load.image('btnSubmit', 'ui/submit.webp');
+    this.load.image('btnPolls', 'ui/polls.webp');
+    this.load.image('btnInventory', 'ui/inventory.webp');
 
     // shapes
     for (const [key, file] of Object.entries(SHAPE_FILES)) {
@@ -227,8 +227,8 @@ class GameScene extends Phaser.Scene {
     }
 
     // fx + audio
-    this.load.image('tileDestroy', 'fx/tile destroy frame.png');
-    this.load.image('dust', 'fx/dusty.png');
+    this.load.image('tileDestroy', 'fx/tile destroy frame.webp');
+    this.load.image('dust', 'fx/dusty.webp');
     this.load.audio('flip', ['audio/tile_flip_short.ogg', 'audio/tile_flip_short.wav']);
   }
 
@@ -506,7 +506,7 @@ class GameScene extends Phaser.Scene {
   renderInventory() {
     this.clearInventoryUI();
 
-    // Full-page shop uses the same BG.png art as the game background.
+    // Full-page shop uses the same BG.webp art as the game background.
     const pageBg = this.add.image(0, 0, 'bg').setOrigin(0, 0).setDisplaySize(GAME_WIDTH, GAME_HEIGHT);
     this.addInventoryUI(pageBg);
 

@@ -44,20 +44,20 @@ The assets are mapped in `SHAPE_FILES` in `src/main.js`. The current mapping inc
 
 | Code key | Asset filename |
 |---|---|
-| `capsule` | `capsule.png` |
-| `circle` | `circle.png` |
-| `cross` | `cross.png` |
-| `divide` | `divide.png` |
-| `corner` | `four corner.png` |
-| `marked` | `marked.png` |
-| `pointer` | `shield.png` |
-| `shield` | `pointer.png` |
-| `sphere` | `sphere.png` |
-| `square` | `square.png` |
-| `star` | `star .png` (note the space before the dot) |
-| `x` | `x.png` |
+| `capsule` | `capsule.webp` |
+| `circle` | `circle.webp` |
+| `cross` | `cross.webp` |
+| `divide` | `divide.webp` |
+| `corner` | `four corner.webp` |
+| `marked` | `marked.webp` |
+| `pointer` | `shield.webp` |
+| `shield` | `pointer.webp` |
+| `sphere` | `sphere.webp` |
+| `square` | `square.webp` |
+| `star` | `star .webp` (note the space before the dot) |
+| `x` | `x.webp` |
 
-Some asset names and code keys are intentionally non-obvious; preserve exact paths unless assets are deliberately renamed. `mystery` is the hidden tile face and is not a matchable shape. `dummy` is the blank wooden tile and is not a normal shape. `cancel` currently maps to `cancel.png`, but it must be removed from the normal scoring-shape pool and handled as a special pickup (see section 7).
+Some asset names and code keys are intentionally non-obvious; preserve exact paths unless assets are deliberately renamed. `mystery` is the hidden tile face and is not a matchable shape. `dummy` is the blank wooden tile and is not a normal shape. `cancel` currently maps to `cancel.webp`, but it must be removed from the normal scoring-shape pool and handled as a special pickup (see section 7).
 
 ### Initial board generation
 
@@ -211,7 +211,7 @@ These are two distinct concepts and must not be confused.
 
 ### Blank wooden dummy — neutral decoy
 
-Asset: `assets/shapes/dummy.png`; code key: `dummy`.
+Asset: `assets/shapes/dummy.webp`; code key: `dummy`.
 
 - A blank wooden tile with no symbol.
 - It is occasionally spawned as a neutral decoy; current configured chance is **8%** when `randomBoardShape()` is used.
@@ -224,7 +224,7 @@ Asset: `assets/shapes/dummy.png`; code key: `dummy`.
 
 ### Cancel tile / Cancel Counter — defensive pickup
 
-Asset: `assets/shapes/cancel.png`; code key: `cancel`.
+Asset: `assets/shapes/cancel.webp`; code key: `cancel`.
 
 - This is **not** a normal scoring shape.
 - It should spawn occasionally as a separate pickup, not as one of the guaranteed-three match shapes.

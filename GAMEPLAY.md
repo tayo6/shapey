@@ -118,7 +118,7 @@ Double Play must not chain into another Double Play during its bonus turn. Doubl
 
 ### Blank wooden dummy = no effect
 
-The new `assets/shapes/dummy.png` is a plain wooden tile with no symbol or shape. It is a **neutral dummy**, not a scoring shape and not a power-up.
+The new `assets/shapes/dummy.webp` is a plain wooden tile with no symbol or shape. It is a **neutral dummy**, not a scoring shape and not a power-up.
 
 - It can be flipped/revealed during a player's normal selection sequence.
 - It never adds or subtracts points, never counts toward the minimum of 3 matching normal shapes, and never breaks a selection or forces the player to restart.
@@ -127,7 +127,7 @@ The new `assets/shapes/dummy.png` is a plain wooden tile with no symbol or shape
 
 ### Existing Cancel tile = defensive inventory card
 
-The existing `cancel.png` represents the **Cancel Counter**. It is not a normal scoring shape and must not be matchable for points. When collected, it grants a Cancel Counter card to the player's inventory. The player can deliberately use that card to cancel an opponent's **Score Strike (-10), Double Time, or Double Play** before the effect takes place.
+The existing `cancel.webp` represents the **Cancel Counter**. It is not a normal scoring shape and must not be matchable for points. When collected, it grants a Cancel Counter card to the player's inventory. The player can deliberately use that card to cancel an opponent's **Score Strike (-10), Double Time, or Double Play** before the effect takes place.
 
 - The card is consumed only when it successfully cancels one of those effects.
 - It does not cancel Audience Pick, and it does not itself add or subtract score.
@@ -272,7 +272,7 @@ Every turn should pass through one explicit state machine:
 - The star rows are currently decorative; there is no starting free Star, successful-match streak tracker, or inventory currency.
 - Only Submit has a click handler. Polls, Inventory, and Settings do not yet open working panels.
 - There is no AI, online lobby, live audience/poll service, rematch flow, or match-winner state.
-- The blank wooden dummy now has its own `dummy.png` asset and neutral tap behavior. The existing `cancel.png` should become a defensive inventory card rather than a normal scoring shape; its collection, inventory display, and counter-use flow still need implementation.
+- The blank wooden dummy now has its own `dummy.webp` asset and neutral tap behavior. The existing `cancel.webp` should become a defensive inventory card rather than a normal scoring shape; its collection, inventory display, and counter-use flow still need implementation.
 - The old 10-second idle auto-submit has been removed, so a valid selection now waits for the Submit button.
 - Player mode, scoring, turn deadline, inventory, streak, and board resolution should be owned by a small game-state layer instead of being scattered across animation callbacks. UI animations should react to resolved state, not decide the result themselves.
 
