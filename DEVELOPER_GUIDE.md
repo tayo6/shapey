@@ -95,7 +95,7 @@ The UI should reflect this state rather than deciding game outcomes itself.
 - A wrong tap by itself does not reset a successful-match streak. A timeout/no valid match does.
 - The Submit button confirms the current valid selection. Do not resolve a match merely because the player has selected three tiles; keep the explicit Submit action.
 - Prevent double submits and tile taps while a resolution animation is running.
-- The old prototype has a 10-second idle auto-submit for a valid selection. The intended design is to remove this behavior: the 45-second turn deadline should be the only automatic deadline. The query parameter `?auto=3000` currently shortens the old auto-submit delay for testing.
+- The old 10-second idle auto-submit has been **removed** (along with its `?auto=` test parameter). A valid selection is only ever submitted with the Submit button, and the 45-second turn deadline is the only automatic deadline.
 
 ### Valid match and scoring
 

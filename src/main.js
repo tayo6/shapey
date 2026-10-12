@@ -10,10 +10,9 @@ const GRID_COLS = 7;
 const GRID_ROWS = 7;
 
 // ---- Game rules -----------------------------------------------------------
-// For quick testing you can shorten the timers in the URL, e.g. index.html?review=3000&auto=3000
+// For quick testing you can shorten the timers in the URL, e.g. index.html?review=3000&turn=10000
 const urlParams = new URLSearchParams(window.location.search);
 const REVIEW_MS = Number(urlParams.get('review')) || 15000;      // new shapes stay face-up this long, then flip to mystery
-const AUTO_SUBMIT_MS = Number(urlParams.get('auto')) || 10000;  // idle time (with a valid match) before auto submit
 const MIN_MATCH = 3;          // smallest scoring match
 // 3 matched = 1 point, 4 matched = 2 points, 5 or more = 5 points
 const scoreFor = (count) => (count >= 5 ? 5 : count === 4 ? 2 : count === 3 ? 1 : 0);
@@ -191,7 +190,6 @@ class GameScene extends Phaser.Scene {
     this.selection = [];      // tiles the player has picked, in order
     this.selectedShape = null; // the shape the current attempt is matching
     this.busy = false;        // true while animations run (input is ignored)
-    this.autoTimer = null;
     this.starBalance = this.loadStarBalance();
     this.inventoryItems = this.loadInventoryItems();
     this.inventoryUI = [];
@@ -351,7 +349,6 @@ class GameScene extends Phaser.Scene {
   async endTurn(reason) {
     if (this.turnEnding) return;
     this.turnEnding = true; // from here on, late taps and submits are ignored
-    this.clearAutoSubmit();
     if (this.inventoryOpen) this.closeInventory();
     await this.resetSelection(); // flip any picked tiles back (nothing to do after a match)
 
@@ -723,12 +720,10 @@ class GameScene extends Phaser.Scene {
     tile.selected = true;
     this.selection.push(tile);
     this.addRing(tile);
-    this.clearAutoSubmit();
     if (isFirst) this.selectedShape = tile.shape;
 
     if (matches) {
-      this.flipTile(tile, true);
-      if (this.selection.length >= MIN_MATCH) this.startAutoSubmit();
+      this.flipTile(tile, true); // a valid match is only submitted with the Submit button
     } else {
       this.failAttempt(tile);
     }
@@ -748,7 +743,6 @@ class GameScene extends Phaser.Scene {
     const tiles = this.selection;
     this.selection = [];
     this.selectedShape = null;
-    this.clearAutoSubmit();
     await Promise.all(
       tiles.map(async (tile, i) => {
         await this.flipTile(tile, false, i * 140);
@@ -758,20 +752,10 @@ class GameScene extends Phaser.Scene {
     );
   }
 
-  startAutoSubmit() {
-    this.clearAutoSubmit();
-    this.autoTimer = this.time.delayedCall(AUTO_SUBMIT_MS, () => this.submit());
-  }
-
-  clearAutoSubmit() {
-    if (this.autoTimer) { this.autoTimer.remove(false); this.autoTimer = null; }
-  }
-
   // -------------------------------------------------------------- submit
   async submit() {
     // A late submit (after the turn clock ran out, or during hand-over) is ignored.
     if (this.busy || this.turnEnding || this.turnClock.expired() || this.selection.length === 0) return;
-    this.clearAutoSubmit();
     this.busy = true;
 
     const tiles = this.selection;

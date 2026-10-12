@@ -11,7 +11,7 @@ This document describes the recommended rules for turning the current Phaser pro
 - A wrong shape resets the current selection, but does not immediately end the turn. This preserves the memory challenge without making one mis-tap fatal.
 - If the timer expires without a valid submitted match, award no points and pass the turn.
 - **Two clocks run at the same time.** The player's 45-second turn clock and the 15-second "memorize" reveal of newly spawned tiles are independent countdowns. A new batch of tiles revealing never pauses, resets, or extends the turn, and the turn ending never cuts a reveal short. Both are shown on screen (the turn timer, plus a "MEMORIZE" countdown while tiles are face-up).
-- The Submit button confirms a valid group. Remove the current prototype's separate 10-second idle auto-submit; the 45-second turn timer should be the only automatic deadline.
+- The Submit button confirms a valid group. There is no idle auto-submit (the old 10-second one was removed); the 45-second turn timer is the only automatic deadline.
 - The match is a race to a target score chosen before play. The default target is **100 points**; players can choose any target from 100 to **1,000**. In a two-player match, the first player to reach the selected target wins. Use a short victory sequence and a rematch option. In online play, the server—not the browser timer—must be authoritative.
 
 ### Suggested scoring
@@ -261,7 +261,7 @@ Every turn should pass through one explicit state machine:
 - Only Submit has a click handler. Polls, Inventory, and Settings do not yet open working panels.
 - There is no AI, online lobby, live audience/poll service, rematch flow, or match-winner state.
 - The blank wooden dummy now has its own `dummy.png` asset and neutral tap behavior. The existing `cancel.png` should become a defensive inventory card rather than a normal scoring shape; its collection, inventory display, and counter-use flow still need implementation.
-- The current idle auto-submit runs after a valid selection has been idle for 10 seconds, even though the design needs a 45-second turn timer. That timer should be removed or repurposed.
+- The old 10-second idle auto-submit has been removed, so a valid selection now waits for the Submit button.
 - Player mode, scoring, turn deadline, inventory, streak, and board resolution should be owned by a small game-state layer instead of being scattered across animation callbacks. UI animations should react to resolved state, not decide the result themselves.
 
 ## 7. Recommended implementation order
