@@ -31,8 +31,8 @@ The current app is a static Phaser 3 browser prototype hosted on GitHub Pages. T
 - Each tile is drawn at approximately 90 × 90 pixels, with a 91-pixel centre-to-centre pitch.
 - At the start of a game, the board is face-up for **15 seconds** so players can study the positions.
 - After the study phase, tiles flip to the hidden `mystery` face.
-- Newly spawned tiles after a valid match are also revealed for **15 seconds**, then hidden again.
-- The 15-second reveal duration can currently be overridden for testing with the URL query parameter `?review=3000` (milliseconds).
+- Newly spawned tiles after a valid match are revealed for **5 seconds** (`SPAWN_REVEAL_MS`), flip face-down, then **shuffle**: N new tiles give N − 1 swaps, each `SHUFFLE_STEP_MS` (2 seconds), strictly one after another (see `planShuffle`, `runShuffle`, `swapTiles`). Chain rule: each newly involved tile swaps with an already shuffled one; extra swaps re-shuffle; about 10% of tiles (`SHUFFLE_SKIP_CHANCE`) sit out, with at least 3 taking part. Picked tiles never move and tiles mid-swap can't be tapped. A submitted match cancels the shuffle and settles the swap in progress.
+- Test overrides (milliseconds): `?review=3000` shortens the opening study phase, `?reveal=2000` the spawned-tile reveal, `?swap=500` each swap.
 - The reveal countdown runs **concurrently** with the 45-second turn clock. Each batch of revealed tiles has its own absolute deadline (`RevealTracker`), separate from the turn deadline (`Countdown`), so neither can pause or extend the other. The header shows a "MEMORIZE" countdown while any tiles are face-up.
 - Other test overrides (milliseconds): `?turn=10000` shortens the turn, `?invwindow=20000` shortens the inventory-limit window.
 
@@ -118,7 +118,7 @@ On successful Submit:
 5. Update streak rewards if applicable (section 5).
 6. Remove the matched normal tiles and play the tile-destroy effect.
 7. Let tiles above empty positions fall and spawn replacement tiles.
-8. Reveal new tiles for 15 seconds, then hide them.
+8. Reveal new tiles for 5 seconds, hide them, then shuffle them (section 2).
 9. Check whether the target score has been reached.
 10. If the game has not ended, complete the turn and pass control to the other player, except when Double Play grants a bonus turn.
 
@@ -299,7 +299,7 @@ The following reflects the current repository state at the time this guide was w
 - Shop starts with 1 Star if no saved balance exists.
 - A descriptive Cancel Counter card/explanation in the shop.
 - Per-player scores, an active-player indicator, and turn hand-over after a submitted match or timeout (same-device pass-and-play).
-- A running 45-second turn countdown that works concurrently with the 15-second "MEMORIZE" reveal countdown for new tiles.
+- A running 45-second turn countdown that works concurrently with the 5-second "MEMORIZE" reveal countdown for new tiles, followed by the sequential 2-second-per-swap shuffle with square strokes around the swapping pair.
 - Inventory access limit: 2 opens per player per rolling 5 minutes, with the turn clock still running while the shop is open.
 
 ### Not yet implemented or incomplete

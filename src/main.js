@@ -12,7 +12,12 @@ const GRID_ROWS = 7;
 // ---- Game rules -----------------------------------------------------------
 // For quick testing you can shorten the timers in the URL, e.g. index.html?review=3000&turn=10000
 const urlParams = new URLSearchParams(window.location.search);
-const REVIEW_MS = Number(urlParams.get('review')) || 15000;      // new shapes stay face-up this long, then flip to mystery
+const REVIEW_MS = Number(urlParams.get('review')) || 15000;      // the opening board stays face-up this long (study phase)
+// Tiles spawned after a match are shown only briefly, flip face-down, then shuffle places with each other.
+const SPAWN_REVEAL_MS = Number(urlParams.get('reveal')) || 5000;  // new tiles face-up
+const SHUFFLE_STEP_MS = Number(urlParams.get('swap')) || 2000;    // each swap takes this long; swaps run one after another
+const SHUFFLE_SKIP_CHANCE = 0.1;  // about 10% of new tiles sit the shuffle out
+const SHUFFLE_ARC_PX = 28;        // sideways bow of a swap path, so the two tiles pass each other instead of overlapping
 const MIN_MATCH = 3;          // smallest scoring match
 // 3 matched = 1 point, 4 matched = 2 points, 5 or more = 5 points
 const scoreFor = (count) => (count >= 5 ? 5 : count === 4 ? 2 : count === 3 ? 1 : 0);
@@ -92,6 +97,42 @@ function makeInitialBoard() {
   return Array.from({ length: GRID_ROWS }, (_, r) => flat.slice(r * GRID_COLS, (r + 1) * GRID_COLS));
 }
 
+// Plans the shuffle of a batch of `count` new tiles as a list of swaps [i, j] (indexes into the batch).
+// - N tiles give N - 1 swaps (3 tiles = 2 swaps, 4 = 3, 5 = 4 ...), performed one after another.
+// - Chain rule: each newly involved tile swaps with a tile that has already been shuffled (A<->B, then C<->A or B).
+// - Already shuffled tiles can be shuffled again; once everyone is involved, the remaining swaps re-shuffle them.
+// - Each tile has a ~10% chance to sit out, but at least min(count, 3) tiles always take part.
+function planShuffle(count, rng = Math.random, skipChance = SHUFFLE_SKIP_CHANCE) {
+  if (count < 2) return { steps: [], skipped: [] };
+  const order = [];
+  for (let i = 0; i < count; i++) order.push(i);
+  for (let i = count - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  const minPlayers = Math.min(count, 3);
+  const players = [];
+  const skipped = [];
+  for (const i of order) (rng() < skipChance ? skipped : players).push(i);
+  while (players.length < minPlayers) players.push(skipped.pop());
+
+  const pick = (list) => list[Math.floor(rng() * list.length)];
+  const steps = [[players[0], players[1]]];
+  const involved = [players[0], players[1]];
+  for (let k = 2; k < players.length; k++) {
+    steps.push([players[k], pick(involved)]);
+    involved.push(players[k]);
+  }
+  while (steps.length < count - 1) {
+    const last = steps[steps.length - 1];
+    let a, b;
+    do { a = pick(involved); b = pick(involved); }
+    while (a === b || (involved.length > 2 && ((a === last[0] && b === last[1]) || (a === last[1] && b === last[0]))));
+    steps.push([a, b]);
+  }
+  return { steps, skipped };
+}
+
 // A countdown to an absolute deadline (never a tick counter), so it stays correct however
 // often the screen redraws and can run alongside any other countdown.
 class Countdown {
@@ -105,24 +146,27 @@ class Countdown {
 }
 
 // Tracks the "memorize" countdown of every batch of newly revealed tiles. Each batch has its own
-// 15 second deadline, independent of the turn clock.
+// deadline (15s for the opening board, 5s for spawned tiles), independent of the turn clock.
+// `shuffle` says whether the batch is shuffled after it flips face-down.
 class RevealTracker {
   constructor(clock = Date.now) {
     this.clock = clock;
     this.batches = [];
   }
-  add(tiles, ms) { this.batches.push({ tiles, endsAt: this.clock() + ms }); }
+  add(tiles, ms, shuffle = false) { this.batches.push({ tiles, shuffle, endsAt: this.clock() + ms }); }
+  // Pending batches will still flip face-down, but will no longer be shuffled.
+  cancelShuffles() { this.batches.forEach((b) => { b.shuffle = false; }); }
   // Longest time left among the batches still being shown (0 when nothing is being revealed).
   remaining() {
     const now = this.clock();
     return this.batches.reduce((most, b) => Math.max(most, b.endsAt - now), 0);
   }
-  // Batches whose reveal time is over; they are removed from the tracker.
+  // Batches ({ tiles, shuffle }) whose reveal time is over; they are removed from the tracker.
   takeDue() {
     const now = this.clock();
     const due = this.batches.filter((b) => b.endsAt <= now);
     this.batches = this.batches.filter((b) => b.endsAt > now);
-    return due.map((b) => b.tiles);
+    return due;
   }
 }
 
@@ -206,6 +250,9 @@ class GameScene extends Phaser.Scene {
     this.turnClock = new Countdown();   // the active player's 45 second turn
     this.reveals = new RevealTracker(); // the 15 second reveal of each batch of new tiles
     this.turnEnding = false;            // true while a turn is being handed over: taps/submits are ignored
+    this.shuffleToken = 0;              // bumped to cancel shuffles that are queued or running
+    this.shuffling = 0;                 // number of shuffles running (for the SHUFFLING label)
+    this.activeSwap = null;
     this.inventoryLimiter = new InventoryLimiter(INVENTORY_OPEN_LIMIT, INVENTORY_WINDOW_MS, PLAYER_NAMES.length);
 
     this.createBackground();
@@ -333,8 +380,9 @@ class GameScene extends Phaser.Scene {
     this.setClockText(this.timerText, turnLeft);
 
     const revealLeft = this.reveals.remaining();
-    this.revealText.setVisible(revealLeft > 0);
+    this.revealText.setVisible(revealLeft > 0 || this.shuffling > 0);
     if (revealLeft > 0) this.setClockText(this.revealText, 'MEMORIZE ' + formatClock(revealLeft));
+    else if (this.shuffling > 0) this.setClockText(this.revealText, 'SHUFFLING');
 
     // The shop covers the header, so it shows the turn clock too: opening it never stops the clock.
     if (this.inventoryTimerText && this.inventoryTimerText.active) {
@@ -637,7 +685,7 @@ class GameScene extends Phaser.Scene {
         all.push(tile);
       }
     }
-    this.startReview(all); // show everything for 15s, then flip to mystery
+    this.startReview(all, REVIEW_MS, false); // study phase: everything face-up for 15s, then flip to mystery (no shuffle)
   }
 
   // A new tile, created face-up.
@@ -648,6 +696,7 @@ class GameScene extends Phaser.Scene {
     tile.col = col;
     tile.faceUp = true;
     tile.selected = false;
+    tile.swapping = false; // true while the tile is moving in a shuffle swap
     tile.baseScale = tile.scaleX;
     tile.flipChain = Promise.resolve();
     tile.setMask(this.boardMask);
@@ -680,20 +729,113 @@ class GameScene extends Phaser.Scene {
     return tile.flipChain;
   }
 
-  // Starts the REVIEW_MS "memorize" countdown for a batch of new tiles. It runs on its own deadline,
-  // at the same time as the turn clock, and is not affected by whose turn it is.
-  startReview(batch) {
-    this.reveals.add(batch, REVIEW_MS);
+  // Starts the "memorize" countdown for a batch of tiles. It runs on its own deadline, at the same time
+  // as the turn clock, and is not affected by whose turn it is. Spawned tiles (shuffle = true) are
+  // shuffled once they are face-down; the opening board is not.
+  startReview(batch, ms = SPAWN_REVEAL_MS, shuffle = true) {
+    this.reveals.add(batch, ms, shuffle);
   }
 
-  // Once a batch's reveal time is over, flip its tiles to mystery one after the other.
+  // Once a batch's reveal time is over, flip its tiles to mystery one after the other, then shuffle them.
   // Tiles the player is currently using stay face-up.
   hideFinishedReveals() {
     for (const batch of this.reveals.takeDue()) {
-      batch.forEach((tile, i) => {
+      batch.tiles.forEach((tile, i) => {
         if (tile.active && !tile.selected) this.flipTile(tile, false, i * 35);
       });
+      if (batch.shuffle) {
+        const token = this.shuffleToken;
+        Promise.all(batch.tiles.map((t) => t.flipChain)).then(() => {
+          if (token === this.shuffleToken) this.runShuffle(batch.tiles, token);
+        });
+      }
     }
+  }
+
+  // ------------------------------------------------------------- shuffle
+  // A tile can take part in a swap when it is on the board and not picked by the player.
+  canShuffle(tile) {
+    return tile.active && !tile.selected && !tile.swapping;
+  }
+
+  // Performs the planned swaps of a batch strictly one after another, SHUFFLE_STEP_MS each.
+  // The rest of the board stays playable; only the two tiles in motion can't be tapped.
+  async runShuffle(tiles, token) {
+    this.shuffling++;
+    try {
+      for (const [i, j] of planShuffle(tiles.length).steps) {
+        if (token !== this.shuffleToken) break;
+        const a = tiles[i];
+        const b = tiles[j];
+        if (this.canShuffle(a) && this.canShuffle(b)) await this.swapTiles(a, b);
+      }
+    } finally {
+      this.shuffling--;
+    }
+  }
+
+  // Stops all shuffling (a match is being resolved and the board is about to change).
+  // A swap in progress snaps to its end position so the board is consistent.
+  cancelShuffles() {
+    this.shuffleToken++;
+    this.reveals.cancelShuffles();
+    if (this.activeSwap) this.activeSwap.finishNow();
+  }
+
+  // Swaps two tiles' places over SHUFFLE_STEP_MS. The tiles bow in opposite directions so they pass each
+  // other, and a square stroke follows each of them.
+  swapTiles(a, b) {
+    return new Promise((resolve) => {
+      // Start and end points are the tiles' grid cells, so a swap always lands exactly on the grid.
+      const ax = this.cellX(a.col), ay = this.cellY(a.row);
+      const bx = this.cellX(b.col), by = this.cellY(b.row);
+      const len = Math.hypot(bx - ax, by - ay) || 1;
+      const px = -(by - ay) / len;
+      const py = (bx - ax) / len;
+
+      // Board data changes first, so the grid always says where each tile belongs.
+      const [aRow, aCol, bRow, bCol] = [a.row, a.col, b.row, b.col];
+      this.tiles[bRow][bCol] = a;
+      this.tiles[aRow][aCol] = b;
+      a.row = bRow; a.col = bCol;
+      b.row = aRow; b.col = aCol;
+
+      const makeBox = (tile) => {
+        const box = this.add.graphics({ x: tile.x, y: tile.y }).setDepth(14);
+        box.lineStyle(5, 0x66e0ff, 1);
+        box.strokeRect(-TILE_SIZE / 2 - 2, -TILE_SIZE / 2 - 2, TILE_SIZE + 4, TILE_SIZE + 4);
+        return box;
+      };
+      a.swapping = b.swapping = true;
+      const boxA = makeBox(a);
+      const boxB = makeBox(b);
+      const prevDepth = [a.depth, b.depth];
+      a.setDepth(11); b.setDepth(11);
+
+      const place = (t) => {
+        const bow = t >= 1 ? 0 : Math.sin(Math.PI * t) * SHUFFLE_ARC_PX; // exact landing on the grid
+        a.x = ax + (bx - ax) * t + px * bow; a.y = ay + (by - ay) * t + py * bow;
+        b.x = bx + (ax - bx) * t - px * bow; b.y = by + (ay - by) * t - py * bow;
+        boxA.x = a.x; boxA.y = a.y; boxB.x = b.x; boxB.y = b.y;
+      };
+      const state = { t: 0 };
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        place(1);
+        boxA.destroy(); boxB.destroy();
+        a.swapping = b.swapping = false;
+        a.setDepth(prevDepth[0]); b.setDepth(prevDepth[1]);
+        if (this.activeSwap && this.activeSwap.tween === tween) this.activeSwap = null;
+        resolve();
+      };
+      const tween = this.tweens.add({
+        targets: state, t: 1, duration: SHUFFLE_STEP_MS, ease: 'Sine.easeInOut',
+        onUpdate: () => place(state.t), onComplete: finish,
+      });
+      this.activeSwap = { tween, finishNow: () => { tween.stop(); finish(); } };
+    });
   }
 
   // -------------------------------------------------------------- picking
@@ -709,7 +851,8 @@ class GameScene extends Phaser.Scene {
 
   onTileTap(tile) {
     // Taps are ignored during hand-over and once the turn clock has run out.
-    if (this.busy || this.turnEnding || this.turnClock.expired() || !tile.active || tile.selected) return;
+    // Tiles in the middle of a swap can't be tapped.
+    if (this.busy || this.turnEnding || this.turnClock.expired() || !tile.active || tile.selected || tile.swapping) return;
 
     // A blank wooden dummy is revealed briefly, but is otherwise as if it
     // had not been picked: it never joins or resets the current selection.
@@ -773,6 +916,7 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
+    this.cancelShuffles(); // the board is about to change: stop any shuffle and settle the swap in progress
     await Promise.all(tiles.map((t) => t.flipChain)); // let any flips finish
     this.selection = [];
     this.selectedShape = null;

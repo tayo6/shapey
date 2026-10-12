@@ -7,12 +7,24 @@ This document describes the recommended rules for turning the current Phaser pro
 - The board is 7 × 7. At the beginning of a game, all normal shapes are visible for 15 seconds, then turn face-down.
 - Players alternate turns. Each turn lasts **45 seconds**.
 - On a turn, the player taps hidden tiles to reveal their shapes and tries to collect 3 or more of the same normal shape. Matches do not need to be adjacent.
-- A valid submitted match ends that player's turn, awards points, removes those tiles, and causes the board to cascade. Newly spawned tiles are shown for 15 seconds before hiding.
+- A valid submitted match ends that player's turn, awards points, removes those tiles, and causes the board to cascade. Newly spawned tiles are shown for 5 seconds, flip face-down, and are then shuffled (see "New-tile shuffle" below).
 - A wrong shape resets the current selection, but does not immediately end the turn. This preserves the memory challenge without making one mis-tap fatal.
 - If the timer expires without a valid submitted match, award no points and pass the turn.
-- **Two clocks run at the same time.** The player's 45-second turn clock and the 15-second "memorize" reveal of newly spawned tiles are independent countdowns. A new batch of tiles revealing never pauses, resets, or extends the turn, and the turn ending never cuts a reveal short. Both are shown on screen (the turn timer, plus a "MEMORIZE" countdown while tiles are face-up).
+- **Two clocks run at the same time.** The player's 45-second turn clock and the 5-second "memorize" reveal of newly spawned tiles (followed by their shuffle) are independent; a reveal or shuffle never pauses, resets, or extends the turn, and the turn ending never cuts one short. The header shows the turn timer plus a "MEMORIZE" countdown (or "SHUFFLING") while new tiles are being handled.
 - The Submit button confirms a valid group. There is no idle auto-submit (the old 10-second one was removed); the 45-second turn timer is the only automatic deadline.
 - The match is a race to a target score chosen before play. The default target is **100 points**; players can choose any target from 100 to **1,000**. In a two-player match, the first player to reach the selected target wins. Use a short victory sequence and a rematch option. In online play, the server—not the browser timer—must be authoritative.
+
+### New-tile shuffle (fairness rule)
+
+Showing new tiles for 15 seconds would favour whoever is playing. Instead:
+
+1. New tiles spawn face-up for **5 seconds**, then flip face-down (mystery side up). The opening 15-second study phase is unchanged and is not shuffled.
+2. The new tiles then **swap places with each other** (only new tiles move; older tiles are never touched). N new tiles give **N − 1 swaps** (3 tiles = 2, 4 = 3, 5 = 4 ...), with no upper limit.
+3. Swaps happen **one after another, 2 seconds each** (never at the same time). The two tiles of a swap travel to each other's cell along a slight arc, each with a square stroke around it.
+4. Chain rule: after A swaps with B, the next tile (C) swaps with A or B. Once every tile has taken part, remaining swaps re-shuffle tiles that already moved. The same pair is not swapped back-to-back.
+5. About **10%** of new tiles sit the shuffle out (at least 3 tiles, or all of them if fewer, always take part).
+6. A tile the player has already picked does not move; swaps that involve it are skipped. A tile that is mid-swap can't be tapped; the rest of the board stays playable.
+7. If a match is submitted during a shuffle, the shuffle stops, the swap in progress settles on its end position, and the board resolves.
 
 ### Suggested scoring
 
@@ -256,7 +268,7 @@ Every turn should pass through one explicit state machine:
 ## 6. Code review findings in the current prototype
 
 - `src/main.js` now keeps a separate score per player and passes the turn (same-device pass-and-play) after a submitted match or a timeout. There is still no target score, winner state, AI, or online play.
-- The 45-second turn clock now runs from an absolute deadline, ends the turn on timeout, and runs alongside the 15-second reveal of new tiles. Double Time (90 seconds) and a server-authoritative deadline are not implemented.
+- The 45-second turn clock now runs from an absolute deadline, ends the turn on timeout, and runs alongside the 5-second reveal and shuffle of new tiles. Double Time (90 seconds) and a server-authoritative deadline are not implemented.
 - The star rows are currently decorative; there is no starting free Star, successful-match streak tracker, or inventory currency.
 - Only Submit has a click handler. Polls, Inventory, and Settings do not yet open working panels.
 - There is no AI, online lobby, live audience/poll service, rematch flow, or match-winner state.
