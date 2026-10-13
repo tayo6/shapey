@@ -12,7 +12,7 @@ This document describes the recommended rules for turning the current Phaser pro
 - If the timer expires without a valid submitted match, award no points and pass the turn.
 - **Two clocks run at the same time.** The player's 45-second turn clock and the 5-second "memorize" reveal of newly spawned tiles (followed by their shuffle) are independent; a reveal or shuffle never pauses, resets, or extends the turn, and the turn ending never cuts one short. The header shows the turn timer plus a "MEMORIZE" countdown (or "SHUFFLING") while new tiles are being handled.
 - The Submit button confirms a valid group. There is no idle auto-submit (the old 10-second one was removed); the 45-second turn timer is the only automatic deadline.
-- The match is a race to a target score chosen before play. The default target is **100 points**; players can choose any target from 100 to **1,000**. In a two-player match, the first player to reach the selected target wins. Use a short victory sequence and a rematch option. In online play, the server—not the browser timer—must be authoritative.
+- **Versus targets are fixed by mode:** Player vs AI and Player 1 vs Player 2 end when a side first reaches or exceeds **100 points**; Tag ends when a team first reaches or exceeds **200 points**. Play Alone is survival mode: there is no attempt-based checkpoint, and the game ends only when the score reaches **−15**. Online, the server—not the browser—must authoritatively resolve scores and winners.
 
 ### Which shapes spawn (shuffle bag)
 
@@ -52,18 +52,18 @@ Two teams of two share one device (online play is still future work). Team 1 is 
 
 - **Turn order:** the teams alternate, and each team's partners take turns, so the sequence is Player 1 → Player 3 → Player 2 → Player 4 → Player 1 → ... A partner "tags in" every other turn.
 - **One score per team.** A match scores for the team of whoever played it, so partners add to the same score. The header planks read TEAM 1 / TEAM 2, and a line under the timer names the team and partner whose turn it is (for example "TEAM 1: PLAYER 2"). The turn toast says the same.
-- **Everything else matches Player vs Player:** 45-second turns, 20% hazards, same scoring, shuffle and timeout rules. A timeout passes to the next player in the sequence.
+- **Everything else matches Player vs Player:** 45-second turns, 10% hazards, same scoring, shuffle and timeout rules. A timeout passes to the next player in the sequence. First team to 200 points wins.
 - **Inventory limit is per player:** each of the four players has their own 2-opens-per-5-minutes allowance (`limiterSlot()`).
-- Not implemented yet: stars, streaks and inventory are still one shared balance, there is no target score or winner screen in any mode yet, and there is no hand-off screen hiding the board between players.
+- Fixed score targets and the local winner screen are implemented. Stars, streaks and inventory still use one shared balance, and there is no hand-off screen hiding the board between players.
 
 ### Play alone (implemented)
 
-- One player, no countdown of any kind (no turn clock; the "MEMORIZE" cue for new tiles shows without numbers) and no Player 2 score plank. The header shows points toward the next checkpoint and the current attempt number.
-- An **attempt** is one try at a match, not one flip: a submitted match, a wrong shape, or a submit with fewer than 3 tiles. A hazard is not an attempt. Flipping a wooden dummy is not an attempt.
-- **Checkpoint every 15 attempts:** the player must have earned at least 15 points (from matches) in that window, otherwise the game is over. After a passed checkpoint a new window starts.
-- **Score floor:** a wrong shape costs 1 point so the score can go negative (a submit with fewer than 3 tiles is free). Hazards never cost anything in Play alone. Reaching **−15** is game over.
-- Game over shows the score, attempts and checkpoints cleared, with Play again and Main menu.
-- Constants: `ALONE_ATTEMPT_WINDOW`, `ALONE_POINTS_PER_WINDOW`, `ALONE_SCORE_FLOOR`, `ALONE_MISS_PENALTY`.
+- One player, no turn countdown, and no Player 2 score plank. The header shows the number of tries and the score floor.
+- A try is one attempt at a match: a submitted match, a wrong shape, or a submit with fewer than 3 tiles. Hazards and wooden-dummy flips do not count.
+- There is **no 15-attempt checkpoint or minimum-points requirement**. You can continue playing indefinitely regardless of how many points you earn in a series of attempts.
+- A wrong normal shape costs 1 point; submitting fewer than 3 tiles is free. Hazards never cost points in Play Alone. The game ends only when the score reaches **−15**.
+- The end screen shows the final score and tries, with Play Again and Main Menu.
+- Constants: ALONE_SCORE_FLOOR and ALONE_MISS_PENALTY.
 
 ### Hazard tile (implemented)
 
@@ -323,11 +323,11 @@ Every turn should pass through one explicit state machine:
 
 ## 6. Code review findings in the current prototype
 
-- `src/main.js` now keeps a separate score per player and passes the turn (same-device pass-and-play) after a submitted match or a timeout. There is still no target score, winner state, AI, or online play.
+- `src/main.js` keeps one score per side (teams share a score in Tag), passes turns after matches/timeouts, and ends versus modes at their fixed score targets with a winner screen. AI and Tag are implemented; online play is not.
 - The 45-second turn clock now runs from an absolute deadline, ends the turn on timeout, and runs alongside the 5-second reveal and shuffle of new tiles. Double Time (90 seconds) and a server-authoritative deadline are not implemented.
 - The star rows are currently decorative; there is no starting free Star, successful-match streak tracker, or inventory currency.
 - Only Submit has a click handler. Polls, Inventory, and Settings do not yet open working panels.
-- There is no online lobby, live audience/poll service, or match-winner state (play alone has its own game-over flow). Easy and Professional AI, Tag mode and the hazard rules are implemented (section 2).
+- There is no online lobby or live audience/poll service. Play Alone loss and the local versus winner flow are implemented; Easy and Professional AI, Tag mode and hazard rules are implemented (section 2).
 - The blank wooden dummy now has its own `dummy.webp` asset and neutral tap behavior. The existing `cancel.webp` should become a defensive inventory card rather than a normal scoring shape; its collection, inventory display, and counter-use flow still need implementation.
 - The old 10-second idle auto-submit has been removed, so a valid selection now waits for the Submit button.
 - Player mode, scoring, turn deadline, inventory, streak, and board resolution should be owned by a small game-state layer instead of being scattered across animation callbacks. UI animations should react to resolved state, not decide the result themselves.
