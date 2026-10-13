@@ -51,9 +51,10 @@ const TEAM_PLAYERS = [['Player 1', 'Player 2'], ['Player 3', 'Player 4']]; // Ta
 const START_MODE = MODES[urlParams.get('mode')] ? urlParams.get('mode') : null; // ?mode=alone skips the menu
 const HAZARD_OVERRIDE = urlParams.has('hazard') ? Number(urlParams.get('hazard')) : null;
 // A hazard tile has two effects (see hazardHit / hazardBlast):
-// - flipped on its own it costs this many points and breaks the attempt;
-// - flipped while other shapes are picked, it destroys itself and every picked tile, with no points won or lost.
-const HAZARD_PENALTY = 2;
+// - flipped first, with nothing picked, it does no damage at all;
+// - flipped after other shapes are picked, it costs HAZARD_BLAST_PENALTY point(s) and destroys itself and every
+//   picked tile, with no reward.
+const HAZARD_BLAST_PENALTY = 1;
 
 // Play alone: an "attempt" is one try at a match (a submitted match, a wrong shape, a too-small submit
 // or a hazard) - not a single flip. Every 15 attempts the player must have earned 15 points.
@@ -1248,8 +1249,8 @@ class GameScene extends Phaser.Scene {
     this.recordAttempt(0);
   }
 
-  // A hazard (skull) flipped while other shapes are picked: the hazard and every picked tile are destroyed.
-  // Nothing is won or lost (no points, no penalty), so it is the opposite of a match, and it never joins the
+  // A hazard (skull) flipped after other shapes are picked: it costs HAZARD_BLAST_PENALTY point(s) (two-player
+  // modes never go below 0) and the hazard and every picked tile are destroyed, with no reward. It never joins the
   // selection. Like a submitted match it spends the turn: the board falls and refills, the new tiles are
   // revealed and shuffled as usual, and play passes on. Play alone counts it as one attempt.
   async hazardBlast(hazard) {
@@ -1260,7 +1261,9 @@ class GameScene extends Phaser.Scene {
     this.selectedShape = null;
     hazard.selected = true; // nothing else may pick it while it is being destroyed
     await this.flipTile(hazard, true);
-    this.showToast('Hazard! It destroys everything you picked.\nNo reward.');
+    const lost = this.applyPenalty(HAZARD_BLAST_PENALTY);
+    this.showToast('Hazard! It destroys everything you picked.\n' +
+      (lost > 0 ? '−' + lost + ' point, no reward.' : 'No reward.'));
     this.tweens.add({ targets: hazard, angle: { from: -8, to: 8 }, duration: 70, yoyo: true, repeat: 3,
       onComplete: () => { if (hazard.active) hazard.setAngle(0); } });
     await this.sleep(900);
@@ -1272,12 +1275,12 @@ class GameScene extends Phaser.Scene {
     this.endTurn('hazard');
   }
 
-  // A lone hazard (skull) tile: reveal it, take the penalty, flip it back. (Nothing is picked, so nothing is lost.)
+  // A hazard (skull) flipped first, with nothing picked: no damage. It is revealed, shakes and flips back, and
+  // the turn goes on. (Play alone still counts it as one attempt.)
   async hazardHit(tile) {
     this.busy = true;
     await this.flipTile(tile, true);
-    this.applyPenalty(HAZARD_PENALTY);
-    this.showToast('Hazard! \u2212' + HAZARD_PENALTY + ' points');
+    this.showToast('Hazard! Nothing was picked, so no damage.');
     this.tweens.add({ targets: tile, angle: { from: -8, to: 8 }, duration: 70, yoyo: true, repeat: 3,
       onComplete: () => { if (tile.active) tile.setAngle(0); } });
     await this.sleep(900);
@@ -1352,13 +1355,13 @@ class GameScene extends Phaser.Scene {
     });
   }
 
-  // Takes points off the active player. Two-player modes never go below 0; play alone can go negative
-  // (and the game ends at ALONE_SCORE_FLOOR).
+  // Takes points off the active player and returns how many were actually lost. Two-player modes never go
+  // below 0; play alone can go negative (and the game ends at ALONE_SCORE_FLOOR).
   applyPenalty(points) {
     const player = this.activePlayer;
     const floor = this.modeCfg.twoPlayers ? 0 : -Infinity;
     const lost = this.scores[player] - Math.max(floor, this.scores[player] - points);
-    if (lost <= 0) return;
+    if (lost <= 0) return 0;
     this.scores[player] -= lost;
     const label = player === 0 ? this.p1Score : this.p2Score;
     label.setText(String(this.scores[player]));
@@ -1369,6 +1372,7 @@ class GameScene extends Phaser.Scene {
       targets: pop, y: pop.y - 120, alpha: 0, duration: 900, ease: 'Sine.easeOut',
       onComplete: () => pop.destroy(),
     });
+    return lost;
   }
 
   // Play alone: counts one attempt and checks the two ways to lose. `gained` = points the attempt earned.
