@@ -37,7 +37,7 @@ const PLAYER_NAMES = ['Player 1', 'Player 2'];
 
 // ---- Game modes --------------------------------------------------------------
 // hazard = chance that a tile is a hazard (skull) tile: the same ~20% in every mode. Test override: ?hazard=0.5
-const HAZARD_CHANCE = 0.2;
+const HAZARD_CHANCE = 0.1;
 // teams = Tag mode: two teams of two share the device, and each team's partners take turns (see turnLabel()).
 const MODES = {
   alone: { label: 'PLAY ALONE', hint: 'No timer. Score 15 points in every 15 attempts.',
