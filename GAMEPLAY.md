@@ -4,7 +4,7 @@ This document describes the recommended rules for turning the current Phaser pro
 
 ## 1. Core loop
 
-- The board is 7 × 7. At the beginning of a game, all normal shapes are visible for 15 seconds, then turn face-down.
+- The board is 7 × 7. At the beginning of a game, all normal shapes are visible for 15 seconds, then turn face-down. Face-up tiles can't be picked while they are showing (a shape is only revealed by the player flipping it), and the first turn's clock starts after this study phase.
 - Players alternate turns. Each turn lasts **45 seconds**.
 - On a turn, the player taps hidden tiles to reveal their shapes and tries to collect 3 or more of the same normal shape. Matches do not need to be adjacent.
 - A valid submitted match ends that player's turn, awards points, removes those tiles, and causes the board to cascade. Newly spawned tiles are shown for 5 seconds, flip face-down, and are then shuffled (see "New-tile shuffle" below).
@@ -59,9 +59,9 @@ Two teams of two share one device (online play is still future work). Team 1 is 
 ### Play alone (implemented)
 
 - One player, no countdown of any kind (no turn clock; the "MEMORIZE" cue for new tiles shows without numbers) and no Player 2 score plank. The header shows points toward the next checkpoint and the current attempt number.
-- An **attempt** is one try at a match, not one flip: a submitted match, a wrong shape, a submit with fewer than 3 tiles, or a hazard (which is free). Flipping a wooden dummy is not an attempt.
+- An **attempt** is one try at a match, not one flip: a submitted match, a wrong shape, or a submit with fewer than 3 tiles. A hazard is not an attempt. Flipping a wooden dummy is not an attempt.
 - **Checkpoint every 15 attempts:** the player must have earned at least 15 points (from matches) in that window, otherwise the game is over. After a passed checkpoint a new window starts.
-- **Score floor:** a failed attempt (wrong shape or fewer than 3 submitted) costs 1 point so the score can go negative. Hazards never cost anything in Play alone. Reaching **−15** is game over.
+- **Score floor:** a wrong shape costs 1 point so the score can go negative (a submit with fewer than 3 tiles is free). Hazards never cost anything in Play alone. Reaching **−15** is game over.
 - Game over shows the score, attempts and checkpoints cleared, with Play again and Main menu.
 - Constants: `ALONE_ATTEMPT_WINDOW`, `ALONE_POINTS_PER_WINDOW`, `ALONE_SCORE_FLOOR`, `ALONE_MISS_PENALTY`.
 
@@ -70,10 +70,10 @@ Two teams of two share one device (online play is still future work). Team 1 is 
 `hazard.webp` (skull and crossbones) is a special tile, not a normal shape: it never matches, never joins the selection and is excluded from the guaranteed-three distribution. What it does depends on whether other shapes are already picked:
 
 - **Player vs AI, Player vs Player, Tag:** picked first (nothing picked yet) it does no damage, reveals briefly and flips back, and the turn goes on. Picked after other shapes it costs **1 point** (`HAZARD_BLAST_PENALTY`) and **destroys itself and every shape picked before it, with no reward** (`hazardBlast()` in `src/main.js`).
-- **Play alone:** a hazard never costs anything. Whether picked first or after shapes, it destroys itself and every shape currently picked (an attempt is still counted).
+- **Play alone:** a hazard never costs anything. Whether picked first or after shapes, it destroys itself and every shape currently picked (it is not counted as an attempt).
 - In every mode the destroyed tiles burst with the normal effect, the board falls and refills, the new tiles get the usual 5-second reveal and shuffle, and the turn is spent like a match. A wrong shape only flips the picks back, and a match pays points.
 
-In the two-player and Tag modes the score never drops below 0.
+In the two-player and Tag modes a hazard blast always costs 1 point, even at 0, so a score can go negative (set `TWO_PLAYER_SCORE_FLOOR` in `src/main.js` to 0 to stop that).
 
 | Mode | Hazard share of tiles |
 |---|---:|
