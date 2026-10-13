@@ -24,6 +24,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Test extracted game rules
+        run: node --test tests/rules.test.js
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 

@@ -77,9 +77,9 @@ In the two-player and Tag modes a hazard blast always costs 1 point, even at 0, 
 
 | Mode | Hazard share of tiles |
 |---|---:|
-| All modes (`HAZARD_CHANCE`) | 20% |
+| All modes (`HAZARD_CHANCE`) | 10% |
 
-The starting board gets about that share of hazards, and every newly spawned tile has that chance (`MODES[...].hazard`; `?hazard=0.5` overrides it for testing).
+The starting board gets about that share of hazards, and every newly spawned tile has that chance (`MODES[...].hazard`; `?hazard=0.5` overrides it for testing, clamped to 0–1; invalid values are ignored and fall back to the 10% default).
 
 ### Play against AI
 

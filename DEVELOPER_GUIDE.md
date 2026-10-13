@@ -16,7 +16,7 @@ Shapey is intended to be a competitive, turn-based memory-and-matching game with
 - Audience Pick voting, eventually with real spectators.
 - Match end, winner display, and rematch.
 
-The current app is a static Phaser 3 browser prototype hosted on GitHub Pages. The client code lives mainly in `src/main.js`; the design specification is `GAMEPLAY.md`. GitHub Pages serves files but does not provide authoritative multiplayer state, secure currency, or live voting.
+The current app is a static Phaser 3 browser prototype hosted on GitHub Pages. `src/main.js` owns scene/UI orchestration, while pure game decisions live in `src/rules.js` and are covered by `node --test tests/rules.test.js`. The design specification is `GAMEPLAY.md`. GitHub Pages serves files but does not provide authoritative multiplayer state, secure currency, or live voting.
 
 - Repository: https://github.com/tayo6/shapey
 - Hosted prototype: https://tayo6.github.io/shapey/
@@ -36,7 +36,7 @@ The current app is a static Phaser 3 browser prototype hosted on GitHub Pages. T
 - Test overrides (milliseconds): `?review=3000` shortens the opening study phase, `?reveal=2000` the spawned-tile reveal, `?swap=500` each swap.
 - The reveal countdown runs **concurrently** with the 45-second turn clock. Each batch of revealed tiles has its own absolute deadline (`RevealTracker`), separate from the turn deadline (`Countdown`), so neither can pause or extend the other. The header shows a "MEMORIZE" countdown while any tiles are face-up.
 - Other test overrides (milliseconds): `?turn=10000` shortens the turn, `?invwindow=20000` shortens the inventory-limit window.
-- Mode and hazard test overrides: `?mode=alone|ai|pvp|tag` skips the mode menu, `?level=easy|pro` picks the AI difficulty when `?mode=ai` is used (default Easy), `?hazard=0.5` sets the hazard spawn chance.
+- Mode and hazard test overrides: `?mode=alone|ai|pvp|tag` skips the mode menu, `?level=easy|pro` picks the AI difficulty when `?mode=ai` is used (default Easy), `?hazard=0.5` sets the hazard spawn chance, clamped to 0–1; invalid values are ignored and fall back to the 10% default.
 
 ### Scenes, modes and loading
 
@@ -44,7 +44,7 @@ The current app is a static Phaser 3 browser prototype hosted on GitHub Pages. T
 - **Branding rule:** the Shapey logo image (`shapey logo.webp`) is used for every Shapey logo (loading screens, menu, README, favicon `shapey icon.webp`); do not draw "SHAPEY" as text. The load rectangle image is the only loading bar.
 - Landing dust (`assets/fx/dusty.webp`) is 7 equal 304 x 156 cells, each puff centred on its cell's middle and sitting on the bottom edge, so the cloud grows in place instead of drifting sideways. If the sheet is replaced, repack it the same way (equal cells, shared anchor) rather than slicing on a guessed grid.
 - Art is stored at about 1.5x its on-screen size (the canvas itself is 720 px wide) to keep downloads and GPU memory small. Keep that in mind before swapping in new art: `setDisplaySize`/`fitToWidth` do the scaling, so any size works, but oversized files slow loading on phones.
-- `MODES` (top of `src/main.js`) defines the four modes: hazard chance, whether there are two players, whether the turn clock runs, whether the AI plays, and `teams` (Tag). The menu is built from it, so a new entry appears automatically (the menu spaces four 140px buttons 165px apart; a fifth needs the layout in `MenuScene.create()` revisited). Play-alone rules are the `ALONE_*` constants; recording attempts and game over live in `recordAttempt()` and `endGame()`.
+- `MODES` (top of `src/main.js`) defines the four modes. Pure rules in `src/rules.js` decide match scoring/size, whether a pick matches the current selection, hazard routing, penalty arithmetic, valid hazard URL overrides, and Play Alone checkpoint outcomes. Phaser scene methods still own animations, UI updates and state changes. Run the rule tests with `node --test tests/rules.test.js`.
 - **Sides vs players.** `activePlayer` is the *side* that is playing (0 or 1) and drives scores, planks, dimming and the AI. In Tag a side is a team, and `activeMember` (0 or 1, from `turnNumber`) says which partner is playing; `turnLabel()` turns the pair into "Team 1: Player 2" and `limiterSlot()` gives each of the four players their own inventory-limit slot. `startTurn()` is the only place that advances `turnNumber`. `TEAM_PLAYERS` holds the names.
 - **Difficulty.** Player vs AI opens a "Choose difficulty" panel (`MenuScene.openDifficulty()`) built from `AI_LEVELS`, then starts `GameScene` with `{ mode: 'ai', difficulty }`. `GameScene.init()` stores it as `this.difficulty` and `this.ai` (the level's settings object); Restart and Play again pass it back so the level survives.
 - **Flip-back safety net.** `healStuckTiles()` (run every frame) flips back down any tile that has been face-up for `STUCK_UP_MS` (2.5 s) without a legitimate reason: it is not picked, not in a reveal batch, not mid-swap. A wrong shape resets the picks as before; this only guarantees nothing is ever left showing, whatever the cause.

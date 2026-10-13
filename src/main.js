@@ -1,5 +1,8 @@
 // Shapey - a memory game with candy-crush style cascades.
 // The game canvas is 720 x 1280 ("720p" width) and scales to fit any screen.
+const RULES = window.ShapeyRules;
+if (!RULES) throw new Error('Load src/rules.js before src/main.js.');
+
 const GAME_WIDTH = 720;
 const GAME_HEIGHT = 1280;
 
@@ -19,13 +22,11 @@ const SHUFFLE_STEP_MS = Number(urlParams.get('swap')) || 2000;    // each swap t
 const SHUFFLE_SKIP_CHANCE = 0.1;  // about 10% of new tiles sit the shuffle out
 const STUCK_UP_MS = 2500;         // a face-up tile with no reason to be face-up is flipped back down after this long
 const SHUFFLE_ARC_PX = 28;        // sideways bow of a swap path, so the two tiles pass each other instead of overlapping
-const MIN_MATCH = 3;          // smallest scoring match
-// 3 matched = 1 point, 4 matched = 2 points, 5 or more = 5 points
-const scoreFor = (count) => (count >= 5 ? 5 : count === 4 ? 2 : count === 3 ? 1 : 0);
+const MIN_MATCH = 3;          // smallest scoring match; points are calculated in src/rules.js
 
 // ---- Turn clock and inventory limits ----------------------------------------
-// Every turn lasts 45 seconds. The turn clock and the 15 second "memorize" reveal of newly spawned
-// tiles each run on their own absolute deadline, so they always tick side by side: a new batch
+// Every turn lasts 45 seconds. The turn clock and each newly spawned tile's SPAWN_REVEAL_MS reveal
+// run on their own absolute deadline, so they always tick side by side: a new batch
 // being revealed never pauses, resets or extends the turn, and the turn ending never cuts a reveal short.
 // Test overrides: ?turn=10000 (turn length) and ?invwindow=20000 (inventory window), in milliseconds.
 const TURN_MS = Number(urlParams.get('turn')) || 45000;
@@ -33,14 +34,22 @@ const TURN_MS = Number(urlParams.get('turn')) || 45000;
 // The turn clock keeps running while the inventory is open.
 const INVENTORY_OPEN_LIMIT = 2;
 const INVENTORY_WINDOW_MS = Number(urlParams.get('invwindow')) || 5 * 60 * 1000;
+const formatInventoryWindow = () => INVENTORY_WINDOW_MS % 60000 === 0
+  ? INVENTORY_WINDOW_MS / 60000 + ' min' : INVENTORY_WINDOW_MS / 1000 + ' s';
 const PLAYER_NAMES = ['Player 1', 'Player 2'];
 
+// Play Alone checkpoint rules; the mode hint is derived from these same constants.
+const ALONE_ATTEMPT_WINDOW = 15;
+const ALONE_POINTS_PER_WINDOW = 15;
+const ALONE_SCORE_FLOOR = -15;  // reaching this score is game over
+const ALONE_MISS_PENALTY = 1;   // a wrong shape costs this much (a too-small submit is free)
+
 // ---- Game modes --------------------------------------------------------------
-// hazard = chance that a tile is a hazard (skull) tile: the same ~20% in every mode. Test override: ?hazard=0.5
+// hazard = chance that a tile is a hazard (skull) tile: the same ~10% in every mode. Test override: ?hazard=0.5
 const HAZARD_CHANCE = 0.1;
 // teams = Tag mode: two teams of two share the device, and each team's partners take turns (see turnLabel()).
 const MODES = {
-  alone: { label: 'PLAY ALONE', hint: 'No timer. Score 15 points in every 15 attempts.',
+  alone: { label: 'PLAY ALONE', hint: 'No timer. Score ' + ALONE_POINTS_PER_WINDOW + ' points in every ' + ALONE_ATTEMPT_WINDOW + ' attempts.',
            hazard: HAZARD_CHANCE, twoPlayers: false, turnClock: false, ai: false },
   ai:    { label: 'PLAYER VS AI', hint: 'Take turns against the computer. Pick Easy or Professional.',
            hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: true },
@@ -51,7 +60,7 @@ const MODES = {
 };
 const TEAM_PLAYERS = [['Player 1', 'Player 2'], ['Player 3', 'Player 4']]; // Tag: Team 1 and Team 2
 const START_MODE = MODES[urlParams.get('mode')] ? urlParams.get('mode') : null; // ?mode=alone skips the menu
-const HAZARD_OVERRIDE = urlParams.has('hazard') ? Number(urlParams.get('hazard')) : null;
+const HAZARD_OVERRIDE = RULES.parseProbabilityOverride(urlParams.get('hazard'), urlParams.has('hazard'));
 // A hazard tile has two effects (see hazardHit / hazardBlast):
 // - two-player modes (Player vs AI, Player vs Player, Tag): picked first it does no damage and flips back; picked
 //   after other shapes it costs HAZARD_BLAST_PENALTY point(s) and destroys itself and every picked tile, no reward;
@@ -63,11 +72,7 @@ const HAZARD_BLAST_PENALTY = 1;
 const TWO_PLAYER_SCORE_FLOOR = -Infinity;
 
 // Play alone: an "attempt" is one try at a match (a submitted match, a wrong shape, or a too-small submit;
-// hazards do not count) - not a single flip. Every 15 attempts the player must have earned 15 points.
-const ALONE_ATTEMPT_WINDOW = 15;
-const ALONE_POINTS_PER_WINDOW = 15;
-const ALONE_SCORE_FLOOR = -15;  // reaching this score is game over
-const ALONE_MISS_PENALTY = 1;   // a wrong shape costs this much (a too-small submit is free)
+// hazards do not count) - not a single flip. Every ALONE_ATTEMPT_WINDOW attempts must earn ALONE_POINTS_PER_WINDOW points.
 
 // AI difficulty (see GAMEPLAY.md). Both levels play by the same rules and only ever know what they have seen;
 // they differ in memory and decisions. The picker in MenuScene is built from this table.
@@ -508,8 +513,8 @@ class GameScene extends Phaser.Scene {
     this.toastTween = null;
 
     // Two independent countdowns that run at the same time (see TURN_MS above).
-    this.turnClock = new Countdown();   // the active player's 45 second turn
-    this.reveals = new RevealTracker(); // the 15 second reveal of each batch of new tiles
+    this.turnClock = new Countdown();   // the active player's TURN_MS turn
+    this.reveals = new RevealTracker(); // each batch's SPAWN_REVEAL_MS reveal
     this.turnEnding = false;            // true while a turn is being handed over: taps/submits are ignored
     this.shuffleToken = 0;              // bumped to cancel shuffles that are queued or running
     this.shuffling = 0;                 // number of shuffles running (for the SHUFFLING label)
@@ -842,8 +847,7 @@ class GameScene extends Phaser.Scene {
     if (this.inventoryOpen || this.turnEnding || this.gameOver || this.panelOpen || this.isAITurn()) return;
     const attempt = this.inventoryLimiter.tryOpen(this.limiterSlot());
     if (!attempt.allowed) {
-      const windowText = INVENTORY_WINDOW_MS % 60000 === 0
-        ? INVENTORY_WINDOW_MS / 60000 + ' min' : INVENTORY_WINDOW_MS / 1000 + ' s';
+      const windowText = formatInventoryWindow();
       this.showToast('Inventory limit reached (' + INVENTORY_OPEN_LIMIT + ' per ' + windowText +
         ').\nAvailable again in ' + formatClock(attempt.retryInMs));
       return;
@@ -961,7 +965,7 @@ class GameScene extends Phaser.Scene {
 
     const note = this.add.text(GAME_WIDTH / 2, 1192,
       'Purchases are saved on this device. Using power-ups in a match is coming next.\nThe inventory can be opened ' +
-      INVENTORY_OPEN_LIMIT + ' times per 5 minutes' +
+      INVENTORY_OPEN_LIMIT + ' times per ' + formatInventoryWindow() +
       (this.modeCfg.turnClock ? ', and your turn clock keeps running while it is open.' : '.'), {
         fontFamily: FONT, fontSize: '17px', color: '#ffffff',
         align: 'center', wordWrap: { width: 630 },
@@ -1233,7 +1237,7 @@ class GameScene extends Phaser.Scene {
     // A hazard flipped while other shapes are picked destroys them all (no reward); on its own it costs points.
     if (tile.shape === 'hazard') {
       // Play alone: a hazard always blasts (and is free). Other modes: only when shapes are already picked.
-      if (this.selection.length > 0 || !this.modeCfg.twoPlayers) this.hazardBlast(tile);
+      if (RULES.hazardAction(this.modeCfg.twoPlayers, this.selection.length) === 'blast') this.hazardBlast(tile);
       else this.hazardHit(tile);
       return;
     }
@@ -1249,7 +1253,7 @@ class GameScene extends Phaser.Scene {
     }
 
     const isFirst = this.selection.length === 0;
-    const matches = isFirst || tile.shape === this.selectedShape;
+    const matches = RULES.selectionMatches(this.selection.length, this.selectedShape, tile.shape);
 
     tile.selected = true;
     this.selection.push(tile);
@@ -1342,7 +1346,7 @@ class GameScene extends Phaser.Scene {
     this.busy = true;
 
     const tiles = this.selection;
-    if (tiles.length < MIN_MATCH) {
+    if (!RULES.isValidMatchSize(tiles.length, MIN_MATCH)) {
       // not enough for a match: flip back, no score (the -1 is only for a wrong shape)
       await this.resetSelection();
       this.busy = false;
@@ -1355,7 +1359,7 @@ class GameScene extends Phaser.Scene {
     this.selection = [];
     this.selectedShape = null;
 
-    const points = scoreFor(tiles.length);
+    const points = RULES.scoreFor(tiles.length);
     this.addScore(points);
     await this.destroyTiles(tiles);
     await this.cascade();
@@ -1384,7 +1388,7 @@ class GameScene extends Phaser.Scene {
   applyPenalty(points) {
     const player = this.activePlayer;
     const floor = this.modeCfg.twoPlayers ? TWO_PLAYER_SCORE_FLOOR : -Infinity;
-    const lost = this.scores[player] - Math.max(floor, this.scores[player] - points);
+    const lost = RULES.penaltyToApply(this.scores[player], points, floor);
     if (lost <= 0) return 0;
     this.scores[player] -= lost;
     const label = player === 0 ? this.p1Score : this.p2Score;
@@ -1402,25 +1406,33 @@ class GameScene extends Phaser.Scene {
   // Play alone: counts one attempt and checks the two ways to lose. `gained` = points the attempt earned.
   recordAttempt(gained) {
     if (this.modeCfg.twoPlayers || this.gameOver) return;
-    this.attemptsInWindow++;
     this.totalAttempts++;
-    this.windowPoints += gained;
+
+    const result = RULES.resolveAloneAttempt({
+      attemptsInWindow: this.attemptsInWindow,
+      windowPoints: this.windowPoints,
+      gained,
+      score: this.scores[0],
+      scoreFloor: ALONE_SCORE_FLOOR,
+      attemptWindow: ALONE_ATTEMPT_WINDOW,
+      pointsRequired: ALONE_POINTS_PER_WINDOW,
+    });
+    this.attemptsInWindow = result.attemptsInWindow;
+    this.windowPoints = result.windowPoints;
     this.updateAloneHUD();
 
-    if (this.scores[0] <= ALONE_SCORE_FLOOR) {
+    if (result.status === 'score-floor') {
       this.endGame('Your score fell to ' + ALONE_SCORE_FLOOR + '.');
-    } else if (this.attemptsInWindow >= ALONE_ATTEMPT_WINDOW) {
-      if (this.windowPoints < ALONE_POINTS_PER_WINDOW) {
-        this.endGame('You earned ' + this.windowPoints + ' of the ' + ALONE_POINTS_PER_WINDOW +
-          ' points needed in ' + ALONE_ATTEMPT_WINDOW + ' attempts.');
-      } else {
-        this.checkpoints++;
-        this.showToast('Checkpoint ' + this.checkpoints + ' cleared with ' + this.windowPoints +
-          ' points!\nNext ' + ALONE_ATTEMPT_WINDOW + ' attempts start now.', 3200);
-        this.attemptsInWindow = 0;
-        this.windowPoints = 0;
-        this.updateAloneHUD();
-      }
+    } else if (result.status === 'failed-window') {
+      this.endGame('You earned ' + result.windowPoints + ' of the ' + ALONE_POINTS_PER_WINDOW +
+        ' points needed in ' + ALONE_ATTEMPT_WINDOW + ' attempts.');
+    } else if (result.status === 'checkpoint') {
+      this.checkpoints++;
+      this.showToast('Checkpoint ' + this.checkpoints + ' cleared with ' + result.checkpointPoints +
+        ' points!\nNext ' + ALONE_ATTEMPT_WINDOW + ' attempts start now.', 3200);
+      this.attemptsInWindow = 0;
+      this.windowPoints = 0;
+      this.updateAloneHUD();
     }
   }
 
@@ -1651,7 +1663,7 @@ class GameScene extends Phaser.Scene {
       if (!next || !(await this.aiTap(next, alive))) break;
     }
     if (!alive()) return false;
-    if (this.selection.length >= MIN_MATCH) {
+    if (RULES.isValidMatchSize(this.selection.length, MIN_MATCH)) {
       await this.sleep(this.ai.submitMs);
       await this.submit(true);
       return true;
