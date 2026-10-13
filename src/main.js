@@ -35,25 +35,27 @@ const INVENTORY_WINDOW_MS = Number(urlParams.get('invwindow')) || 5 * 60 * 1000;
 const PLAYER_NAMES = ['Player 1', 'Player 2'];
 
 // ---- Game modes --------------------------------------------------------------
-// hazard = chance that a newly spawned tile is a hazard (skull) tile. Test override: ?hazard=0.5
+// hazard = chance that a tile is a hazard (skull) tile: the same ~20% in every mode. Test override: ?hazard=0.5
+const HAZARD_CHANCE = 0.2;
 // teams = Tag mode: two teams of two share the device, and each team's partners take turns (see turnLabel()).
 const MODES = {
   alone: { label: 'PLAY ALONE', hint: 'No timer. Score 15 points in every 15 attempts.',
-           hazard: 0.15, twoPlayers: false, turnClock: false, ai: false },
+           hazard: HAZARD_CHANCE, twoPlayers: false, turnClock: false, ai: false },
   ai:    { label: 'PLAYER VS AI', hint: 'Take turns against the computer. Pick Easy or Professional.',
-           hazard: 0, twoPlayers: true, turnClock: true, ai: true },
+           hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: true },
   pvp:   { label: 'PLAYER 1 VS PLAYER 2', hint: 'Two players share this device and take turns.',
-           hazard: 0.05, twoPlayers: true, turnClock: true, ai: false },
+           hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false },
   tag:   { label: 'TAG: 2 VS 2', hint: 'Two teams of two share this device. Partners tag in on every other turn.',
-           hazard: 0.05, twoPlayers: true, turnClock: true, ai: false, teams: true },
+           hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false, teams: true },
 };
 const TEAM_PLAYERS = [['Player 1', 'Player 2'], ['Player 3', 'Player 4']]; // Tag: Team 1 and Team 2
 const START_MODE = MODES[urlParams.get('mode')] ? urlParams.get('mode') : null; // ?mode=alone skips the menu
 const HAZARD_OVERRIDE = urlParams.has('hazard') ? Number(urlParams.get('hazard')) : null;
 // A hazard tile has two effects (see hazardHit / hazardBlast):
-// - flipped first, with nothing picked, it does no damage at all;
-// - flipped after other shapes are picked, it costs HAZARD_BLAST_PENALTY point(s) and destroys itself and every
-//   picked tile, with no reward.
+// - two-player modes (Player vs AI, Player vs Player, Tag): picked first it does no damage and flips back; picked
+//   after other shapes it costs HAZARD_BLAST_PENALTY point(s) and destroys itself and every picked tile, no reward;
+// - Play alone: it never costs anything. It always destroys itself and every picked tile, whether it is picked
+//   first or after other shapes.
 const HAZARD_BLAST_PENALTY = 1;
 
 // Play alone: an "attempt" is one try at a match (a submitted match, a wrong shape, a too-small submit
@@ -1208,7 +1210,8 @@ class GameScene extends Phaser.Scene {
 
     // A hazard flipped while other shapes are picked destroys them all (no reward); on its own it costs points.
     if (tile.shape === 'hazard') {
-      if (this.selection.length > 0) this.hazardBlast(tile);
+      // Play alone: a hazard always blasts (and is free). Other modes: only when shapes are already picked.
+      if (this.selection.length > 0 || !this.modeCfg.twoPlayers) this.hazardBlast(tile);
       else this.hazardHit(tile);
       return;
     }
@@ -1261,7 +1264,7 @@ class GameScene extends Phaser.Scene {
     this.selectedShape = null;
     hazard.selected = true; // nothing else may pick it while it is being destroyed
     await this.flipTile(hazard, true);
-    const lost = this.applyPenalty(HAZARD_BLAST_PENALTY);
+    const lost = this.modeCfg.twoPlayers ? this.applyPenalty(HAZARD_BLAST_PENALTY) : 0; // play alone: never a penalty
     this.showToast('Hazard! It destroys everything you picked.\n' +
       (lost > 0 ? '−' + lost + ' point, no reward.' : 'No reward.'));
     this.tweens.add({ targets: hazard, angle: { from: -8, to: 8 }, duration: 70, yoyo: true, repeat: 3,

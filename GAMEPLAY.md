@@ -59,27 +59,25 @@ Two teams of two share one device (online play is still future work). Team 1 is 
 ### Play alone (implemented)
 
 - One player, no countdown of any kind (no turn clock; the "MEMORIZE" cue for new tiles shows without numbers) and no Player 2 score plank. The header shows points toward the next checkpoint and the current attempt number.
-- An **attempt** is one try at a match, not one flip: a submitted match, a wrong shape, a submit with fewer than 3 tiles, or a hazard. Flipping a wooden dummy is not an attempt.
+- An **attempt** is one try at a match, not one flip: a submitted match, a wrong shape, a submit with fewer than 3 tiles, or a hazard (which is free). Flipping a wooden dummy is not an attempt.
 - **Checkpoint every 15 attempts:** the player must have earned at least 15 points (from matches) in that window, otherwise the game is over. After a passed checkpoint a new window starts.
-- **Score floor:** a failed attempt (wrong shape or fewer than 3 submitted) costs 1 point and a hazard picked after a shape costs 1 point (a hazard picked first is free), so the score can go negative. Reaching **−15** is game over.
+- **Score floor:** a failed attempt (wrong shape or fewer than 3 submitted) costs 1 point so the score can go negative. Hazards never cost anything in Play alone. Reaching **−15** is game over.
 - Game over shows the score, attempts and checkpoints cleared, with Play again and Main menu.
-- Constants: `ALONE_ATTEMPT_WINDOW`, `ALONE_POINTS_PER_WINDOW`, `ALONE_SCORE_FLOOR`, `ALONE_MISS_PENALTY`, `HAZARD_BLAST_PENALTY`.
+- Constants: `ALONE_ATTEMPT_WINDOW`, `ALONE_POINTS_PER_WINDOW`, `ALONE_SCORE_FLOOR`, `ALONE_MISS_PENALTY`.
 
 ### Hazard tile (implemented)
 
 `hazard.webp` (skull and crossbones) is a special tile, not a normal shape: it never matches, never joins the selection and is excluded from the guaranteed-three distribution. What it does depends on whether other shapes are already picked:
 
-- **Picked first (nothing picked yet):** no damage at all. It reveals briefly and hides again, and the turn goes on (play alone still counts it as one attempt).
-- **Picked after other shapes:** it costs **1 point** (`HAZARD_BLAST_PENALTY`) and **destroys itself and every shape picked before it, with no reward** (`hazardBlast()` in `src/main.js`). The tiles burst with the normal destroy effect, the board falls and refills, the new tiles get the usual 5-second reveal and shuffle, and the turn is spent like a match (play passes on; play alone counts it as one attempt). This is deliberately different from a wrong shape, which only flips the picks back, and from a match, which pays points.
+- **Player vs AI, Player vs Player, Tag:** picked first (nothing picked yet) it does no damage, reveals briefly and flips back, and the turn goes on. Picked after other shapes it costs **1 point** (`HAZARD_BLAST_PENALTY`) and **destroys itself and every shape picked before it, with no reward** (`hazardBlast()` in `src/main.js`).
+- **Play alone:** a hazard never costs anything. Whether picked first or after shapes, it destroys itself and every shape currently picked (an attempt is still counted).
+- In every mode the destroyed tiles burst with the normal effect, the board falls and refills, the new tiles get the usual 5-second reveal and shuffle, and the turn is spent like a match. A wrong shape only flips the picks back, and a match pays points.
 
 In the two-player and Tag modes the score never drops below 0.
 
 | Mode | Hazard share of tiles |
 |---|---:|
-| Play alone | 15% |
-| Player vs Player | 5% |
-| Tag: 2 vs 2 | 5% |
-| Player vs AI | 0% |
+| All modes (`HAZARD_CHANCE`) | 20% |
 
 The starting board gets about that share of hazards, and every newly spawned tile has that chance (`MODES[...].hazard`; `?hazard=0.5` overrides it for testing).
 
