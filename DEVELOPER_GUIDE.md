@@ -10,7 +10,7 @@ Shapey is intended to be a competitive, turn-based memory-and-matching game with
 - Player versus AI, with Easy and Professional (Hard) difficulty.
 - Tag: two teams of two on one device (same-device for now).
 - Online human versus human using a shared backend.
-- A configurable score target.
+- Mode-specific score targets: 100 points for Player vs AI and Player 1 vs Player 2; 200 points for Tag.
 - Stars, streak rewards, an inventory/shop, and tactical power-ups.
 - Rare special tiles, including a neutral blank wooden dummy and a Cancel Counter pickup.
 - Audience Pick voting, eventually with real spectators.
@@ -44,7 +44,7 @@ The current app is a static Phaser 3 browser prototype hosted on GitHub Pages. `
 - **Branding rule:** the Shapey logo image (`shapey logo.webp`) is used for every Shapey logo (loading screens, menu, README, favicon `shapey icon.webp`); do not draw "SHAPEY" as text. The load rectangle image is the only loading bar.
 - Landing dust (`assets/fx/dusty.webp`) is 7 equal 304 x 156 cells, each puff centred on its cell's middle and sitting on the bottom edge, so the cloud grows in place instead of drifting sideways. If the sheet is replaced, repack it the same way (equal cells, shared anchor) rather than slicing on a guessed grid.
 - Art is stored at about 1.5x its on-screen size (the canvas itself is 720 px wide) to keep downloads and GPU memory small. Keep that in mind before swapping in new art: `setDisplaySize`/`fitToWidth` do the scaling, so any size works, but oversized files slow loading on phones.
-- `MODES` (top of `src/main.js`) defines the four modes. Pure rules in `src/rules.js` decide match scoring/size, whether a pick matches the current selection, hazard routing, penalty arithmetic, valid hazard URL overrides, and Play Alone checkpoint outcomes. Phaser scene methods still own animations, UI updates and state changes. Run the rule tests with `node --test tests/rules.test.js`.
+- `MODES` (top of `src/main.js`) defines the four modes. Pure rules in `src/rules.js` decide match scoring/size, whether a pick matches the current selection, hazard routing, penalty arithmetic, valid hazard URL overrides, and Play Alone score-floor checks and mode-specific versus targets. Phaser scene methods still own animations, UI updates and state changes. Run the rule tests with `node --test tests/rules.test.js`.
 - **Sides vs players.** `activePlayer` is the *side* that is playing (0 or 1) and drives scores, planks, dimming and the AI. In Tag a side is a team, and `activeMember` (0 or 1, from `turnNumber`) says which partner is playing; `turnLabel()` turns the pair into "Team 1: Player 2" and `limiterSlot()` gives each of the four players their own inventory-limit slot. `startTurn()` is the only place that advances `turnNumber`. `TEAM_PLAYERS` holds the names.
 - **Difficulty.** Player vs AI opens a "Choose difficulty" panel (`MenuScene.openDifficulty()`) built from `AI_LEVELS`, then starts `GameScene` with `{ mode: 'ai', difficulty }`. `GameScene.init()` stores it as `this.difficulty` and `this.ai` (the level's settings object); Restart and Play again pass it back so the level survives.
 - **Flip-back safety net.** `healStuckTiles()` (run every frame) flips back down any tile that has been face-up for `STUCK_UP_MS` (2.5 s) without a legitimate reason: it is not picked, not in a reveal batch, not mid-swap. A wrong shape resets the picks as before; this only guarantees nothing is ever left showing, whatever the cause.
@@ -150,14 +150,15 @@ Resolve tile destruction, gravity, spawning, reveal/hide timing, and score updat
 
 ## 4. Target score, victory, and ties
 
-- The match is a race to a player-selected target.
-- Default target: **100 points**.
-- Supported target range: **100–1,000 points**.
-- In a two-player match, the first player to reach or exceed the target wins.
-- After a win, stop the turn clock and input, show a short victory sequence, and offer a rematch.
-- Score Strike cannot reduce a score below zero.
-- If a match has a turn cap and finishes with equal scores, use a clearly communicated tie-breaker, such as one 45-second sudden-death turn. If there is no turn cap, define the tie policy before adding one.
-- Scores must be stored separately for each player. The current prototype has a real `this.score` for one score only; the two score displays are not yet backed by a complete two-player state.
+- **Player vs AI:** first side to reach or exceed **100 points** wins.
+- **Player 1 vs Player 2:** first side to reach or exceed **100 points** wins.
+- **Tag:** first team to reach or exceed **200 points** wins; partners share their team's score.
+- Targets are fixed by mode; players do not select a target in the current game.
+- **Play Alone is not a race to a target:** there is no attempt-based checkpoint. The player loses only when their score reaches **−15**.
+- The local prototype displays the winner, both versus scores, and the applicable target, then offers **Play Again** or **Main Menu**. It also shows the final Play Alone score and attempt count after a loss.
+- In online play, the backend must validate the score and decide the winner; never trust a client-supplied score or winner.
+- If a future match has a turn cap and finishes with equal scores, define a clearly communicated tie-breaker before adding that cap.
+- The local prototype keeps separate scores per side (teams in Tag). Online mode must move authoritative score and winner state to the backend.
 
 ## 5. Stars and match streak rewards
 
@@ -320,13 +321,13 @@ The following reflects the current repository state at the time this guide was w
 - Four-mode menu: Play alone, Player vs AI, Player 1 vs Player 2 and **Tag: 2 vs 2**.
 - **Tag mode:** two teams of two on one device, partners alternating (Player 1, 3, 2, 4), one shared score per team, a header line naming the active player, and a separate inventory limit for each of the four players.
 - **AI difficulty picker** (Easy / Professional) and a distinct **Professional AI**; both levels are configured by `AI_LEVELS`.
-- **Hazard rules:** hazards are 20% of tiles in every mode (`HAZARD_CHANCE`). Two-player modes: picked first = no damage; picked after shapes = -1 and destroys itself and the picked tiles, no reward (`hazardBlast()`). Play alone: always destroys, never costs.
+- **Hazard rules:** hazards have a 10% spawn chance in every mode (`HAZARD_CHANCE`). Two-player modes: picked first = no damage; picked after shapes = -1 and destroys itself and the picked tiles, no reward (`hazardBlast()`). Play alone: always destroys, never costs.
 
 ### Not yet implemented or incomplete
 
 - Per-player stars, inventory, and streaks (the shop still uses one shared balance), plus a hand-off screen that hides the board between pass-and-play turns.
 - The 90-second Double Time turn and authoritative (server) turn deadlines.
-- Player-selected target score, complete victory flow, rematch, and tie policy.
+- Online target enforcement, server-authoritative winner state, and online rematch/tie handling (local fixed targets and the winner screen are implemented).
 - Successful-match streak and Star reward logic.
 - In-match use/effects for the purchased power-ups.
 - Real Cancel tile pickup, Counter inventory item, and response/cancellation flow.
