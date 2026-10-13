@@ -58,13 +58,16 @@ const HAZARD_OVERRIDE = urlParams.has('hazard') ? Number(urlParams.get('hazard')
 // - Play alone: it never costs anything. It always destroys itself and every picked tile, whether it is picked
 //   first or after other shapes.
 const HAZARD_BLAST_PENALTY = 1;
+// Spec: a hazard picked after other shapes always costs 1 point, even at 0, so a two-player score may go negative.
+// Set this to 0 to stop two-player scores dropping below zero (Play alone has its own floor, ALONE_SCORE_FLOOR).
+const TWO_PLAYER_SCORE_FLOOR = -Infinity;
 
-// Play alone: an "attempt" is one try at a match (a submitted match, a wrong shape, a too-small submit
-// or a hazard) - not a single flip. Every 15 attempts the player must have earned 15 points.
+// Play alone: an "attempt" is one try at a match (a submitted match, a wrong shape, or a too-small submit;
+// hazards do not count) - not a single flip. Every 15 attempts the player must have earned 15 points.
 const ALONE_ATTEMPT_WINDOW = 15;
 const ALONE_POINTS_PER_WINDOW = 15;
 const ALONE_SCORE_FLOOR = -15;  // reaching this score is game over
-const ALONE_MISS_PENALTY = 1;   // a failed attempt (wrong shape / fewer than 3 submitted) costs this much
+const ALONE_MISS_PENALTY = 1;   // a wrong shape costs this much (a too-small submit is free)
 
 // AI difficulty (see GAMEPLAY.md). Both levels play by the same rules and only ever know what they have seen;
 // they differ in memory and decisions. The picker in MenuScene is built from this table.
@@ -657,7 +660,7 @@ class GameScene extends Phaser.Scene {
 
   // Both clocks are redrawn from their own deadlines, so they can never hold each other up.
   refreshClocks() {
-    const turnLeft = this.modeCfg.turnClock ? formatClock(this.turnClock.remaining()) : '';
+    const turnLeft = this.modeCfg.turnClock ? formatClock(Math.min(TURN_MS, this.turnClock.remaining())) : '';
     if (this.modeCfg.turnClock) this.setClockText(this.timerText, turnLeft);
 
     const revealLeft = this.reveals.remaining();
@@ -681,7 +684,7 @@ class GameScene extends Phaser.Scene {
     this.turnEnding = false;
     this.turnId++;
     // Play alone has no countdown: the "deadline" never arrives.
-    if (this.modeCfg.turnClock) this.turnClock.start(TURN_MS);
+    if (this.modeCfg.turnClock) this.turnClock.start(TURN_MS + (this.turnNumber === 0 ? REVIEW_MS : 0)); // the opening study phase has no input, so it is not charged to the first turn
     else this.turnClock.endsAt = Infinity;
     this.updateActivePlayerUI();
     if (this.modeCfg.teams) this.goalText.setText(this.turnLabel().toUpperCase());
@@ -885,7 +888,7 @@ class GameScene extends Phaser.Scene {
     // The turn clock keeps running while the shop is open, so show it here too.
     if (this.modeCfg.turnClock) {
       this.inventoryTimerText = this.addInventoryUI(this.add.text(84, 66,
-        'TURN\n' + formatClock(this.turnClock.remaining()), {
+        'TURN\n' + formatClock(Math.min(TURN_MS, this.turnClock.remaining())), {
           fontFamily: FONT, fontSize: '24px', color: '#ffe36e',
           stroke: '#4a2814', strokeThickness: 4, align: 'center',
         }).setOrigin(0.5));
@@ -1222,7 +1225,7 @@ class GameScene extends Phaser.Scene {
   onTileTap(tile, fromAI = false) {
     // Taps are ignored during hand-over, once the turn clock has run out, after game over and while a
     // menu is open. Tiles in the middle of a swap can't be tapped, and a human can't tap during the AI's turn.
-    if (this.busy || this.turnEnding || this.gameOver || this.turnClock.expired() || !tile.active || tile.selected || tile.swapping) return;
+    if (this.busy || this.turnEnding || this.gameOver || this.turnClock.expired() || !tile.active || tile.selected || tile.swapping || tile.faceUp) return; // a face-up tile can't be picked: a shape is only revealed by the player's own flip
     if (!fromAI && (this.panelOpen || this.isAITurn())) return;
 
     this.aiSee(tile, fromAI); // the AI sees every tile that gets flipped over (certainly its own, only partly the human's)
@@ -1272,9 +1275,9 @@ class GameScene extends Phaser.Scene {
   }
 
   // A hazard (skull) flipped after other shapes are picked: it costs HAZARD_BLAST_PENALTY point(s) (two-player
-  // modes never go below 0) and the hazard and every picked tile are destroyed, with no reward. It never joins the
+  // modes may go below 0, see TWO_PLAYER_SCORE_FLOOR) and the hazard and every picked tile are destroyed, with no reward. It never joins the
   // selection. Like a submitted match it spends the turn: the board falls and refills, the new tiles are
-  // revealed and shuffled as usual, and play passes on. Play alone counts it as one attempt.
+  // revealed and shuffled as usual, and play passes on. Play alone does not count it as an attempt.
   async hazardBlast(hazard) {
     this.busy = true;
     this.cancelShuffles(); // the board is about to change: stop any shuffle and settle the swap in progress
@@ -1293,12 +1296,12 @@ class GameScene extends Phaser.Scene {
     await this.destroyTiles(tiles);
     await this.cascade();
     this.busy = false;
-    this.recordAttempt(0);
+    // A hazard is not an attempt: in Play alone it must cost nothing, not even one of the attempts in the checkpoint window.
     this.endTurn('hazard');
   }
 
   // A hazard (skull) flipped first, with nothing picked: no damage. It is revealed, shakes and flips back, and
-  // the turn goes on. (Play alone still counts it as one attempt.)
+  // the turn goes on. (Play alone does not count it as an attempt.)
   async hazardHit(tile) {
     this.busy = true;
     await this.flipTile(tile, true);
@@ -1309,10 +1312,10 @@ class GameScene extends Phaser.Scene {
     await this.resetSelection();
     if (tile.active) await this.flipTile(tile, false);
     this.busy = false;
-    this.recordAttempt(0);
+    // (a hazard is not an attempt: no penalty of any kind)
   }
 
-  // Play alone: a failed attempt costs a point. (Two-player modes keep failed attempts free.)
+  // Play alone: a wrong shape costs a point (a too-small submit is free). (Two-player modes keep failed attempts free.)
   penalizeMiss() {
     if (!this.modeCfg.twoPlayers) this.applyPenalty(ALONE_MISS_PENALTY);
   }
@@ -1340,9 +1343,8 @@ class GameScene extends Phaser.Scene {
 
     const tiles = this.selection;
     if (tiles.length < MIN_MATCH) {
-      // not enough for a match: flip back, no score (play alone: -1)
+      // not enough for a match: flip back, no score (the -1 is only for a wrong shape)
       await this.resetSelection();
-      this.penalizeMiss();
       this.busy = false;
       this.recordAttempt(0);
       return;
@@ -1377,11 +1379,11 @@ class GameScene extends Phaser.Scene {
     });
   }
 
-  // Takes points off the active player and returns how many were actually lost. Two-player modes never go
-  // below 0; play alone can go negative (and the game ends at ALONE_SCORE_FLOOR).
+  // Takes points off the active player and returns how many were actually lost. Two-player modes are limited only by TWO_PLAYER_SCORE_FLOOR (none by default); play alone can go
+  // negative (and the game ends at ALONE_SCORE_FLOOR).
   applyPenalty(points) {
     const player = this.activePlayer;
-    const floor = this.modeCfg.twoPlayers ? 0 : -Infinity;
+    const floor = this.modeCfg.twoPlayers ? TWO_PLAYER_SCORE_FLOOR : -Infinity;
     const lost = this.scores[player] - Math.max(floor, this.scores[player] - points);
     if (lost <= 0) return 0;
     this.scores[player] -= lost;
@@ -1512,7 +1514,7 @@ class GameScene extends Phaser.Scene {
     let need = MIN_MATCH - (counts[best] || 0);
     for (const tile of fresh) {
       if (need <= 0) break;
-      if (tile.shape === best) continue;
+      if (tile.shape === best || tile.shape === 'hazard') continue; // never turn a hazard into a shape: keeps the ~20% hazard share
       tile.shape = best;
       tile.setTexture('shape_' + best); // still face-up at this point
       need--;
