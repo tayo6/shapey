@@ -17,6 +17,7 @@ const REVIEW_MS = Number(urlParams.get('review')) || 15000;      // the opening 
 const SPAWN_REVEAL_MS = Number(urlParams.get('reveal')) || 5000;  // new tiles face-up
 const SHUFFLE_STEP_MS = Number(urlParams.get('swap')) || 2000;    // each swap takes this long; swaps run one after another
 const SHUFFLE_SKIP_CHANCE = 0.1;  // about 10% of new tiles sit the shuffle out
+const STUCK_UP_MS = 2500;         // a face-up tile with no reason to be face-up is flipped back down after this long
 const SHUFFLE_ARC_PX = 28;        // sideways bow of a swap path, so the two tiles pass each other instead of overlapping
 const MIN_MATCH = 3;          // smallest scoring match
 // 3 matched = 1 point, 4 matched = 2 points, 5 or more = 5 points
@@ -532,6 +533,7 @@ class GameScene extends Phaser.Scene {
   update() {
     if (!this.turnClock) return;
     this.hideFinishedReveals();
+    this.healStuckTiles();
     this.refreshClocks();
     // A turn that expires mid-animation (a submitted match resolving, a wrong pick flipping back) waits for it.
     if (!this.turnEnding && !this.busy && this.turnClock.expired()) this.endTurn('timeout');
@@ -1043,6 +1045,7 @@ class GameScene extends Phaser.Scene {
     tile.row = row;
     tile.col = col;
     tile.faceUp = true;
+    tile.upSince = this.time.now;
     tile.selected = false;
     tile.swapping = false; // true while the tile is moving in a shuffle swap
     tile.baseScale = tile.scaleX;
@@ -1072,6 +1075,7 @@ class GameScene extends Phaser.Scene {
       if (!tile.active) return;
       tile.setTexture('shape_' + (faceUp ? tile.shape : 'mystery'));
       tile.faceUp = faceUp;
+      tile.upSince = faceUp ? this.time.now : 0;
       await this.tweenAsync({ targets: tile, scaleX: tile.baseScale, duration: 100, ease: 'Sine.easeOut' });
     });
     return tile.flipChain;
@@ -1096,6 +1100,21 @@ class GameScene extends Phaser.Scene {
         Promise.all(batch.tiles.map((t) => t.flipChain)).then(() => {
           if (token === this.shuffleToken) this.runShuffle(batch.tiles, token);
         });
+      }
+    }
+  }
+
+  // Safety net: a tile may only be face-up while it is picked, being revealed (opening study / new tiles), mid-swap,
+  // or briefly shown by a dummy/hazard tap. Anything else that has been face-up for STUCK_UP_MS is flipped back down,
+  // so a mismatch can never leave shapes showing, whatever the cause.
+  healStuckTiles() {
+    const now = this.time.now;
+    for (const row of this.tiles) {
+      for (const tile of row) {
+        if (!tile || !tile.active || !tile.faceUp || tile.selected || tile.swapping) continue;
+        if (!tile.upSince || now - tile.upSince < STUCK_UP_MS) continue;
+        if (this.reveals.batches.some((b) => b.tiles.includes(tile))) continue;
+        this.flipTile(tile, false);
       }
     }
   }
