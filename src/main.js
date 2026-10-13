@@ -54,9 +54,9 @@ const MODES = {
            targetScore: null, hazard: HAZARD_CHANCE, twoPlayers: false, turnClock: false, ai: false },
   ai:    { label: 'PLAYER VS AI', hint: 'First to ' + RULES.targetScoreForMode('ai') + ' points wins. Choose Easy or Professional.',
            targetScore: RULES.targetScoreForMode('ai'), hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: true },
-  pvp:   { label: 'PLAYER 1 VS PLAYER 2', hint: 'First to ' + RULES.targetScoreForMode('pvp') + ' points wins. Two players share this device.',
+  pvp:   { label: 'PLAYER 1 VS PLAYER 2', hint: 'First to ' + RULES.targetScoreForMode('pvp') + ' points wins. Choose local or online play.',
            targetScore: RULES.targetScoreForMode('pvp'), hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false },
-  tag:   { label: 'TAG: 2 VS 2', hint: 'First team to ' + RULES.targetScoreForMode('tag') + ' points wins. Partners alternate turns.',
+  tag:   { label: 'TAG: 2 VS 2', hint: 'First team to ' + RULES.targetScoreForMode('tag') + ' points wins. Play locally or online.',
            targetScore: RULES.targetScoreForMode('tag'), hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false, teams: true },
 };
 const TEAM_PLAYERS = [['Player 1', 'Player 2'], ['Player 3', 'Player 4']]; // Tag: Team 1 and Team 2
@@ -440,37 +440,83 @@ class MenuScene extends Phaser.Scene {
     this.pickerUI = [];
     Object.entries(MODES).forEach(([mode, cfg], i) => {
       woodButton(this, GAME_WIDTH / 2, 600 + i * 165, 620, 140, cfg.label, 42,
-        () => (cfg.ai ? this.openDifficulty() : this.scene.start('GameScene', { mode })), 10, cfg.hint);
+        () => {
+          if (cfg.ai) this.openDifficulty();
+          else if (mode === 'pvp' || mode === 'tag') this.openMultiplayerChoice(mode);
+          else this.scene.start('GameScene', { mode });
+        }, 10, cfg.hint);
     });
-
-    woodButton(this, GAME_WIDTH / 2, 1220, 620, 82, 'ONLINE MULTIPLAYER', 34,
-      () => this.openOnlineLobby(), 10, 'Create a room or join a friend');
   }
 
-  // First online milestone: room creation/joining and live connection status.
-  // Board state and turn synchronization are added in the next multiplayer step.
-  openOnlineLobby() {
+  // Existing multiplayer modes offer a local or online path; online is not a separate game mode.
+  openMultiplayerChoice(mode) {
+    if (this.modeChoiceUI && this.modeChoiceUI.length) return;
+    this.selectedMultiplayerMode = mode;
+    this.modeChoiceUI = [];
+    const add = (object) => { this.modeChoiceUI.push(object); return object; };
+    const cfg = MODES[mode];
+    add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.84)
+      .setDepth(40).setInteractive());
+    add(this.add.rectangle(GAME_WIDTH / 2, 650, 640, 760, 0x4b2d17, 1)
+      .setStrokeStyle(5, 0xd5ad72).setDepth(41));
+    add(this.add.text(GAME_WIDTH / 2, 375, cfg.label, {
+      fontFamily: FONT, fontSize: mode === 'tag' ? '40px' : '38px',
+      color: '#fff2c7', stroke: '#3a2412', strokeThickness: 8, align: 'center',
+      wordWrap: { width: 560 },
+    }).setOrigin(0.5).setDepth(42));
+    add(this.add.text(GAME_WIDTH / 2, 445, 'Choose how you want to play.', {
+      fontFamily: FONT, fontSize: '27px', color: '#fff2c7', align: 'center',
+      stroke: '#3a2412', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(42));
+    woodButton(this, GAME_WIDTH / 2, 575, 540, 118, 'PLAY ON THIS DEVICE', 34,
+      () => {
+        this.closeMultiplayerChoice();
+        this.scene.start('GameScene', { mode });
+      }, 42, 'Local pass-and-play').forEach(add);
+    woodButton(this, GAME_WIDTH / 2, 740, 540, 118, 'PLAY ONLINE', 38,
+      () => this.openOnlineLobby(mode), 42, 'Create a room or join a friend').forEach(add);
+    woodButton(this, GAME_WIDTH / 2, 900, 540, 88, 'BACK', 34,
+      () => this.closeMultiplayerChoice(), 42).forEach(add);
+  }
+
+  closeMultiplayerChoice() {
+    if (this.modeChoiceUI) this.modeChoiceUI.forEach((object) => object.destroy());
+    this.modeChoiceUI = [];
+    this.selectedMultiplayerMode = null;
+  }
+
+  // Room creation and joining are attached to Player 1 vs Player 2 and Tag.
+  openOnlineLobby(mode) {
     if (this.onlineUI && this.onlineUI.length) return;
+    this.closeMultiplayerChoice();
+    this.onlineMode = mode || this.selectedMultiplayerMode || 'pvp';
     this.onlineUI = [];
     const add = (object) => { this.onlineUI.push(object); return object; };
+    const modeTitle = this.onlineMode === 'tag' ? 'ONLINE TAG · 2 VS 2' : 'ONLINE PLAYER 1 VS PLAYER 2';
     add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.86)
       .setDepth(80).setInteractive());
-    add(this.add.rectangle(GAME_WIDTH / 2, 650, 650, 690, 0x4b2d17, 1)
+    add(this.add.rectangle(GAME_WIDTH / 2, 650, 650, 820, 0x4b2d17, 1)
       .setStrokeStyle(5, 0xd5ad72).setDepth(81));
-    add(this.add.text(GAME_WIDTH / 2, 390, 'ONLINE MULTIPLAYER', {
-      fontFamily: FONT, fontSize: '42px', color: '#fff2c7', stroke: '#3a2412', strokeThickness: 8,
+    add(this.add.text(GAME_WIDTH / 2, 330, modeTitle, {
+      fontFamily: FONT, fontSize: this.onlineMode === 'tag' ? '35px' : '33px',
+      color: '#fff2c7', stroke: '#3a2412', strokeThickness: 8, align: 'center',
+      wordWrap: { width: 590 },
     }).setOrigin(0.5).setDepth(82));
-    this.onlineStatus = add(this.add.text(GAME_WIDTH / 2, 475,
-      'Create a room, then share its code with your friend.', {
-        fontFamily: FONT, fontSize: '25px', color: '#fff2c7', align: 'center',
+    this.onlineStatus = add(this.add.text(GAME_WIDTH / 2, 415,
+      'Create a room and share its code, or join a friend.', {
+        fontFamily: FONT, fontSize: '23px', color: '#fff2c7', align: 'center',
         wordWrap: { width: 560 }, stroke: '#3a2412', strokeThickness: 4,
       }).setOrigin(0.5).setDepth(82));
+    this.onlineRoomCodeText = add(this.add.text(GAME_WIDTH / 2, 520, '', {
+      fontFamily: FONT, fontSize: '54px', color: '#ffe36e', align: 'center',
+      stroke: '#3a2412', strokeThickness: 8, letterSpacing: 8,
+    }).setOrigin(0.5).setDepth(83));
 
-    woodButton(this, GAME_WIDTH / 2, 600, 530, 112, 'CREATE ROOM', 38,
-      () => this.createOnlineRoom(), 82, 'Get a six-character room code').forEach(add);
-    woodButton(this, GAME_WIDTH / 2, 750, 530, 112, 'JOIN ROOM', 38,
-      () => this.promptJoinRoom(), 82, 'Enter the code from your friend').forEach(add);
-    woodButton(this, GAME_WIDTH / 2, 900, 530, 90, 'BACK TO MENU', 34,
+    woodButton(this, GAME_WIDTH / 2, 710, 530, 88, 'CREATE ROOM', 36,
+      () => this.createOnlineRoom(), 82, 'Generate a shareable room code').forEach(add);
+    woodButton(this, GAME_WIDTH / 2, 810, 530, 88, 'JOIN ROOM', 36,
+      () => this.promptJoinRoom(), 82, 'Enter a friend’s room code').forEach(add);
+    woodButton(this, GAME_WIDTH / 2, 935, 530, 78, 'BACK', 33,
       () => this.closeOnlineLobby(), 82).forEach(add);
   }
 
@@ -478,13 +524,64 @@ class MenuScene extends Phaser.Scene {
     if (this.onlineStatus && this.onlineStatus.active) this.onlineStatus.setText(message);
   }
 
+  showOnlineRoomCode(code) {
+    this.currentRoomCode = code;
+    if (this.onlineRoomCodeText && this.onlineRoomCodeText.active) this.onlineRoomCodeText.setText(code);
+    if (!this.onlineCopyUI || !this.onlineCopyUI.length) {
+      this.onlineCopyUI = woodButton(this, GAME_WIDTH / 2, 600, 390, 68, 'COPY ROOM CODE', 28,
+        () => this.copyOnlineRoomCode(), 84);
+      this.onlineCopyUI.forEach((object) => this.onlineUI.push(object));
+      this.onlineCopyLabel = this.onlineCopyUI[1];
+    }
+  }
+
+  async copyOnlineRoomCode() {
+    const code = this.currentRoomCode;
+    if (!code) {
+      this.setOnlineStatus('Create or join a room first.');
+      return;
+    }
+    let copied = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(code);
+        copied = true;
+      }
+    } catch {}
+    if (!copied) {
+      let field;
+      try {
+        field = document.createElement('textarea');
+        field.value = code;
+        field.setAttribute('readonly', '');
+        field.style.position = 'fixed';
+        field.style.left = '-9999px';
+        document.body.appendChild(field);
+        field.select();
+        copied = document.execCommand('copy');
+      } catch {}
+      if (field && field.parentNode) field.parentNode.removeChild(field);
+    }
+    if (copied) {
+      if (this.onlineCopyLabel && this.onlineCopyLabel.active) this.onlineCopyLabel.setText('COPIED!');
+      this.setOnlineStatus('Room code copied. Send ' + code + ' to your friend.');
+    } else {
+      this.setOnlineStatus('Copy failed. Please select and copy the room code: ' + code);
+    }
+  }
+
   async createOnlineRoom() {
     this.setOnlineStatus('Creating your room...');
     try {
-      const response = await fetch(MULTIPLAYER_API + '/api/rooms', { method: 'POST' });
+      const response = await fetch(MULTIPLAYER_API + '/api/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: this.onlineMode }),
+      });
       const data = await response.json();
       if (!response.ok || !data.roomCode) throw new Error(data.error || 'Room creation failed.');
-      this.connectOnlineRoom(data.roomCode, data.websocketUrl);
+      this.showOnlineRoomCode(data.roomCode);
+      this.connectOnlineRoom(data.roomCode, data.websocketUrl, this.onlineMode);
     } catch (error) {
       this.setOnlineStatus('Could not create a room. Check your connection and try again.');
       console.error('Shapey room creation failed:', error);
@@ -499,34 +596,52 @@ class MenuScene extends Phaser.Scene {
       this.setOnlineStatus('That code is not valid. Room codes have 6 letters or numbers.');
       return;
     }
-    this.connectOnlineRoom(code, MULTIPLAYER_API.replace(/^http/, 'ws') + '/ws/' + code);
+    this.showOnlineRoomCode(code);
+    this.connectOnlineRoom(code,
+      MULTIPLAYER_API.replace(/^http/, 'ws') + '/ws/' + code, this.onlineMode);
   }
 
-  connectOnlineRoom(code, websocketUrl) {
+  connectOnlineRoom(code, websocketUrl, mode) {
     if (this.onlineSocket) {
       try { this.onlineSocket.close(); } catch {}
     }
-    this.setOnlineStatus('Room code: ' + code + '\nConnecting...');
-    const socket = new WebSocket(websocketUrl);
+    const modeLabel = mode === 'tag' ? 'Tag · 2 vs 2' : 'Player 1 vs Player 2';
+    this.setOnlineStatus('Connecting to ' + modeLabel + ' room...');
+    const separator = websocketUrl.includes('?') ? '&' : '?';
+    const socket = new WebSocket(websocketUrl + separator + 'mode=' + encodeURIComponent(mode));
     this.onlineSocket = socket;
     socket.addEventListener('open', () => {
-      this.setOnlineStatus('Room code: ' + code + '\nConnected. Waiting for room details...');
+      this.setOnlineStatus('Connected. Waiting for room details...');
     });
     socket.addEventListener('message', (event) => {
       let message;
       try { message = JSON.parse(event.data); } catch { return; }
       if (message.type === 'welcome') {
         this.onlinePlayerNumber = message.playerNumber;
-        this.setOnlineStatus('Room code: ' + code + '\nYou are Player ' + message.playerNumber + '. Waiting for your friend...');
+        if (message.mode && message.mode !== mode) {
+          this.setOnlineStatus('This code belongs to a different game mode. Return and choose that mode.');
+          socket.close();
+          return;
+        }
+        this.setOnlineStatus('Room connected as Player ' + message.playerNumber + '.');
       } else if (message.type === 'room_state') {
         const count = (message.players || []).filter((player) => player.connected).length;
-        if (count >= 2 && message.status === 'ready') {
-          this.setOnlineStatus('Room code: ' + code + '\nBoth players connected! Board synchronization is the next step.');
+        const maxPlayers = message.maxPlayers || (mode === 'tag' ? 4 : 2);
+        const actualMode = message.mode || mode;
+        if (actualMode !== mode) {
+          this.setOnlineStatus('This room is for a different game mode. Return and choose that mode.');
+          socket.close();
+          return;
+        }
+        if (count >= maxPlayers) {
+          this.setOnlineStatus('All ' + maxPlayers + ' players connected! Gameplay synchronization is the next step.');
         } else {
-          this.setOnlineStatus('Room code: ' + code + '\n' + count + '/2 players connected. Share the code with your friend.');
+          this.setOnlineStatus(count + '/' + maxPlayers + ' players connected. Share the code with your friend/team.');
         }
       } else if (message.type === 'player_disconnected') {
-        this.setOnlineStatus('Room code: ' + code + '\nYour friend disconnected. They can rejoin with this code.');
+        const maxPlayers = message.maxPlayers || (mode === 'tag' ? 4 : 2);
+        const count = (message.players || []).filter((player) => player.connected).length;
+        this.setOnlineStatus('A player disconnected (' + count + '/' + maxPlayers + ' connected). They can rejoin with this code.');
       } else if (message.type === 'error') {
         this.setOnlineStatus(message.message || 'The room reported an error.');
       }
@@ -550,6 +665,11 @@ class MenuScene extends Phaser.Scene {
     if (this.onlineUI) this.onlineUI.forEach((object) => object.destroy());
     this.onlineUI = [];
     this.onlineStatus = null;
+    this.onlineRoomCodeText = null;
+    this.onlineCopyUI = null;
+    this.onlineCopyLabel = null;
+    this.currentRoomCode = null;
+    this.onlineMode = null;
   }
 
   // "Choose difficulty" panel for Player vs AI (Easy / Professional, built from AI_LEVELS).
