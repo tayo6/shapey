@@ -38,9 +38,7 @@ const formatInventoryWindow = () => INVENTORY_WINDOW_MS % 60000 === 0
   ? INVENTORY_WINDOW_MS / 60000 + ' min' : INVENTORY_WINDOW_MS / 1000 + ' s';
 const PLAYER_NAMES = ['Player 1', 'Player 2'];
 
-// Play Alone checkpoint rules; the mode hint is derived from these same constants.
-const ALONE_ATTEMPT_WINDOW = 15;
-const ALONE_POINTS_PER_WINDOW = 15;
+// Play Alone survival rules: no attempt-based checkpoints.
 const ALONE_SCORE_FLOOR = -15;  // reaching this score is game over
 const ALONE_MISS_PENALTY = 1;   // a wrong shape costs this much (a too-small submit is free)
 
@@ -49,14 +47,14 @@ const ALONE_MISS_PENALTY = 1;   // a wrong shape costs this much (a too-small su
 const HAZARD_CHANCE = 0.1;
 // teams = Tag mode: two teams of two share the device, and each team's partners take turns (see turnLabel()).
 const MODES = {
-  alone: { label: 'PLAY ALONE', hint: 'No timer. Score ' + ALONE_POINTS_PER_WINDOW + ' points in every ' + ALONE_ATTEMPT_WINDOW + ' attempts.',
-           hazard: HAZARD_CHANCE, twoPlayers: false, turnClock: false, ai: false },
-  ai:    { label: 'PLAYER VS AI', hint: 'Take turns against the computer. Pick Easy or Professional.',
-           hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: true },
-  pvp:   { label: 'PLAYER 1 VS PLAYER 2', hint: 'Two players share this device and take turns.',
-           hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false },
-  tag:   { label: 'TAG: 2 VS 2', hint: 'Two teams of two share this device. Partners tag in on every other turn.',
-           hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false, teams: true },
+  alone: { label: 'PLAY ALONE', hint: 'No timer. Lose when your score reaches ' + ALONE_SCORE_FLOOR + '.',
+           targetScore: null, hazard: HAZARD_CHANCE, twoPlayers: false, turnClock: false, ai: false },
+  ai:    { label: 'PLAYER VS AI', hint: 'First to ' + RULES.targetScoreForMode('ai') + ' points wins. Choose Easy or Professional.',
+           targetScore: RULES.targetScoreForMode('ai'), hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: true },
+  pvp:   { label: 'PLAYER 1 VS PLAYER 2', hint: 'First to ' + RULES.targetScoreForMode('pvp') + ' points wins. Two players share this device.',
+           targetScore: RULES.targetScoreForMode('pvp'), hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false },
+  tag:   { label: 'TAG: 2 VS 2', hint: 'First team to ' + RULES.targetScoreForMode('tag') + ' points wins. Partners alternate turns.',
+           targetScore: RULES.targetScoreForMode('tag'), hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false, teams: true },
 };
 const TEAM_PLAYERS = [['Player 1', 'Player 2'], ['Player 3', 'Player 4']]; // Tag: Team 1 and Team 2
 const START_MODE = MODES[urlParams.get('mode')] ? urlParams.get('mode') : null; // ?mode=alone skips the menu
@@ -71,8 +69,7 @@ const HAZARD_BLAST_PENALTY = 1;
 // Set this to 0 to stop two-player scores dropping below zero (Play alone has its own floor, ALONE_SCORE_FLOOR).
 const TWO_PLAYER_SCORE_FLOOR = -Infinity;
 
-// Play alone: an "attempt" is one try at a match (a submitted match, a wrong shape, or a too-small submit;
-// hazards do not count) - not a single flip. Every ALONE_ATTEMPT_WINDOW attempts must earn ALONE_POINTS_PER_WINDOW points.
+// Play Alone attempts are tracked for statistics only. Hazards and wooden dummies are not attempts.
 
 // AI difficulty (see GAMEPLAY.md). Both levels play by the same rules and only ever know what they have seen;
 // they differ in memory and decisions. The picker in MenuScene is built from this table.
@@ -498,10 +495,7 @@ class GameScene extends Phaser.Scene {
     this.panelOpen = false;
     this.panelUI = [];
     this.turnId = 0;                 // bumped on every turn so a stale AI loop can tell its turn is over
-    this.attemptsInWindow = 0;       // play alone: attempts since the last checkpoint
-    this.windowPoints = 0;           // play alone: points earned since the last checkpoint
-    this.totalAttempts = 0;
-    this.checkpoints = 0;
+    this.totalAttempts = 0;          // Play Alone statistic only; never a loss condition
     this.aiMemory = new Map();       // tile -> shape the AI believes it is
     this.aiRecall = this.ai.recall[0] + Math.random() * (this.ai.recall[1] - this.ai.recall[0]);
     this.starBalance = this.loadStarBalance();
@@ -530,8 +524,7 @@ class GameScene extends Phaser.Scene {
     this.startTurn(0);
     if (!this.modeCfg.twoPlayers) {
       this.updateAloneHUD();
-      this.showToast('Score ' + ALONE_POINTS_PER_WINDOW + ' points in every ' + ALONE_ATTEMPT_WINDOW +
-        ' attempts.\nDon\u2019t fall to ' + ALONE_SCORE_FLOOR + '!', 5000);
+      this.showToast('No timer. You lose when your score reaches ' + ALONE_SCORE_FLOOR + '.', 4000);
     } else if (this.modeCfg.teams) {
       this.showToast('Tag: partners tag in on every other turn.\n' + this.turnLabel() + ' starts.', 4000);
     }
@@ -607,8 +600,7 @@ class GameScene extends Phaser.Scene {
     // Countdown for newly spawned tiles. It sits under the turn timer and only shows while tiles are face-up.
     this.revealText = this.numberText(GAME_WIDTH / 2, 190, '', 26).setVisible(false);
 
-    // Play alone has no countdown: the plank shows points toward the next checkpoint instead,
-    // with the attempt number underneath. In Tag the same spot names the team and partner whose turn it is.
+    // Play Alone shows attempts and its score floor here. In Tag the same spot names the team and partner whose turn it is.
     this.goalText = this.numberText(GAME_WIDTH / 2, 166, '', 21)
       .setVisible(!this.modeCfg.twoPlayers || !!this.modeCfg.teams);
 
@@ -625,11 +617,11 @@ class GameScene extends Phaser.Scene {
     if (!this.modeCfg.twoPlayers) this.playerUI[1].forEach((object) => object.setVisible(false));
   }
 
-  // Play alone: points toward the checkpoint on the plank, attempt number underneath.
+  // Play Alone has no clock or attempt limit; the centre panel shows attempts and the score floor.
   updateAloneHUD() {
     if (this.modeCfg.twoPlayers) return;
-    this.timerText.setText(this.windowPoints + '/' + ALONE_POINTS_PER_WINDOW);
-    this.goalText.setText('ATTEMPT ' + Math.min(this.attemptsInWindow + 1, ALONE_ATTEMPT_WINDOW) + ' OF ' + ALONE_ATTEMPT_WINDOW);
+    this.timerText.setText('TRIES: ' + this.totalAttempts);
+    this.goalText.setText('LOSE AT ' + ALONE_SCORE_FLOOR);
   }
 
   updateActivePlayerUI() {
@@ -1300,7 +1292,7 @@ class GameScene extends Phaser.Scene {
     await this.destroyTiles(tiles);
     await this.cascade();
     this.busy = false;
-    // A hazard is not an attempt: in Play alone it must cost nothing, not even one of the attempts in the checkpoint window.
+    // A hazard is not an attempt: in Play Alone it costs nothing and does not increment the attempt statistic.
     this.endTurn('hazard');
   }
 
@@ -1350,7 +1342,7 @@ class GameScene extends Phaser.Scene {
       // not enough for a match: flip back, no score (the -1 is only for a wrong shape)
       await this.resetSelection();
       this.busy = false;
-      this.recordAttempt(0);
+      this.recordAttempt();
       return;
     }
 
@@ -1364,7 +1356,11 @@ class GameScene extends Phaser.Scene {
     await this.destroyTiles(tiles);
     await this.cascade();
     this.busy = false;
-    this.recordAttempt(points);
+    if (this.modeCfg.twoPlayers && RULES.hasReachedTarget(this.scores[this.activePlayer], this.modeCfg.targetScore)) {
+      this.endGame('First to ' + this.modeCfg.targetScore + ' points wins.');
+      return;
+    }
+    this.recordAttempt();
     this.endTurn('match'); // a valid match ends the turn; the new tiles keep revealing during the next turn
   }
 
@@ -1403,36 +1399,13 @@ class GameScene extends Phaser.Scene {
     return lost;
   }
 
-  // Play alone: counts one attempt and checks the two ways to lose. `gained` = points the attempt earned.
-  recordAttempt(gained) {
+  // Attempts in Play Alone are shown for statistics only; there is no checkpoint or attempt limit.
+  recordAttempt() {
     if (this.modeCfg.twoPlayers || this.gameOver) return;
     this.totalAttempts++;
-
-    const result = RULES.resolveAloneAttempt({
-      attemptsInWindow: this.attemptsInWindow,
-      windowPoints: this.windowPoints,
-      gained,
-      score: this.scores[0],
-      scoreFloor: ALONE_SCORE_FLOOR,
-      attemptWindow: ALONE_ATTEMPT_WINDOW,
-      pointsRequired: ALONE_POINTS_PER_WINDOW,
-    });
-    this.attemptsInWindow = result.attemptsInWindow;
-    this.windowPoints = result.windowPoints;
     this.updateAloneHUD();
-
-    if (result.status === 'score-floor') {
-      this.endGame('Your score fell to ' + ALONE_SCORE_FLOOR + '.');
-    } else if (result.status === 'failed-window') {
-      this.endGame('You earned ' + result.windowPoints + ' of the ' + ALONE_POINTS_PER_WINDOW +
-        ' points needed in ' + ALONE_ATTEMPT_WINDOW + ' attempts.');
-    } else if (result.status === 'checkpoint') {
-      this.checkpoints++;
-      this.showToast('Checkpoint ' + this.checkpoints + ' cleared with ' + result.checkpointPoints +
-        ' points!\nNext ' + ALONE_ATTEMPT_WINDOW + ' attempts start now.', 3200);
-      this.attemptsInWindow = 0;
-      this.windowPoints = 0;
-      this.updateAloneHUD();
+    if (RULES.hasReachedScoreFloor(this.scores[0], ALONE_SCORE_FLOOR)) {
+      this.endGame('Your score reached ' + ALONE_SCORE_FLOOR + '.');
     }
   }
 
@@ -1447,10 +1420,15 @@ class GameScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(301);
     this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.85)
       .setDepth(300).setInteractive();
-    text(330, 'GAME OVER', 84, '#ff8a7a');
+    const versus = this.modeCfg.twoPlayers;
+    text(330, versus ? this.names[this.activePlayer] + ' WINS!' : 'GAME OVER',
+      76, versus ? '#ffe36e' : '#ff8a7a');
     text(450, reason, 32, '#fff2c7');
-    text(600, 'Score: ' + this.scores[0] + '\nAttempts: ' + this.totalAttempts +
-      '\nCheckpoints cleared: ' + this.checkpoints, 40, '#ffe36e');
+    const summary = versus
+      ? this.names[0] + ': ' + this.scores[0] + '\n' + this.names[1] + ': ' + this.scores[1] +
+        '\nTarget: ' + this.modeCfg.targetScore
+      : 'Score: ' + this.scores[0] + '\nAttempts: ' + this.totalAttempts;
+    text(600, summary, 40, '#ffe36e');
     woodButton(this, GAME_WIDTH / 2, 810, 500, 110, 'PLAY AGAIN', 44,
       () => this.scene.restart({ mode: this.mode, difficulty: this.difficulty }), 301);
     woodButton(this, GAME_WIDTH / 2, 950, 500, 110, 'MAIN MENU', 44, () => this.scene.start('MenuScene'), 301);
