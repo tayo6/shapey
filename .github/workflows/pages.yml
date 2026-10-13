@@ -27,6 +27,9 @@ jobs:
       - name: Test extracted game rules
         run: node --test tests/rules.test.js
 
+      - name: Check game JavaScript syntax
+        run: node --check src/main.js
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
