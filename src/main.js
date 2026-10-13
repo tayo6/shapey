@@ -588,7 +588,7 @@ class MenuScene extends Phaser.Scene {
     }
   }
 
-  promptJoinRoom() {
+  async promptJoinRoom() {
     const entered = window.prompt('Enter your friend’s 6-character room code:');
     if (entered == null) return;
     const code = entered.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -596,9 +596,23 @@ class MenuScene extends Phaser.Scene {
       this.setOnlineStatus('That code is not valid. Room codes have 6 letters or numbers.');
       return;
     }
-    this.showOnlineRoomCode(code);
-    this.connectOnlineRoom(code,
-      MULTIPLAYER_API.replace(/^http/, 'ws') + '/ws/' + code, this.onlineMode);
+    this.setOnlineStatus('Checking room code...');
+    try {
+      const response = await fetch(MULTIPLAYER_API + '/api/rooms/' + code);
+      const room = await response.json();
+      if (!response.ok) throw new Error(room.error || 'Room not found.');
+      if (room.mode !== this.onlineMode) {
+        this.setOnlineStatus('That code is for ' +
+          (room.mode === 'tag' ? 'Tag (2 vs 2)' : 'Player 1 vs Player 2') +
+          '. Go back and select that mode to join.');
+        return;
+      }
+      this.showOnlineRoomCode(code);
+      this.connectOnlineRoom(code,
+        MULTIPLAYER_API.replace(/^http/, 'ws') + '/ws/' + code, this.onlineMode);
+    } catch (error) {
+      this.setOnlineStatus(error.message || 'Could not find that room. Check the code and try again.');
+    }
   }
 
   connectOnlineRoom(code, websocketUrl, mode) {
