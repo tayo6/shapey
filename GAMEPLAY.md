@@ -52,7 +52,7 @@ Two teams of two share one device (online play is still future work). Team 1 is 
 
 - **Turn order:** the teams alternate, and each team's partners take turns, so the sequence is Player 1 → Player 3 → Player 2 → Player 4 → Player 1 → ... A partner "tags in" every other turn.
 - **One score per team.** A match scores for the team of whoever played it, so partners add to the same score. The header planks read TEAM 1 / TEAM 2, and a line under the timer names the team and partner whose turn it is (for example "TEAM 1: PLAYER 2"). The turn toast says the same.
-- **Everything else matches Player vs Player:** 45-second turns, 5% hazards, same scoring, shuffle and timeout rules. A timeout passes to the next player in the sequence.
+- **Everything else matches Player vs Player:** 45-second turns, 20% hazards, same scoring, shuffle and timeout rules. A timeout passes to the next player in the sequence.
 - **Inventory limit is per player:** each of the four players has their own 2-opens-per-5-minutes allowance (`limiterSlot()`).
 - Not implemented yet: stars, streaks and inventory are still one shared balance, there is no target score or winner screen in any mode yet, and there is no hand-off screen hiding the board between players.
 
