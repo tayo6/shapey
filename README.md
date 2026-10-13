@@ -6,10 +6,10 @@ A memory-and-matching game built with Phaser 3. Play it at https://tayo6.github.
 
 Pick a mode on the opening menu:
 
-- **Play alone** - no timer. Earn at least 15 points in every 15 attempts and never drop to -15. 
-- **Player vs AI** - take turns against the computer. Choose **Easy** or **Professional** first.
-- **Player 1 vs Player 2** - two players on one device, 45 seconds per turn.
-- **Tag: 2 vs 2** - two teams of two share one device. Teams alternate turns and partners tag in every other turn (Player 1, Player 3, Player 2, Player 4, ...), and each team has one shared score.
+- **Play alone** - no timer or attempt limit. You lose only when your score reaches -15.
+- **Player vs AI** - take turns against the computer; first to **100 points** wins. Choose **Easy** or **Professional** first.
+- **Player 1 vs Player 2** - two players on one device, 45 seconds per turn; first to **100 points** wins.
+- **Tag: 2 vs 2** - two teams share one device and one score per team; partners alternate turns (Player 1, Player 3, Player 2, Player 4, ...). First team to **200 points** wins.
 
 Hazard (skull) tiles have a 10% spawn chance in every mode. In Player vs AI, Player vs Player and Tag, a hazard picked first does no damage and flips back; picked after other shapes it costs 1 point and destroys itself and the shapes picked before it, with no reward. In Play alone a hazard never costs anything: it always destroys itself and any picked shapes.
 
