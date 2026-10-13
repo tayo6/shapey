@@ -6,6 +6,9 @@ if (!RULES) throw new Error('Load src/rules.js before src/main.js.');
 const GAME_WIDTH = 720;
 const GAME_HEIGHT = 1280;
 
+// Cloudflare Worker used by the first online-room prototype.
+const MULTIPLAYER_API = 'https://shapey-multiplayer.hellohuman100.workers.dev';
+
 const FONT = 'HappySchool';
 const TILE_SIZE = 90;   // every shape tile is drawn at 90 x 90
 const TILE_PITCH = 91;  // distance between tile centres (90px tile + 1px gap)
@@ -439,6 +442,114 @@ class MenuScene extends Phaser.Scene {
       woodButton(this, GAME_WIDTH / 2, 600 + i * 165, 620, 140, cfg.label, 42,
         () => (cfg.ai ? this.openDifficulty() : this.scene.start('GameScene', { mode })), 10, cfg.hint);
     });
+
+    woodButton(this, GAME_WIDTH / 2, 1220, 620, 82, 'ONLINE MULTIPLAYER', 34,
+      () => this.openOnlineLobby(), 10, 'Create a room or join a friend');
+  }
+
+  // First online milestone: room creation/joining and live connection status.
+  // Board state and turn synchronization are added in the next multiplayer step.
+  openOnlineLobby() {
+    if (this.onlineUI && this.onlineUI.length) return;
+    this.onlineUI = [];
+    const add = (object) => { this.onlineUI.push(object); return object; };
+    add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.86)
+      .setDepth(80).setInteractive());
+    add(this.add.rectangle(GAME_WIDTH / 2, 650, 650, 690, 0x4b2d17, 1)
+      .setStrokeStyle(5, 0xd5ad72).setDepth(81));
+    add(this.add.text(GAME_WIDTH / 2, 390, 'ONLINE MULTIPLAYER', {
+      fontFamily: FONT, fontSize: '42px', color: '#fff2c7', stroke: '#3a2412', strokeThickness: 8,
+    }).setOrigin(0.5).setDepth(82));
+    this.onlineStatus = add(this.add.text(GAME_WIDTH / 2, 475,
+      'Create a room, then share its code with your friend.', {
+        fontFamily: FONT, fontSize: '25px', color: '#fff2c7', align: 'center',
+        wordWrap: { width: 560 }, stroke: '#3a2412', strokeThickness: 4,
+      }).setOrigin(0.5).setDepth(82));
+
+    woodButton(this, GAME_WIDTH / 2, 600, 530, 112, 'CREATE ROOM', 38,
+      () => this.createOnlineRoom(), 82, 'Get a six-character room code').forEach(add);
+    woodButton(this, GAME_WIDTH / 2, 750, 530, 112, 'JOIN ROOM', 38,
+      () => this.promptJoinRoom(), 82, 'Enter the code from your friend').forEach(add);
+    woodButton(this, GAME_WIDTH / 2, 900, 530, 90, 'BACK TO MENU', 34,
+      () => this.closeOnlineLobby(), 82).forEach(add);
+  }
+
+  setOnlineStatus(message) {
+    if (this.onlineStatus && this.onlineStatus.active) this.onlineStatus.setText(message);
+  }
+
+  async createOnlineRoom() {
+    this.setOnlineStatus('Creating your room...');
+    try {
+      const response = await fetch(MULTIPLAYER_API + '/api/rooms', { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok || !data.roomCode) throw new Error(data.error || 'Room creation failed.');
+      this.connectOnlineRoom(data.roomCode, data.websocketUrl);
+    } catch (error) {
+      this.setOnlineStatus('Could not create a room. Check your connection and try again.');
+      console.error('Shapey room creation failed:', error);
+    }
+  }
+
+  promptJoinRoom() {
+    const entered = window.prompt('Enter your friend’s 6-character room code:');
+    if (entered == null) return;
+    const code = entered.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!/^[A-Z0-9]{6}$/.test(code)) {
+      this.setOnlineStatus('That code is not valid. Room codes have 6 letters or numbers.');
+      return;
+    }
+    this.connectOnlineRoom(code, MULTIPLAYER_API.replace(/^http/, 'ws') + '/ws/' + code);
+  }
+
+  connectOnlineRoom(code, websocketUrl) {
+    if (this.onlineSocket) {
+      try { this.onlineSocket.close(); } catch {}
+    }
+    this.setOnlineStatus('Room code: ' + code + '\nConnecting...');
+    const socket = new WebSocket(websocketUrl);
+    this.onlineSocket = socket;
+    socket.addEventListener('open', () => {
+      this.setOnlineStatus('Room code: ' + code + '\nConnected. Waiting for room details...');
+    });
+    socket.addEventListener('message', (event) => {
+      let message;
+      try { message = JSON.parse(event.data); } catch { return; }
+      if (message.type === 'welcome') {
+        this.onlinePlayerNumber = message.playerNumber;
+        this.setOnlineStatus('Room code: ' + code + '\nYou are Player ' + message.playerNumber + '. Waiting for your friend...');
+      } else if (message.type === 'room_state') {
+        const count = (message.players || []).filter((player) => player.connected).length;
+        if (count >= 2 && message.status === 'ready') {
+          this.setOnlineStatus('Room code: ' + code + '\nBoth players connected! Board synchronization is the next step.');
+        } else {
+          this.setOnlineStatus('Room code: ' + code + '\n' + count + '/2 players connected. Share the code with your friend.');
+        }
+      } else if (message.type === 'player_disconnected') {
+        this.setOnlineStatus('Room code: ' + code + '\nYour friend disconnected. They can rejoin with this code.');
+      } else if (message.type === 'error') {
+        this.setOnlineStatus(message.message || 'The room reported an error.');
+      }
+    });
+    socket.addEventListener('error', () => {
+      this.setOnlineStatus('Could not connect to that room. Check the code and try again.');
+    });
+    socket.addEventListener('close', () => {
+      if (this.onlineSocket === socket && this.onlineUI && this.onlineUI.length) {
+        this.setOnlineStatus('Disconnected. You can create or join a room again.');
+      }
+    });
+  }
+
+  closeOnlineLobby() {
+    if (this.onlineSocket) {
+      const socket = this.onlineSocket;
+      this.onlineSocket = null;
+      try { socket.close(); } catch {}
+    }
+    if (this.onlineUI) this.onlineUI.forEach((object) => object.destroy());
+    this.onlineUI = [];
+    this.onlineStatus = null;
   }
 
   // "Choose difficulty" panel for Player vs AI (Easy / Professional, built from AI_LEVELS).
