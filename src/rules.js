@@ -26,18 +26,19 @@
     return Math.max(0, score - Math.max(floor, score - requestedPoints));
   }
 
-  // Resolve a Play Alone attempt/checkpoint without mutating scene state.
-  function resolveAloneAttempt({
-    attemptsInWindow, windowPoints, gained, score, scoreFloor, attemptWindow, pointsRequired,
-  }) {
-    const nextAttempts = attemptsInWindow + 1;
-    const nextPoints = windowPoints + gained;
-    const result = { attemptsInWindow: nextAttempts, windowPoints: nextPoints, status: 'continue' };
+  // Fixed versus targets: AI/PvP race to 100; Tag teams race to 200.
+  function targetScoreForMode(mode) {
+    if (mode === 'tag') return 200;
+    if (mode === 'ai' || mode === 'pvp') return 100;
+    return null;
+  }
 
-    if (score <= scoreFloor) return { ...result, status: 'score-floor' };
-    if (nextAttempts < attemptWindow) return result;
-    if (nextPoints < pointsRequired) return { ...result, status: 'failed-window' };
-    return { ...result, status: 'checkpoint', checkpointPoints: nextPoints };
+  function hasReachedTarget(score, target) {
+    return Number.isFinite(score) && Number.isFinite(target) && target > 0 && score >= target;
+  }
+
+  function hasReachedScoreFloor(score, floor) {
+    return Number.isFinite(score) && Number.isFinite(floor) && score <= floor;
   }
 
   // A missing/invalid override falls back to the mode default; valid numbers are bounded to probabilities.
@@ -54,7 +55,9 @@
     selectionMatches,
     hazardAction,
     penaltyToApply,
-    resolveAloneAttempt,
+    targetScoreForMode,
+    hasReachedTarget,
+    hasReachedScoreFloor,
     parseProbabilityOverride,
   });
 });
