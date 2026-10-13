@@ -41,33 +41,30 @@ test('penalty arithmetic respects the configured score floor', () => {
   assert.equal(rules.penaltyToApply(5, 0, 0), 0);
 });
 
-test('Play Alone attempt resolution continues until its checkpoint window is complete', () => {
-  const result = rules.resolveAloneAttempt({
-    attemptsInWindow: 2, windowPoints: 4, gained: 1, score: 5, scoreFloor: -15,
-    attemptWindow: 15, pointsRequired: 15,
-  });
-  assert.deepEqual(result, { attemptsInWindow: 3, windowPoints: 5, status: 'continue' });
+test('Play Alone loses only when the score reaches its floor', () => {
+  assert.equal(rules.hasReachedScoreFloor(0, -15), false);
+  assert.equal(rules.hasReachedScoreFloor(-14, -15), false);
+  assert.equal(rules.hasReachedScoreFloor(-15, -15), true);
+  assert.equal(rules.hasReachedScoreFloor(-16, -15), true);
 });
 
-test('Play Alone attempt resolution distinguishes failed and cleared checkpoint windows', () => {
-  const base = {
-    attemptsInWindow: 14, score: 5, scoreFloor: -15, attemptWindow: 15, pointsRequired: 15,
-  };
-  assert.deepEqual(
-    rules.resolveAloneAttempt({ ...base, windowPoints: 13, gained: 1 }),
-    { attemptsInWindow: 15, windowPoints: 14, status: 'failed-window' },
-  );
-  assert.deepEqual(
-    rules.resolveAloneAttempt({ ...base, windowPoints: 14, gained: 1 }),
-    { attemptsInWindow: 15, windowPoints: 15, status: 'checkpoint', checkpointPoints: 15 },
-  );
+test('versus mode targets are fixed by mode', () => {
+  assert.equal(rules.targetScoreForMode('alone'), null);
+  assert.equal(rules.targetScoreForMode('ai'), 100);
+  assert.equal(rules.targetScoreForMode('pvp'), 100);
+  assert.equal(rules.targetScoreForMode('tag'), 200);
+  assert.equal(rules.targetScoreForMode('unknown'), null);
 });
 
-test('score-floor loss takes priority over checkpoint evaluation', () => {
-  assert.equal(rules.resolveAloneAttempt({
-    attemptsInWindow: 14, windowPoints: 100, gained: 1, score: -15, scoreFloor: -15,
-    attemptWindow: 15, pointsRequired: 15,
-  }).status, 'score-floor');
+test('a side wins as soon as its score reaches or exceeds its target', () => {
+  assert.equal(rules.hasReachedTarget(99, 100), false);
+  assert.equal(rules.hasReachedTarget(100, 100), true);
+  assert.equal(rules.hasReachedTarget(101, 100), true);
+  assert.equal(rules.hasReachedTarget(199, 200), false);
+  assert.equal(rules.hasReachedTarget(200, 200), true);
+  assert.equal(rules.hasReachedTarget(205, 200), true);
+  assert.equal(rules.hasReachedTarget(-1, 100), false);
+  assert.equal(rules.hasReachedTarget(100, null), false);
 });
 
 test('hazard URL overrides reject invalid input and clamp finite values to 0–1', () => {
