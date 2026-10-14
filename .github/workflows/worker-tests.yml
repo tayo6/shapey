@@ -39,6 +39,10 @@ jobs:
         working-directory: .
         run: node --test tests/turn-rules.test.js
 
+      - name: Run existing pure game-rule tests
+        working-directory: .
+        run: node --test tests/rules.test.js
+
       - name: Check frontend JavaScript syntax
         working-directory: .
         run: node --check src/main.js
