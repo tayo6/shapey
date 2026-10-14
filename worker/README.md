@@ -9,6 +9,7 @@ The `feat/authoritative-online-gameplay` branch now contains an early authoritat
 - Tag: 4 devices; Team 1 = Players 1 and 2, Team 2 = Players 3 and 4; turn order P1 → P3 → P2 → P4; target 200.
 - The server owns the canonical board, active turn, score, hazards, timeout resolution, and the currently supported Extra Time and Double Play actions.
 - Hidden tile shapes are omitted from player snapshots while tiles are face-down.
+- Room creation requires an allowed origin and is limited to 5 requests per client IP per rolling 10 minutes. This is a basic abuse barrier, not full DDoS protection.
 
 This is **not yet approved for release**. Browser/two-device end-to-end and staging tests have not been completed. Reconnection can return the current board, but stable player-seat identity after reconnect is not yet implemented. Room-creation abuse controls and full game integration tests remain outstanding. Audience Poll, Score Strike, Cancel Counter, spectators and chat are not implemented online. The live deployed Worker remains the older lobby prototype until a separately reviewed deployment is completed.
 
