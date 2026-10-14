@@ -28,6 +28,21 @@ function json(data, status = 200, headers = {}) {
   });
 }
 
+// Player-seat credentials are generated server-side and stored only as SHA-256 hashes.
+// They let a returning browser reclaim its original seat without putting the secret in a URL.
+function newSeatToken() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function hashSeatToken(token) {
+  const digest = new Uint8Array(await crypto.subtle.digest(
+    "SHA-256", new TextEncoder().encode(token)
+  ));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -120,6 +135,8 @@ export class Room extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.ctx = ctx;
+    // Serialize seat claims so simultaneous initial joins cannot claim the same seat.
+    this.joinQueue = Promise.resolve();
   }
 
   async fetch(request) {
@@ -150,6 +167,10 @@ export class Room extends DurableObject {
       const existing = await this.ctx.storage.get("room");
       if (existing) return json({ error: "Room code collision." }, 409);
       const now = Date.now();
+      // Clear stale state if a random room code is ever reused after an earlier room expired.
+      await this.ctx.storage.delete("game");
+      await this.ctx.storage.delete("seatRegistry");
+      await this.ctx.storage.put("seatRegistry", { seats: [] });
       await this.ctx.storage.put("room", {
         roomCode: data.roomCode,
         mode: details.mode,
@@ -170,6 +191,8 @@ export class Room extends DurableObject {
         try { socket.close(4000, "Room expired"); } catch {}
       }
       await this.ctx.storage.delete("room");
+      await this.ctx.storage.delete("game");
+      await this.ctx.storage.delete("seatRegistry");
       await this.ctx.storage.deleteAlarm();
       return json({ error: "Room expired. Please create a new room." }, 410);
     }
@@ -197,60 +220,16 @@ export class Room extends DurableObject {
       }, 409);
     }
 
-    const connectedSockets = this.ctx.getWebSockets().filter(ws => ws.readyState === WebSocket.OPEN);
-    if (connectedSockets.length >= room.maxPlayers) {
+    // Limit open sockets before seat authentication, including connections that have not sent "join" yet.
+    const openSockets = this.ctx.getWebSockets().filter(ws => ws.readyState === WebSocket.OPEN);
+    if (openSockets.length >= room.maxPlayers) {
       return json({ error: "Room is full." }, 409);
     }
 
-    const used = new Set(connectedSockets.map(ws => (ws.deserializeAttachment() || {}).playerNumber));
-    let playerNumber = 1;
-    while (used.has(playerNumber) && playerNumber <= room.maxPlayers) playerNumber++;
-    if (playerNumber > room.maxPlayers) return json({ error: "Room is full." }, 409);
-
     const pair = new WebSocketPair();
     const client = pair[0], server = pair[1];
-    server.serializeAttachment({ playerNumber, mode: room.mode });
+    server.serializeAttachment({ playerNumber: null, mode: room.mode });
     this.ctx.acceptWebSocket(server);
-    await this.touchRoom();
-    server.send(JSON.stringify({
-      type: "welcome",
-      playerNumber,
-      roomCode: room.roomCode,
-      mode: room.mode,
-      maxPlayers: room.maxPlayers
-    }));
-    this.broadcast({
-      type: "room_state",
-      roomCode: room.roomCode,
-      mode: room.mode,
-      maxPlayers: room.maxPlayers,
-      status: this.connectedCount() >= room.maxPlayers ? "ready" : "waiting",
-      players: this.playerList()
-    });
-
-    // Once all seats are connected, create one canonical game state inside this Durable Object.
-    // Every participant receives a player-specific view; hidden tile shapes stay server-side.
-    const connected = this.connectedCount();
-    const existingGame = await this.ctx.storage.get("game");
-    if (connected >= room.maxPlayers && !existingGame) {
-      const playerNumbers = Array.from({ length: room.maxPlayers }, (_, index) => index + 1);
-      const game = createGameState({
-        roomCode: room.roomCode,
-        mode: room.mode,
-        playerNumbers
-      });
-      await this.ctx.storage.put("game", game);
-      await this.broadcastGameState("game_started");
-    } else if (existingGame) {
-      // A returning connection must receive the authoritative current match state, not sit in the lobby.
-      // The seat may be reassigned after a disconnect; persistent seat tokens are a follow-up hardening task.
-      try {
-        server.send(JSON.stringify({
-          type: "game_started",
-          state: gameViewForPlayer(existingGame, playerNumber)
-        }));
-      } catch {}
-    }
     await this.scheduleAlarm();
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -287,14 +266,20 @@ export class Room extends DurableObject {
   }
 
   connectedCount() {
-    return this.ctx.getWebSockets().filter(ws => ws.readyState === WebSocket.OPEN).length;
+    return this.ctx.getWebSockets().filter(ws => {
+      const attachment = ws.deserializeAttachment() || {};
+      return ws.readyState === WebSocket.OPEN && Number.isInteger(attachment.playerNumber);
+    }).length;
   }
 
   playerList() {
-    return this.ctx.getWebSockets().map(ws => ({
-      playerNumber: (ws.deserializeAttachment() || {}).playerNumber,
-      connected: ws.readyState === WebSocket.OPEN
-    })).sort((a, b) => a.playerNumber - b.playerNumber);
+    return this.ctx.getWebSockets()
+      .map(ws => {
+        const attachment = ws.deserializeAttachment() || {};
+        return { playerNumber: attachment.playerNumber, connected: ws.readyState === WebSocket.OPEN };
+      })
+      .filter(player => Number.isInteger(player.playerNumber))
+      .sort((a, b) => a.playerNumber - b.playerNumber);
   }
 
   broadcast(message) {
@@ -327,6 +312,7 @@ export class Room extends DurableObject {
       }
       await this.ctx.storage.delete("room");
       await this.ctx.storage.delete("game");
+      await this.ctx.storage.delete("seatRegistry");
       await this.ctx.storage.deleteAlarm();
       return;
     }
@@ -337,6 +323,123 @@ export class Room extends DurableObject {
       await this.broadcastGameState("game_state");
     }
     await this.scheduleAlarm();
+  }
+
+  async joinSeat(ws, data) {
+    // The queue protects the persistent seat registry from overlapping WebSocket join messages.
+    let release;
+    const previousJoin = this.joinQueue;
+    this.joinQueue = new Promise(resolve => { release = resolve; });
+    await previousJoin;
+
+    try {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      const attachment = ws.deserializeAttachment() || {};
+      if (Number.isInteger(attachment.playerNumber)) {
+        ws.send(JSON.stringify({ type: "error", message: "This connection already has a player seat." }));
+        return;
+      }
+
+      const room = await this.ctx.storage.get("room");
+      if (!room) {
+        ws.send(JSON.stringify({ type: "error", message: "Room not found. Please create a new room." }));
+        return;
+      }
+
+      const suppliedToken = data.seatToken;
+      let registry = await this.ctx.storage.get("seatRegistry") || { seats: [] };
+      if (!Array.isArray(registry.seats)) registry = { seats: [] };
+
+      let seat;
+      let seatToken;
+      if (suppliedToken == null || suppliedToken === "") {
+        // A new device can claim only a seat that has never been assigned in this room.
+        // Previously assigned seats remain reserved for their token for the room's lifetime.
+        const reserved = new Set(registry.seats.map(item => item.playerNumber));
+        let playerNumber = 1;
+        while (reserved.has(playerNumber) && playerNumber <= room.maxPlayers) playerNumber++;
+        if (playerNumber > room.maxPlayers) {
+          ws.send(JSON.stringify({
+            type: "error",
+            message: "Every seat in this room has already been assigned. Reconnect from the device that first claimed your seat, or create a new room."
+          }));
+          return;
+        }
+        seatToken = newSeatToken();
+        seat = {
+          playerNumber,
+          tokenHash: await hashSeatToken(seatToken),
+          createdAt: Date.now()
+        };
+        registry.seats.push(seat);
+      } else {
+        if (typeof suppliedToken !== "string" || !/^[a-f0-9]{64}$/.test(suppliedToken)) {
+          ws.send(JSON.stringify({ type: "error", message: "The saved player session is invalid. Create a new room or clear the saved session for this room." }));
+          return;
+        }
+        const tokenHash = await hashSeatToken(suppliedToken);
+        seat = registry.seats.find(item => item.tokenHash === tokenHash);
+        if (!seat || !Number.isInteger(seat.playerNumber) ||
+            seat.playerNumber < 1 || seat.playerNumber > room.maxPlayers) {
+          ws.send(JSON.stringify({ type: "error", message: "That player session is not valid for this room. Create a new room." }));
+          return;
+        }
+        seatToken = suppliedToken;
+      }
+
+      const playerNumber = seat.playerNumber;
+      const duplicate = this.ctx.getWebSockets().some(other => {
+        if (other === ws || other.readyState !== WebSocket.OPEN) return false;
+        return (other.deserializeAttachment() || {}).playerNumber === playerNumber;
+      });
+      if (duplicate) {
+        ws.send(JSON.stringify({ type: "error", message: "That player seat is already connected on another device." }));
+        try { ws.close(1008, "Seat already connected"); } catch {}
+        return;
+      }
+
+      // Commit the seat assignment before any broadcast or game-start decision.
+      ws.serializeAttachment({ ...attachment, playerNumber, mode: room.mode });
+      await this.ctx.storage.put("seatRegistry", registry);
+      await this.touchRoom();
+      ws.send(JSON.stringify({
+        type: "welcome",
+        playerNumber,
+        seatToken,
+        roomCode: room.roomCode,
+        mode: room.mode,
+        maxPlayers: room.maxPlayers
+      }));
+      this.broadcast({
+        type: "room_state",
+        roomCode: room.roomCode,
+        mode: room.mode,
+        maxPlayers: room.maxPlayers,
+        status: this.connectedCount() >= room.maxPlayers ? "ready" : "waiting",
+        players: this.playerList()
+      });
+
+      // Once all assigned seats are connected, create the one canonical game state.
+      const connected = this.connectedCount();
+      const existingGame = await this.ctx.storage.get("game");
+      if (connected >= room.maxPlayers && !existingGame) {
+        const playerNumbers = Array.from({ length: room.maxPlayers }, (_, index) => index + 1);
+        const game = createGameState({ roomCode: room.roomCode, mode: room.mode, playerNumbers });
+        await this.ctx.storage.put("game", game);
+        await this.broadcastGameState("game_started");
+      } else if (existingGame) {
+        // A returning device receives the canonical state for its original seat.
+        try {
+          ws.send(JSON.stringify({
+            type: "game_started",
+            state: gameViewForPlayer(existingGame, playerNumber)
+          }));
+        } catch {}
+      }
+      await this.scheduleAlarm();
+    } finally {
+      release();
+    }
   }
 
   async webSocketMessage(ws, message) {
@@ -366,6 +469,17 @@ export class Room extends DurableObject {
       ws.send(JSON.stringify({ type: "error", message: "Messages must be JSON." }));
       return;
     }
+    if (data?.type === "join") {
+      await this.joinSeat(ws, data);
+      return;
+    }
+
+    const joinedAttachment = ws.deserializeAttachment() || {};
+    if (!Number.isInteger(joinedAttachment.playerNumber)) {
+      ws.send(JSON.stringify({ type: "error", message: "Join your player seat before sending game actions." }));
+      return;
+    }
+
     if (data?.type === "ping") {
       ws.send(JSON.stringify({ type: "pong", at: Date.now() }));
       return;
@@ -407,6 +521,7 @@ export class Room extends DurableObject {
   async webSocketClose(ws) {
     const attachment = ws.deserializeAttachment() || {};
     await this.touchRoom();
+    if (!Number.isInteger(attachment.playerNumber)) return;
     const room = await this.ctx.storage.get("room");
     this.broadcast({
       type: "player_disconnected",
