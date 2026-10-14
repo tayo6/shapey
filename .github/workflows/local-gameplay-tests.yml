@@ -1,0 +1,34 @@
+name: Local gameplay regression tests
+
+on:
+  pull_request:
+    paths:
+      - "src/main.js"
+      - "src/rules.js"
+      - "staging/main.js"
+      - "tests/rules.test.js"
+      - ".github/workflows/local-gameplay-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  local-gameplay:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Test pure game rules including Star streak rewards
+        run: node --test tests/rules.test.js
+
+      - name: Check live frontend JavaScript syntax
+        run: node --check src/main.js
+
+      - name: Check staging frontend JavaScript syntax
+        run: node --check staging/main.js
