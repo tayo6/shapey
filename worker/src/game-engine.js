@@ -341,16 +341,16 @@ function applyHazardBlast(state, hazard, now, rng) {
 function resolvePendingEffect(state, now, rng) {
   const pending = state.pendingEffect;
   if (!pending || pending.endsAt > now) return false;
+  // Clear the lock before resolving the effect so the room never remains permanently blocked.
+  state.pendingEffect = null;
   if (pending.type === "mismatch") {
     clearSelection(state, true);
     endTurn(state, now, { matched: false });
   } else if (pending.type === "hazard-hit") {
     const tile = tileById(state, pending.tileId);
     if (tile) tile.faceUp = false;
-    state.pendingEffect = null;
   } else if (pending.type === "cancel-dummy") {
     clearSelection(state, true);
-    state.pendingEffect = null;
   }
   return true;
 }
