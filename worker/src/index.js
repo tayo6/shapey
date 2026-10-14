@@ -203,6 +203,15 @@ export class Room extends DurableObject {
       });
       await this.ctx.storage.put("game", game);
       await this.broadcastGameState("game_started");
+    } else if (existingGame) {
+      // A returning connection must receive the authoritative current match state, not sit in the lobby.
+      // The seat may be reassigned after a disconnect; persistent seat tokens are a follow-up hardening task.
+      try {
+        server.send(JSON.stringify({
+          type: "game_started",
+          state: gameViewForPlayer(existingGame, playerNumber)
+        }));
+      } catch {}
     }
     await this.scheduleAlarm();
     return new Response(null, { status: 101, webSocket: client });
