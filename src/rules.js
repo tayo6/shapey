@@ -34,14 +34,14 @@
   }
 
   // Advance or reset the consecutive successful-turn streak. The 3rd, 4th, 5th, etc.
-  // successful matching turns award 3, 4, 5, ... Stars, once per streak length.
+  // successful matching turns award 1, 2, 3, ... bonus Stars, once per streak length.
   function nextMatchStreak(streak, lastRewardedStreak, matched) {
     if (!matched) return { streak: 0, lastRewardedStreak: 0, reward: 0 };
     const current = Number.isInteger(streak) && streak > 0 ? streak : 0;
     const rewarded = Number.isInteger(lastRewardedStreak) && lastRewardedStreak >= 0
       ? lastRewardedStreak : 0;
     const next = current + 1;
-    const reward = next >= 3 && next > rewarded ? next : 0;
+    const reward = next >= 3 && next > rewarded ? next - 2 : 0;
     return {
       streak: next,
       lastRewardedStreak: reward > 0 ? next : rewarded,
