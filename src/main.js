@@ -727,7 +727,8 @@ class GameScene extends Phaser.Scene {
   create() {
     this.scores = [0, 0];      // one score per player
     this.activePlayer = 0;     // 0 = Player 1, 1 = Player 2
-    this.selection = [];      // tiles the player has picked, in order
+    this.selection = [];      // actual shapes picked for the current attempt
+    this.dummySelection = [];  // Dummies stay face-up during the attempt but never count as shapes
     this.selectedShape = null; // the shape the current attempt is matching
     this.busy = false;        // true while animations run (input is ignored)
     this.names = this.modeCfg.teams ? ['TEAM 1', 'TEAM 2']
@@ -1474,17 +1475,34 @@ class GameScene extends Phaser.Scene {
     // A hazard flipped while other shapes are picked destroys them all (no reward); on its own it costs points.
     if (tile.shape === 'hazard') {
       // Play alone: a hazard always blasts (and is free). Other modes: only when shapes are already picked.
-      if (RULES.hazardAction(this.modeCfg.twoPlayers, this.selection.length) === 'blast') this.hazardBlast(tile);
+      // A picked Dummy is neutral for matching/scoring, but a Hazard still destroys it with the attempt.
+      if (RULES.hazardAction(this.modeCfg.twoPlayers, this.selection.length + this.dummySelection.length) === 'blast') this.hazardBlast(tile);
       else this.hazardHit(tile);
       return;
     }
 
-    // A blank wooden dummy is revealed briefly, but is otherwise as if it
-    // had not been picked: it never joins or resets the current selection.
+    // Dummy stays face-up until this attempt resolves. It is tracked separately so it cannot
+    // set the match shape, count toward a match, trigger a mismatch, or affect the score.
     if (tile.shape === 'dummy') {
+      tile.selected = true; // keeps the picked Dummy from shuffling or being auto-hidden
+      this.dummySelection.push(tile);
+      this.addRing(tile);
       this.flipTile(tile, true);
-      this.time.delayedCall(1100, () => {
-        if (tile.active && !tile.selected) this.flipTile(tile, false);
+      return;
+    }
+
+    // Cancel + one or more Dummies is a neutral cancelled attempt: reveal Cancel, then flip both
+    // it and the Dummies down without awarding or deducting points.
+    if (tile.shape === 'cancel' && this.selection.length === 0 && this.dummySelection.length > 0) {
+      this.busy = true;
+      tile.selected = true;
+      this.selection.push(tile);
+      this.selectedShape = tile.shape;
+      this.addRing(tile);
+      this.flipTile(tile, true).then(async () => {
+        await this.sleep(350);
+        await this.resetSelection();
+        this.busy = false;
       });
       return;
     }
@@ -1522,8 +1540,9 @@ class GameScene extends Phaser.Scene {
   async hazardBlast(hazard) {
     this.busy = true;
     this.cancelShuffles(); // the board is about to change: stop any shuffle and settle the swap in progress
-    const tiles = [...this.selection, hazard];
+    const tiles = [...this.selection, ...this.dummySelection, hazard];
     this.selection = [];
+    this.dummySelection = [];
     this.selectedShape = null;
     hazard.selected = true; // nothing else may pick it while it is being destroyed
     await this.flipTile(hazard, true);
@@ -1561,11 +1580,25 @@ class GameScene extends Phaser.Scene {
     if (!this.modeCfg.twoPlayers) this.applyPenalty(ALONE_MISS_PENALTY);
   }
 
-  // Flip every picked tile back to mystery, one after the other.
+  // Flip actual picked shapes and neutral Dummies back down when an attempt is cancelled or fails.
   async resetSelection() {
-    const tiles = this.selection;
+    const tiles = [...this.selection, ...this.dummySelection];
     this.selection = [];
+    this.dummySelection = [];
     this.selectedShape = null;
+    await Promise.all(
+      tiles.map(async (tile, i) => {
+        await this.flipTile(tile, false, i * 140);
+        tile.selected = false;
+        this.removeRing(tile);
+      })
+    );
+  }
+
+  // A successful match destroys only the matched shapes; picked Dummies simply flip back down.
+  async resetDummies() {
+    const tiles = this.dummySelection;
+    this.dummySelection = [];
     await Promise.all(
       tiles.map(async (tile, i) => {
         await this.flipTile(tile, false, i * 140);
@@ -1595,6 +1628,7 @@ class GameScene extends Phaser.Scene {
     await Promise.all(tiles.map((t) => t.flipChain)); // let any flips finish
     this.selection = [];
     this.selectedShape = null;
+    await this.resetDummies(); // Dummies never get destroyed or counted as part of a successful match.
 
     const points = RULES.scoreFor(tiles.length);
     this.addScore(points);
@@ -1877,12 +1911,13 @@ class GameScene extends Phaser.Scene {
 
     // How many tiles it reaches for: 5 (the 5+ score) for Professional, 3 or sometimes 4 for Easy.
     const goal = this.ai.goBig ? 5 : (Math.random() < 0.3 ? 4 : MIN_MATCH);
-    while (alive() && this.selection.length > 0) {
-      const known = this.aiKnown(this.selectedShape);
+    while (alive() && (this.selection.length > 0 || this.dummySelection.length > 0)) {
       const have = this.selection.length;
+      const known = have ? this.aiKnown(this.selectedShape) : [];
       // Once it has a match it only keeps going while it remembers more tiles of that shape and has time to spare.
       if (have >= MIN_MATCH && (have >= goal || !known.length || this.turnClock.remaining() < AI_SPARE_MS)) break;
-      const next = known.length ? randomItem(known) : this.aiGuess(this.selectedShape);
+      // A first pick may be a Dummy; the AI keeps picking because Dummies do not count as a shape.
+      const next = have === 0 ? this.aiGuess() : (known.length ? randomItem(known) : this.aiGuess(this.selectedShape));
       if (!next || !(await this.aiTap(next, alive))) break;
     }
     if (!alive()) return false;
