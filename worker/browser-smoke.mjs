@@ -12,8 +12,8 @@ async function clickWorld(page, x, y) {
   await page.mouse.click(box.x + x * box.width / 720, box.y + y * box.height / 1280);
 }
 
-async function waitForScene(page, predicate, description, timeout = TIMEOUT) {
-  await page.waitForFunction(predicate, null, { timeout }).catch(async (error) => {
+async function waitForScene(page, predicate, description, timeout = TIMEOUT, arg = null) {
+  await page.waitForFunction(predicate, arg, { timeout }).catch(async (error) => {
     const info = await page.evaluate(() => ({
       url: location.href,
       activeScenes: window.game?.scene?.getScenes(true).map((scene) => scene.scene.key),
@@ -117,13 +117,10 @@ async function run() {
     for (let index = 0; index < cellPositions.length; index++) {
       const tile = cellPositions[index];
       await clickWorld(page1, tile.x, tile.y);
-      await waitForScene(page1, (n) => {
+      await waitForScene(page1, (expected) => {
         const state = window.game?.scene?.getScene("GameScene")?.onlineState;
-        return state?.selectedTileIds?.length === n;
-      }, "server-confirmed tile selection " + (index + 1), 10_000).catch((error) => {
-        // The expected selection size is passed in separately below by retrying with the concrete predicate.
-        throw error;
-      });
+        return state?.selectedTileIds?.length === expected;
+      }, "server-confirmed tile selection " + (index + 1), 10_000, index + 1);
     }
 
     await clickWorld(page1, 296, 1141); // Submit button on the existing 720 × 1280 board.
