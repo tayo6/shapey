@@ -1629,7 +1629,7 @@ class GameScene extends Phaser.Scene {
           this.tweens.add({ targets: tile, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
           if (tile.ring) {
             this.tweens.killTweensOf(tile.ring);
-            this.tweens.add({ targets: tile.ring, x: targetX, y: targetY, duration: initial ? 0 : 240, ease: 'Sine.easeInOut' });
+            this.tweens.add({ targets: tile.ring, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
           }
         }
         tile.row = viewTile.row;
