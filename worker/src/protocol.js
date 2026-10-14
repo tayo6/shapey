@@ -6,6 +6,9 @@ export const ALLOWED_ORIGINS = Object.freeze([
 
 export const ROOM_IDLE_TTL_MS = 30 * 60 * 1000;
 export const ROOM_MAX_LIFETIME_MS = 6 * 60 * 60 * 1000;
+export const MESSAGE_RATE_WINDOW_MS = 10 * 1000;
+export const MESSAGE_RATE_LIMIT = 60;
+export const MAX_MESSAGE_BYTES = 4096;
 
 export function isAllowedOrigin(origin) {
   return typeof origin === "string" && ALLOWED_ORIGINS.includes(origin);
@@ -19,6 +22,33 @@ export function modeDetails(mode) {
 
 export function isRoomCode(value) {
   return typeof value === "string" && /^[A-Z0-9]{6}$/.test(value);
+}
+
+export function messageByteLength(message) {
+  if (typeof message === "string") return new TextEncoder().encode(message).byteLength;
+  if (message instanceof ArrayBuffer) return message.byteLength;
+  if (ArrayBuffer.isView(message)) return message.byteLength;
+  return Infinity;
+}
+
+export function nextMessageRateState(attachment, now) {
+  const startedAt = attachment?.messageWindowStartedAt;
+  const count = attachment?.messageCount;
+  if (!Number.isFinite(startedAt) || !Number.isFinite(count) ||
+      now < startedAt || now - startedAt >= MESSAGE_RATE_WINDOW_MS) {
+    return {
+      allowed: true,
+      messageWindowStartedAt: now,
+      messageCount: 1,
+    };
+  }
+
+  const nextCount = count + 1;
+  return {
+    allowed: nextCount <= MESSAGE_RATE_LIMIT,
+    messageWindowStartedAt: startedAt,
+    messageCount: nextCount,
+  };
 }
 
 export function roomExpiryDeadline(room, now, connectedCount) {
