@@ -610,7 +610,7 @@ class MenuScene extends Phaser.Scene {
           return;
         }
         if (count >= maxPlayers) {
-          this.setOnlineStatus('All ' + maxPlayers + ' players connected! Gameplay synchronization is the next step.');
+          this.setOnlineStatus('All ' + maxPlayers + ' players connected. Starting the match...');
         } else {
           this.setOnlineStatus(count + '/' + maxPlayers + ' players connected. Share the code with your friend/team.');
         }
@@ -618,6 +618,8 @@ class MenuScene extends Phaser.Scene {
         const maxPlayers = message.maxPlayers || (mode === 'tag' ? 4 : 2);
         const count = (message.players || []).filter((player) => player.connected).length;
         this.setOnlineStatus('A player disconnected (' + count + '/' + maxPlayers + ' connected). They can rejoin with this code.');
+      } else if (message.type === 'game_started' && message.state) {
+        this.launchOnlineGame(code, mode, socket, message.state);
       } else if (message.type === 'error') {
         this.setOnlineStatus(message.message || 'The room reported an error.');
       }
@@ -629,6 +631,30 @@ class MenuScene extends Phaser.Scene {
       if (this.onlineSocket === socket && this.onlineUI && this.onlineUI.length) {
         this.setOnlineStatus('Disconnected. You can create or join a room again.');
       }
+    });
+  }
+
+  launchOnlineGame(code, mode, socket, initialState) {
+    if (!initialState || !socket) {
+      this.setOnlineStatus('The room could not start a match. Please create a new room.');
+      return;
+    }
+    const playerNumber = this.onlinePlayerNumber;
+    // Preserve the WebSocket while this scene changes from the lobby to the game board.
+    this.onlineSocket = null;
+    this.onlineStatus = null;
+    this.onlineUI = [];
+    this.onlineCopyUI = null;
+    this.onlineRoomCodeText = null;
+    this.currentRoomCode = null;
+    this.onlineMode = null;
+    this.scene.start('GameScene', {
+      mode,
+      online: true,
+      onlineSocket: socket,
+      onlinePlayerNumber: playerNumber,
+      onlineRoomCode: code,
+      onlineState: initialState
     });
   }
 
@@ -678,6 +704,11 @@ class GameScene extends Phaser.Scene {
   }
 
   init(data) {
+    this.online = Boolean(data && data.online);
+    this.onlineSocket = (data && data.onlineSocket) || null;
+    this.onlinePlayerNumber = (data && data.onlinePlayerNumber) || null;
+    this.onlineRoomCode = (data && data.onlineRoomCode) || null;
+    this.onlineState = (data && data.onlineState) || null;
     this.mode = (data && data.mode) || START_MODE || 'pvp';
     this.modeCfg = MODES[this.mode];
     // Player vs AI difficulty comes from the picker (or ?level=pro for testing); Easy is the default.
@@ -735,24 +766,37 @@ class GameScene extends Phaser.Scene {
     this.createBottomButtons();
     this.createFx();
     this.createBoard();
-    this.startTurn(0);
-    if (!this.modeCfg.twoPlayers) {
-      this.updateAloneHUD();
-      this.showToast('No timer. You lose when your score reaches ' + ALONE_SCORE_FLOOR + '.', 4000);
-    } else if (this.modeCfg.teams) {
-      this.showToast('Tag: partners tag in on every other turn.\n' + this.turnLabel() + ' starts.', 4000);
+    if (this.online) {
+      this.attachOnlineSocket();
+      this.showToast('Online match connected. Waiting for the server state.', 3200);
+      this.events.once('shutdown', () => {
+        if (this.onlineSocket) {
+          try { this.onlineSocket.close(); } catch {}
+          this.onlineSocket = null;
+        }
+      });
+    } else {
+      this.startTurn(0);
+      if (!this.modeCfg.twoPlayers) {
+        this.updateAloneHUD();
+        this.showToast('No timer. You lose when your score reaches ' + ALONE_SCORE_FLOOR + '.', 4000);
+      } else if (this.modeCfg.teams) {
+        this.showToast('Tag: partners tag in on every other turn.\\n' + this.turnLabel() + ' starts.', 4000);
+      }
     }
   }
 
   // Runs every frame: flips tiles whose reveal is over, redraws both clocks, and ends the turn on timeout.
   update() {
     if (!this.turnClock) return;
-    this.hideFinishedReveals();
-    this.healStuckTiles();
+    if (!this.online) {
+      this.hideFinishedReveals();
+      this.healStuckTiles();
+    }
     this.refreshClocks();
-    // Let an in-flight animation finish, then resolve the deadline once. A ready match is auto-submitted;
-    // otherwise the current selection is cleared and the turn passes.
-    if (this.modeCfg.turnClock && !this.turnEnding && !this.timeoutHandling && this.turnClock.expired() && !this.busy) {
+    // The online server resolves expired turns and broadcasts the accepted state.
+    // Local play resolves its own deadline after any in-flight animation finishes.
+    if (!this.online && this.modeCfg.turnClock && !this.turnEnding && !this.timeoutHandling && this.turnClock.expired() && !this.busy) {
       this.timeoutHandling = true;
       this.submit(this.isAITurn(), true);
     }
@@ -880,7 +924,11 @@ class GameScene extends Phaser.Scene {
       ? formatClock(Math.min(this.currentTurnDurationMs || this.turnDurationMs, this.turnClock.remaining())) : '';
     if (this.modeCfg.turnClock) this.setClockText(this.timerText, turnLeft);
 
-    const revealLeft = this.reveals.remaining();
+    const revealLeft = this.online && this.onlineState
+      ? Math.max(0, ...((this.onlineState.reveals || []).map((batch) => batch.endsAt - Date.now())),
+          this.onlineState.status === 'study' && Number.isFinite(this.onlineState.reviewEndsAt)
+            ? this.onlineState.reviewEndsAt - Date.now() : 0)
+      : this.reveals.remaining();
     this.revealText.setVisible(revealLeft > 0 || this.shuffling > 0);
     // Play alone has no countdown at all: the cue stays, the numbers go.
     if (revealLeft > 0) this.setClockText(this.revealText, this.modeCfg.turnClock ? 'MEMORIZE ' + formatClock(revealLeft) : 'MEMORIZE');
@@ -1025,7 +1073,7 @@ class GameScene extends Phaser.Scene {
     woodButton(this, GAME_WIDTH / 2, 645, 440, 90, 'RESTART', 36,
       () => this.scene.restart({ mode: this.mode, difficulty: this.difficulty }), 252).forEach(add);
     woodButton(this, GAME_WIDTH / 2, 760, 440, 90, 'MAIN MENU', 36,
-      () => this.scene.start('MenuScene'), 252).forEach(add);
+      () => this.online ? this.leaveOnlineMatch() : this.scene.start('MenuScene'), 252).forEach(add);
     if (this.modeCfg.turnClock) {
       add(this.add.text(GAME_WIDTH / 2, 850, 'The turn clock keeps running.', {
         fontFamily: FONT, fontSize: '20px', color: '#ffe9b8',
@@ -1037,6 +1085,15 @@ class GameScene extends Phaser.Scene {
     this.panelUI.forEach((object) => object.destroy());
     this.panelUI = [];
     this.panelOpen = false;
+  }
+
+  leaveOnlineMatch() {
+    if (this.onlineSocket) {
+      const socket = this.onlineSocket;
+      this.onlineSocket = null;
+      try { socket.close(); } catch {}
+    }
+    this.scene.start('MenuScene');
   }
 
   // ---------------------------------------------------------- inventory/shop
@@ -1186,6 +1243,14 @@ class GameScene extends Phaser.Scene {
       }).setOrigin(0, 0.5);
       this.addInventoryUI(owned);
 
+      if (this.online && !['extraTime', 'doublePlay'].includes(offer.key)) {
+        const notice = this.add.text(554, y - 5, 'COMING SOON\\nONLINE', {
+          fontFamily: FONT, fontSize: '18px', color: '#fff0c7', align: 'center',
+        }).setOrigin(0.5);
+        this.addInventoryUI(notice);
+        return;
+      }
+
       if (['audiencePick', 'extraTime', 'doublePlay'].includes(offer.key) && ownedCount > 0) {
         const canUse = offer.key === 'extraTime'
           ? this.modeCfg.turnClock && !this.turnClock.expired() && !this.turnEnding && !this.isAITurn()
@@ -1203,6 +1268,12 @@ class GameScene extends Phaser.Scene {
         if (canUse) {
           useBg.setInteractive({ useHandCursor: true });
           useBg.on('pointerdown', () => {
+            if (this.online) {
+              const itemKey = offer.key;
+              this.closeInventory();
+              this.sendOnlineAction({ type: 'useItem', itemKey });
+              return;
+            }
             const count = Number(this.inventoryItems[offer.key] || 0);
             if (count < 1) return;
             if (offer.key === 'audiencePick') {
@@ -1251,6 +1322,10 @@ class GameScene extends Phaser.Scene {
       if (this.starBalance >= offer.price) {
         buyBg.setInteractive({ useHandCursor: true });
         buyBg.on('pointerdown', () => {
+          if (this.online) {
+            this.sendOnlineAction({ type: 'buyItem', itemKey: offer.key });
+            return;
+          }
           if (this.starBalance < offer.price) return;
           this.starBalance -= offer.price;
           this.inventoryItems[offer.key] = Number(this.inventoryItems[offer.key] || 0) + 1;
@@ -1400,6 +1475,13 @@ class GameScene extends Phaser.Scene {
     );
     this.boardMask = maskGfx.createGeometryMask();
 
+    if (this.online) {
+      this.tiles = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
+      this.onlineTilesById = new Map();
+      this.applyOnlineState(this.onlineState, true);
+      return;
+    }
+
     const layout = makeInitialBoard(this.hazardChance);
     this.tiles = [];
     const all = [];
@@ -1413,6 +1495,154 @@ class GameScene extends Phaser.Scene {
     }
     all.forEach((tile) => this.aiSee(tile)); // the AI studies the board too (and forgets about half of it)
     this.startReview(all, REVIEW_MS, false); // study phase: everything face-up for 15s, then flip to mystery (no shuffle)
+  }
+
+  createOnlineTile(viewTile) {
+    const visualShape = viewTile.faceUp && viewTile.shape ? viewTile.shape : 'mystery';
+    const tile = this.createTile(visualShape, viewTile.row, viewTile.col,
+      this.cellX(viewTile.col), this.cellY(viewTile.row));
+    tile.serverId = viewTile.id;
+    tile.shape = viewTile.faceUp ? viewTile.shape : null;
+    tile.faceUp = Boolean(viewTile.faceUp);
+    tile.onlineDesiredFaceUp = Boolean(viewTile.faceUp);
+    tile.selected = Boolean(viewTile.selected);
+    tile.moving = Boolean(viewTile.moving);
+    tile.upSince = 0;
+    tile.setTexture('shape_' + visualShape);
+    if (tile.selected) this.addRing(tile);
+    else this.removeRing(tile);
+    return tile;
+  }
+
+  attachOnlineSocket() {
+    const socket = this.onlineSocket;
+    if (!socket) return;
+    socket.addEventListener('message', (event) => {
+      let message;
+      try { message = JSON.parse(event.data); } catch { return; }
+      if (message.type === 'game_state' && message.state) {
+        this.applyOnlineState(message.state);
+      } else if (message.type === 'error') {
+        this.showToast(message.message || 'The server rejected that action.', 3000);
+      } else if (message.type === 'player_disconnected') {
+        this.showToast('A player disconnected. Waiting for them to reconnect.', 3500);
+      }
+    });
+    socket.addEventListener('close', () => {
+      if (this.online && !this.gameOver) this.showToast('Connection lost. Return to the main menu and reconnect.', 4500);
+    });
+  }
+
+  sendOnlineAction(action) {
+    if (!this.online || !this.onlineSocket || this.onlineSocket.readyState !== WebSocket.OPEN) {
+      this.showToast('You are disconnected. Please reconnect to the room.', 3000);
+      return false;
+    }
+    const state = this.onlineState;
+    if (!state || state.status !== 'playing' || state.pendingEffect) return false;
+    if (state.activePlayerNumber !== this.onlinePlayerNumber) return false;
+    try {
+      this.onlineSocket.send(JSON.stringify({ type: 'game_action', action }));
+      return true;
+    } catch (_) {
+      this.showToast('Could not send the action. Please reconnect.', 3000);
+      return false;
+    }
+  }
+
+  applyOnlineState(state, initial = false) {
+    if (!this.online || !state) return;
+    const oldInventorySignature = this.onlineInventorySignature || '';
+    this.onlineState = state;
+    this.scores = Array.isArray(state.scores) ? state.scores.slice() : [0, 0];
+    this.activePlayer = Number.isInteger(state.activeSide) ? state.activeSide : 0;
+    this.turnNumber = Number.isInteger(state.turnIndex) ? state.turnIndex : 0;
+    this.activeMember = this.modeCfg.teams ? Math.floor(this.turnNumber / 2) % 2 : 0;
+    this.isBonusTurn = Boolean(state.isBonusTurn);
+    this.doublePlayPendingPlayer = state.doublePlayPendingPlayer ?? null;
+    this.turnClock.endsAt = Number.isFinite(state.turnEndsAt) ? state.turnEndsAt : Infinity;
+    this.currentTurnDurationMs = this.isBonusTurn ? TURN_MS : this.turnDurationMs;
+    this.updateActivePlayerUI();
+    this.p1Score.setText(String(this.scores[0] || 0));
+    this.p2Score.setText(String(this.scores[1] || 0));
+    if (this.modeCfg.teams && this.goalText && this.goalText.active) {
+      this.goalText.setText(this.turnLabel().toUpperCase());
+    }
+
+    if (state.me) {
+      this.starBalance = Math.max(0, Number(state.me.stars) || 0);
+      this.inventoryItems = { ...(state.me.inventory || {}) };
+      this.onlineInventorySignature = JSON.stringify({ stars: this.starBalance, inventory: this.inventoryItems });
+      this.updateStarDisplays();
+    }
+
+    const previous = this.onlineTilesById || new Map();
+    const nextById = new Map();
+    const nextGrid = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
+    for (const viewTile of (state.tiles || [])) {
+      let tile = previous.get(viewTile.id);
+      const targetX = this.cellX(viewTile.col);
+      const targetY = this.cellY(viewTile.row);
+      if (!tile || !tile.active) {
+        tile = this.createOnlineTile(viewTile);
+      } else {
+        if (Math.abs(tile.x - targetX) > 0.5 || Math.abs(tile.y - targetY) > 0.5) {
+          this.tweens.killTweensOf(tile);
+          this.tweens.add({ targets: tile, x: targetX, y: targetY, duration: initial ? 0 : 240, ease: 'Sine.easeInOut' });
+          if (tile.ring) {
+            this.tweens.killTweensOf(tile.ring);
+            this.tweens.add({ targets: tile.ring, x: targetX, y: targetY, duration: initial ? 0 : 240, ease: 'Sine.easeInOut' });
+          }
+        }
+        tile.row = viewTile.row;
+        tile.col = viewTile.col;
+        if (viewTile.faceUp && viewTile.shape) {
+          tile.shape = viewTile.shape;
+          if (tile.onlineDesiredFaceUp !== true) {
+            tile.onlineDesiredFaceUp = true;
+            this.flipTile(tile, true);
+          } else if (tile.faceUp) {
+            tile.setTexture('shape_' + viewTile.shape);
+          }
+        } else {
+          if (tile.onlineDesiredFaceUp !== false) {
+            tile.onlineDesiredFaceUp = false;
+            this.flipTile(tile, false);
+            tile.shape = null;
+          } else if (!tile.faceUp) {
+            tile.shape = null;
+            tile.setTexture('shape_mystery');
+          }
+        }
+        tile.selected = Boolean(viewTile.selected);
+        tile.moving = Boolean(viewTile.moving);
+        if (tile.selected) {
+          if (!tile.ring) this.addRing(tile);
+        } else {
+          this.removeRing(tile);
+        }
+      }
+      tile.serverId = viewTile.id;
+      tile.moving = Boolean(viewTile.moving);
+      nextById.set(viewTile.id, tile);
+      if (nextGrid[viewTile.row]) nextGrid[viewTile.row][viewTile.col] = tile;
+    }
+    for (const [id, oldTile] of previous.entries()) {
+      if (nextById.has(id)) continue;
+      this.removeRing(oldTile);
+      if (oldTile.active) oldTile.destroy();
+    }
+    this.tiles = nextGrid;
+    this.onlineTilesById = nextById;
+
+    if (this.inventoryOpen && oldInventorySignature &&
+        oldInventorySignature !== (this.onlineInventorySignature || '')) {
+      this.renderInventory();
+    }
+    if (state.status === 'finished' && !this.gameOver) {
+      this.activePlayer = Number.isInteger(state.winnerSide) ? state.winnerSide : this.activePlayer;
+      this.endGame('First to ' + state.targetScore + ' points wins.');
+    }
   }
 
   // A new tile, created face-up.
@@ -1597,6 +1827,11 @@ class GameScene extends Phaser.Scene {
   }
 
   onTileTap(tile, fromAI = false) {
+    if (this.online) {
+      if (!tile || !tile.active || !tile.serverId || this.gameOver) return;
+      this.sendOnlineAction({ type: 'pick', tileId: tile.serverId });
+      return;
+    }
     // Taps are ignored during hand-over, once the turn clock has run out, after game over and while a
     // menu is open. Tiles in the middle of a swap can't be tapped, and a human can't tap during the AI's turn.
     if (this.busy || this.turnEnding || this.gameOver || this.turnClock.expired() || !tile.active || tile.selected || tile.swapping || tile.faceUp) return; // a face-up tile can't be picked: a shape is only revealed by the player's own flip
@@ -1745,6 +1980,10 @@ class GameScene extends Phaser.Scene {
 
   // -------------------------------------------------------------- submit
   async submit(fromAI = false, forced = false) {
+    if (this.online) {
+      this.sendOnlineAction({ type: 'submit' });
+      return;
+    }
     // A late submit is normally ignored. Forced is used only by the turn deadline to resolve a pick.
     if (this.busy || this.turnEnding || this.gameOver || (this.turnClock.expired() && !forced)) return;
     if (!forced && !fromAI && (this.panelOpen || this.isAITurn())) return;
@@ -1858,8 +2097,8 @@ class GameScene extends Phaser.Scene {
         '\nTarget: ' + this.modeCfg.targetScore
       : 'Score: ' + this.scores[0] + '\nAttempts: ' + this.totalAttempts;
     text(600, summary, 40, '#ffe36e');
-    woodButton(this, GAME_WIDTH / 2, 810, 500, 110, 'PLAY AGAIN', 44,
-      () => this.scene.restart({ mode: this.mode, difficulty: this.difficulty }), 301);
+    woodButton(this, GAME_WIDTH / 2, 810, 500, 110, this.online ? 'NEW ONLINE ROOM' : 'PLAY AGAIN', 44,
+      () => this.online ? this.leaveOnlineMatch() : this.scene.restart({ mode: this.mode, difficulty: this.difficulty }), 301);
     woodButton(this, GAME_WIDTH / 2, 950, 500, 110, 'MAIN MENU', 44, () => this.scene.start('MenuScene'), 301);
   }
 
