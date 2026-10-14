@@ -874,7 +874,7 @@ class GameScene extends Phaser.Scene {
   showTurnToast(message, holdMs = 2600) {
     const reward = this.pendingStreakToast;
     this.pendingStreakToast = null;
-    this.showToast(reward ? reward + '\\n' + message : message, reward ? 3600 : holdMs);
+    this.showToast(reward ? reward + ' · ' + message : message, reward ? 3600 : holdMs);
   }
 
   // ------------------------------------------------------- clocks and turns
