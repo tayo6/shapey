@@ -777,6 +777,8 @@ class GameScene extends Phaser.Scene {
     this.aiMemory = new Map();       // tile -> shape the AI believes it is
     this.aiRecall = this.ai.recall[0] + Math.random() * (this.ai.recall[1] - this.ai.recall[0]);
     this.starBalance = this.loadStarBalance();
+    // Track streaks per player seat even though the local prototype shares its Star wallet.
+    this.matchStreaks = new Map();
     this.inventoryItems = this.loadInventoryItems();
     this.inventoryUI = [];
     this.inventoryOpen = false;
@@ -1015,6 +1017,7 @@ class GameScene extends Phaser.Scene {
   async endTurn(reason) {
     if (this.turnEnding || this.gameOver) return;
     this.turnEnding = true; // from here on, late taps and submits are ignored
+    if (reason !== 'match') this.breakLocalMatchStreak();
     if (this.inventoryOpen) this.closeInventory();
     if (this.panelOpen) this.closePanel();
     this.closeAudiencePoll();
@@ -1175,6 +1178,24 @@ class GameScene extends Phaser.Scene {
     if (this.p2Stars && this.p2Stars[1] && this.p2Stars[1].active) {
       this.p2Stars[1].setText('*' + (this.modeCfg.ai ? 0 : this.starBalance));
     }
+  }
+
+  // The 3rd consecutive successful turn earns 3 Stars; later streak lengths earn their number.
+  advanceLocalMatchStreak() {
+    if (!this.modeCfg.twoPlayers) return; // Play Alone has no turn streak.
+    const slot = this.limiterSlot();
+    const current = this.matchStreaks.get(slot) || { streak: 0, lastRewardedStreak: 0 };
+    const next = RULES.nextMatchStreak(current.streak, current.lastRewardedStreak, true);
+    this.matchStreaks.set(slot, next);
+    if (!next.reward || (this.modeCfg.ai && this.activePlayer === 1)) return;
+    this.starBalance += next.reward;
+    this.saveInventory();
+    this.showToast(next.streak + '-match streak! +' + next.reward + ' Stars', 3200);
+  }
+
+  breakLocalMatchStreak() {
+    if (!this.modeCfg.twoPlayers) return;
+    this.matchStreaks.set(this.limiterSlot(), RULES.nextMatchStreak(0, 0, false));
   }
 
   clearInventoryUI() {
@@ -1602,6 +1623,9 @@ class GameScene extends Phaser.Scene {
   applyOnlineState(state, initial = false) {
     if (!this.online || !state) return;
     const oldInventorySignature = this.onlineInventorySignature || '';
+    const previousOnlineStars = this.onlineState && this.onlineState.me &&
+      Number.isFinite(Number(this.onlineState.me.stars))
+      ? Number(this.onlineState.me.stars) : null;
     this.onlineState = state;
     this.scores = Array.isArray(state.scores) ? state.scores.slice() : [0, 0];
     this.activePlayer = Number.isInteger(state.activeSide) ? state.activeSide : 0;
@@ -1621,10 +1645,16 @@ class GameScene extends Phaser.Scene {
     }
 
     if (state.me) {
-      this.starBalance = Math.max(0, Number(state.me.stars) || 0);
+      const nextOnlineStars = Math.max(0, Number(state.me.stars) || 0);
+      const starReward = previousOnlineStars == null ? 0 : nextOnlineStars - previousOnlineStars;
+      this.starBalance = nextOnlineStars;
       this.inventoryItems = { ...(state.me.inventory || {}) };
       this.onlineInventorySignature = JSON.stringify({ stars: this.starBalance, inventory: this.inventoryItems });
       this.updateStarDisplays();
+      if (starReward > 0) {
+        const streak = Math.max(3, Number(state.me.streak) || 3);
+        this.showToast(streak + '-match streak! +' + starReward + ' Stars', 3200);
+      }
     }
 
     const previous = this.onlineTilesById || new Map();
@@ -1636,13 +1666,29 @@ class GameScene extends Phaser.Scene {
       const targetY = this.cellY(viewTile.row);
       if (!tile || !tile.active) {
         tile = this.createOnlineTile(viewTile);
+        if (viewTile.moving) {
+          this.addShuffleOutline(tile);
+          tile.shuffleBaseDepth = tile.depth;
+          tile.setDepth(11);
+        }
       } else {
+        if (viewTile.moving) {
+          this.addShuffleOutline(tile);
+          if (tile.shuffleBaseDepth == null) {
+            tile.shuffleBaseDepth = tile.depth;
+            tile.setDepth(11);
+          }
+        } else {
+          this.removeShuffleOutline(tile);
+        }
         if (Math.abs(tile.x - targetX) > 0.5 || Math.abs(tile.y - targetY) > 0.5) {
           this.tweens.killTweensOf(tile);
+          if (tile.shuffleOutline) this.tweens.killTweensOf(tile.shuffleOutline);
           const moveDuration = viewTile.moving && Number.isFinite(viewTile.movingUntil)
             ? Math.max(0, viewTile.movingUntil - Date.now())
             : (initial ? 0 : 240);
-          this.tweens.add({ targets: tile, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
+          const movingTargets = tile.shuffleOutline ? [tile, tile.shuffleOutline] : [tile];
+          this.tweens.add({ targets: movingTargets, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
           if (tile.ring) {
             this.tweens.killTweensOf(tile.ring);
             this.tweens.add({ targets: tile.ring, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
@@ -1684,6 +1730,7 @@ class GameScene extends Phaser.Scene {
     for (const [id, oldTile] of previous.entries()) {
       if (nextById.has(id)) continue;
       this.removeRing(oldTile);
+      this.removeShuffleOutline(oldTile);
       if (oldTile.active) oldTile.destroy();
     }
     this.tiles = nextGrid;
@@ -1696,6 +1743,28 @@ class GameScene extends Phaser.Scene {
     if (state.status === 'finished' && !this.gameOver) {
       this.activePlayer = Number.isInteger(state.winnerSide) ? state.winnerSide : this.activePlayer;
       this.endGame('First to ' + state.targetScore + ' points wins.');
+    }
+  }
+
+  // Draw the same cyan square used by local shuffle animation around server-moved tiles.
+  addShuffleOutline(tile) {
+    if (!tile || !tile.active || tile.shuffleOutline) return;
+    const outline = this.add.graphics({ x: tile.x, y: tile.y }).setDepth(14);
+    outline.lineStyle(5, 0x66e0ff, 1);
+    outline.strokeRect(-TILE_SIZE / 2 - 2, -TILE_SIZE / 2 - 2, TILE_SIZE + 4, TILE_SIZE + 4);
+    tile.shuffleOutline = outline;
+  }
+
+  removeShuffleOutline(tile) {
+    if (!tile) return;
+    if (tile.shuffleOutline) {
+      this.tweens.killTweensOf(tile.shuffleOutline);
+      tile.shuffleOutline.destroy();
+      tile.shuffleOutline = null;
+    }
+    if (tile.shuffleBaseDepth != null) {
+      tile.setDepth(tile.shuffleBaseDepth);
+      delete tile.shuffleBaseDepth;
     }
   }
 
@@ -1953,6 +2022,7 @@ class GameScene extends Phaser.Scene {
     this.penalizeMiss();
     this.busy = false;
     this.recordAttempt(0);
+    if (!this.modeCfg.twoPlayers) this.breakLocalMatchStreak();
     // In versus modes a wrong pair ends the turn immediately. Play Alone remains continuous.
     if (this.modeCfg.twoPlayers && !this.gameOver) this.endTurn('mismatch');
   }
@@ -2064,6 +2134,7 @@ class GameScene extends Phaser.Scene {
         this.endTurn(forced ? 'timeout' : 'submit');
       } else {
         this.recordAttempt();
+        this.breakLocalMatchStreak();
       }
       return;
     }
@@ -2076,6 +2147,7 @@ class GameScene extends Phaser.Scene {
 
     const points = RULES.scoreFor(tiles.length);
     this.addScore(points);
+    this.advanceLocalMatchStreak();
     await this.destroyTiles(tiles);
     await this.cascade();
     this.busy = false;

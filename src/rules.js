@@ -33,6 +33,22 @@
     return Number.isFinite(value) && value >= 0 ? value : 1;
   }
 
+  // Advance or reset the consecutive successful-turn streak. The 3rd, 4th, 5th, etc.
+  // successful matching turns award 3, 4, 5, ... Stars, once per streak length.
+  function nextMatchStreak(streak, lastRewardedStreak, matched) {
+    if (!matched) return { streak: 0, lastRewardedStreak: 0, reward: 0 };
+    const current = Number.isInteger(streak) && streak > 0 ? streak : 0;
+    const rewarded = Number.isInteger(lastRewardedStreak) && lastRewardedStreak >= 0
+      ? lastRewardedStreak : 0;
+    const next = current + 1;
+    const reward = next >= 3 && next > rewarded ? next : 0;
+    return {
+      streak: next,
+      lastRewardedStreak: reward > 0 ? next : rewarded,
+      reward,
+    };
+  }
+
   // Only Professional AI uses the shorter 30-second turn; all other versus turns use 45 seconds.
   function turnDurationForMode(mode, difficulty, standardMs = 45000, professionalMs = 30000) {
     return mode === 'ai' && difficulty === 'pro' ? professionalMs : standardMs;
@@ -70,6 +86,7 @@
     targetScoreForMode,
     turnDurationForMode,
     initialStarBalance,
+    nextMatchStreak,
     hasReachedTarget,
     hasReachedScoreFloor,
     parseProbabilityOverride,

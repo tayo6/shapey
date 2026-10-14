@@ -95,3 +95,37 @@ test('hazard URL overrides reject invalid input and clamp finite values to 0–1
   assert.equal(rules.parseProbabilityOverride('-2'), 0);
   assert.equal(rules.parseProbabilityOverride('1.5'), 1);
 });
+
+
+test('match streaks reward 3, then 4, then 5 Stars for consecutive successful turns', () => {
+  assert.deepEqual(rules.nextMatchStreak(0, 0, true), {
+    streak: 1, lastRewardedStreak: 0, reward: 0,
+  });
+  assert.deepEqual(rules.nextMatchStreak(1, 0, true), {
+    streak: 2, lastRewardedStreak: 0, reward: 0,
+  });
+  assert.deepEqual(rules.nextMatchStreak(2, 0, true), {
+    streak: 3, lastRewardedStreak: 3, reward: 3,
+  });
+  assert.deepEqual(rules.nextMatchStreak(3, 3, true), {
+    streak: 4, lastRewardedStreak: 4, reward: 4,
+  });
+  assert.deepEqual(rules.nextMatchStreak(4, 4, true), {
+    streak: 5, lastRewardedStreak: 5, reward: 5,
+  });
+});
+
+test('a failed turn resets a match streak so a later three-match streak can earn Stars again', () => {
+  assert.deepEqual(rules.nextMatchStreak(4, 4, false), {
+    streak: 0, lastRewardedStreak: 0, reward: 0,
+  });
+  assert.deepEqual(rules.nextMatchStreak(0, 0, true), {
+    streak: 1, lastRewardedStreak: 0, reward: 0,
+  });
+  assert.deepEqual(rules.nextMatchStreak(1, 0, true), {
+    streak: 2, lastRewardedStreak: 0, reward: 0,
+  });
+  assert.deepEqual(rules.nextMatchStreak(2, 0, true), {
+    streak: 3, lastRewardedStreak: 3, reward: 3,
+  });
+});

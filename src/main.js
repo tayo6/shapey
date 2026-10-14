@@ -713,6 +713,8 @@ class GameScene extends Phaser.Scene {
     this.aiMemory = new Map();       // tile -> shape the AI believes it is
     this.aiRecall = this.ai.recall[0] + Math.random() * (this.ai.recall[1] - this.ai.recall[0]);
     this.starBalance = this.loadStarBalance();
+    // Match streaks are tracked separately for each local player (or Tag partner).
+    this.matchStreaks = new Map();
     this.inventoryItems = this.loadInventoryItems();
     this.inventoryUI = [];
     this.inventoryOpen = false;
@@ -933,6 +935,7 @@ class GameScene extends Phaser.Scene {
   async endTurn(reason) {
     if (this.turnEnding || this.gameOver) return;
     this.turnEnding = true; // from here on, late taps and submits are ignored
+    if (reason !== 'match') this.breakLocalMatchStreak();
     if (this.inventoryOpen) this.closeInventory();
     if (this.panelOpen) this.closePanel();
     this.closeAudiencePoll();
@@ -1079,6 +1082,24 @@ class GameScene extends Phaser.Scene {
     if (this.p2Stars && this.p2Stars[1] && this.p2Stars[1].active) {
       this.p2Stars[1].setText('*' + (this.modeCfg.ai ? 0 : this.starBalance));
     }
+  }
+
+  // Streaks are per human seat even where the local prototype shares a Star balance.
+  advanceLocalMatchStreak() {
+    if (!this.modeCfg.twoPlayers) return; // Play Alone has no turns to streak across.
+    const slot = this.limiterSlot();
+    const current = this.matchStreaks.get(slot) || { streak: 0, lastRewardedStreak: 0 };
+    const next = RULES.nextMatchStreak(current.streak, current.lastRewardedStreak, true);
+    this.matchStreaks.set(slot, next);
+    if (!next.reward || (this.modeCfg.ai && this.activePlayer === 1)) return;
+    this.starBalance += next.reward;
+    this.saveInventory();
+    this.showToast(next.streak + '-match streak! +' + next.reward + ' Stars', 3200);
+  }
+
+  breakLocalMatchStreak() {
+    if (!this.modeCfg.twoPlayers) return;
+    this.matchStreaks.set(this.limiterSlot(), RULES.nextMatchStreak(0, 0, false));
   }
 
   clearInventoryUI() {
@@ -1658,6 +1679,7 @@ class GameScene extends Phaser.Scene {
     this.penalizeMiss();
     this.busy = false;
     this.recordAttempt(0);
+    if (!this.modeCfg.twoPlayers) this.breakLocalMatchStreak();
     // In versus modes a wrong pair ends the turn immediately. Play Alone remains continuous.
     if (this.modeCfg.twoPlayers && !this.gameOver) this.endTurn('mismatch');
   }
@@ -1765,6 +1787,7 @@ class GameScene extends Phaser.Scene {
         this.endTurn(forced ? 'timeout' : 'submit');
       } else {
         this.recordAttempt();
+        this.breakLocalMatchStreak();
       }
       return;
     }
@@ -1777,6 +1800,7 @@ class GameScene extends Phaser.Scene {
 
     const points = RULES.scoreFor(tiles.length);
     this.addScore(points);
+    this.advanceLocalMatchStreak();
     await this.destroyTiles(tiles);
     await this.cascade();
     this.busy = false;
