@@ -154,6 +154,20 @@ test("Double Play adds exactly one same-player turn and cannot chain", () => {
   assert.equal(endBonus.state.isBonusTurn, false);
 });
 
+test("shop purchases reject inherited object-property names without corrupting Stars", () => {
+  const state = startPlaying();
+  state.playerData["1"].stars = 20;
+  const originalInventory = { ...state.playerData["1"].inventory };
+
+  for (const itemKey of ["constructor", "toString", "hasOwnProperty", "__proto__", "unpriced"]) {
+    const result = act(state, 1, { type: "buyItem", itemKey });
+    assert.equal(result.accepted, false, "Must reject invalid item key: " + itemKey);
+    assert.equal(result.state.playerData["1"].stars, 20, "Stars must remain unchanged for " + itemKey);
+    assert.deepEqual(result.state.playerData["1"].inventory, originalInventory,
+      "Inventory must remain unchanged for " + itemKey);
+  }
+});
+
 test("a score target ends the match and identifies the winning side", () => {
   let state = startPlaying();
   state.scores[0] = 99;
