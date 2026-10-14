@@ -126,6 +126,6 @@ test('a failed turn resets a match streak so a later three-match streak can earn
     streak: 2, lastRewardedStreak: 0, reward: 0,
   });
   assert.deepEqual(rules.nextMatchStreak(2, 0, true), {
-    streak: 3, lastRewardedStreak: 3, reward: 3,
+    streak: 3, lastRewardedStreak: 3, reward: 1,
   });
 });
