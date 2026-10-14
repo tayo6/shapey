@@ -1,0 +1,36 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "shapey-multiplayer",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-13",
+  "compatibility_flags": [],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ROOMS",
+        "class_name": "Room"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Room"]
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "persist": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": false,
+      "persist": true,
+      "head_sampling_rate": 1
+    }
+  }
+}
