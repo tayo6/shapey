@@ -142,10 +142,10 @@ Treat **Stars as a persistent currency**. A new local browser profile starts wit
 
 This streak is about successful matching turns, not winning whole games:
 - Each completed turn that successfully matches **3 or more normal matching tiles** increases that player's match streak by 1. A match of 4 or 5+ also counts as one successful matching instance.
-- A player's third successful matching turn in a row awards **3 Stars**. Their fourth successful matching turn in the same streak awards **4 additional Stars**; the fifth awards **5 additional Stars**, and so on.
+- Every player starts with **1 Star**. The third consecutive successful matching turn awards **+1 Star**, the fourth awards **+2 additional Stars**, the fifth awards **+3 additional Stars**, and so on (streak length minus 2).
 - A turn that expires without a valid match breaks the streak and resets the streak counter to 0. The next successful match starts a new streak at 1. A wrong tap alone does **not** break the streak if the player later completes a valid match during that same turn.
-- **Stars already earned are never taken away when a streak breaks.** Only the streak counter resets. For example, a player starts with 1 Star, gets three successful matching turns and earns 3 (balance 4), then times out on their next turn: they keep 4 Stars, but their next successful match starts a fresh streak at 1.
-- Award a reward only once when the player first reaches each streak length. Display a clear toast such as “3-match streak! +3 Stars” or “4-match streak! +4 Stars”.
+- **Stars already earned are never taken away when a streak breaks.** Only the streak counter resets. For example, a player starts with 1 Star, gets three successful matching turns and earns 1 more (balance 2), then times out on their next turn: they keep 2 Stars, but their next successful match starts a fresh streak at 1.
+- Award a reward only once when the player first reaches each streak length. Display a clear toast such as “3-match streak! +1 Star”, “4-match streak! +2 Stars”, or “5-match streak! +3 Stars”.
 - Store star balance and inventory per account online. For the offline prototype, local storage can be used for testing, but it is not secure or transferable across devices.
 
 ### Power-up shop and costs
@@ -324,7 +324,7 @@ Every turn should pass through one explicit state machine:
 
 - `src/main.js` retains local turn handling for Player vs AI and Play Alone. In the authoritative-gameplay development branch, Player 1 vs Player 2 and Tag open the online lobby and are wired to server snapshots/actions. The Worker is the source of truth for the board, hidden shapes, scores, active turn, hazard resolution, timeout deadlines, and match result. The live deployed Worker is still the older lobby-only version, so this branch's online gameplay is not enabled in production.
 - Player vs AI Easy uses 45-second turns; Professional uses 30 seconds. Versus submit and real mismatches end turns; a valid selection auto-submits at timeout. Extra Time (+45s) adds to the current deadline. Server-authoritative deadlines remain unimplemented.
-- The score-plank star display uses one star icon and the current balance multiplier. A new local browser profile receives 1 Star and one free Practice Audience Poll. Server-authoritative streak Stars are implemented in the online development branch; a persistent account wallet and equivalent local-mode earning rules are not implemented.
+- The score-plank star display uses one star icon and the current balance multiplier. A new local browser profile receives 1 Star and one free Practice Audience Poll. Local and server-authoritative streak rewards use +1, +2, +3 bonus Stars at streak lengths 3, 4, and 5. Every player starts with 1 Star; persistent account wallets are not implemented.
 - Inventory opens a working shop panel. Audience Pick works as an explicitly simulated Practice Audience; Extra Time and Double Play have use actions. Other power-up effects and real audience votes remain unimplemented.
 - The live deployed Worker still supports only the lobby/room prototype. The development branch contains a synchronized authoritative online game session, including a per-room seat token that restores a reconnecting player's seat and current state. A real-device/staging run is still required. There is no live audience/poll service.
 - The blank wooden dummy has its own `dummy.webp` asset and neutral behavior. Cancel Counter pickup, per-player item storage in an online match, and its counter-use flow still need implementation.
