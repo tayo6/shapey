@@ -929,10 +929,11 @@ class GameScene extends Phaser.Scene {
           this.onlineState.status === 'study' && Number.isFinite(this.onlineState.reviewEndsAt)
             ? this.onlineState.reviewEndsAt - Date.now() : 0)
       : this.reveals.remaining();
-    this.revealText.setVisible(revealLeft > 0 || this.shuffling > 0);
+    const onlineShuffling = Boolean(this.online && this.onlineState && this.onlineState.shuffling);
+    this.revealText.setVisible(revealLeft > 0 || this.shuffling > 0 || onlineShuffling);
     // Play alone has no countdown at all: the cue stays, the numbers go.
     if (revealLeft > 0) this.setClockText(this.revealText, this.modeCfg.turnClock ? 'MEMORIZE ' + formatClock(revealLeft) : 'MEMORIZE');
-    else if (this.shuffling > 0) this.setClockText(this.revealText, 'SHUFFLING');
+    else if (this.shuffling > 0 || onlineShuffling) this.setClockText(this.revealText, 'SHUFFLING');
 
     // The shop covers the header, so it shows the turn clock too: opening it never stops the clock.
     if (this.inventoryTimerText && this.inventoryTimerText.active) {
