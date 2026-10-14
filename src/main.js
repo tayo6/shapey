@@ -972,6 +972,7 @@ class GameScene extends Phaser.Scene {
     if (this.turnEnding || this.gameOver) return;
     this.turnEnding = true; // from here on, late taps and submits are ignored
     if (this.inventoryOpen) this.closeInventory();
+    if (this.panelOpen) this.closePanel();
     this.closeAudiencePoll();
     await this.resetSelection(); // flip any picked tiles back (nothing to do after a match)
     if (this.gameOver) return;
@@ -1075,10 +1076,7 @@ class GameScene extends Phaser.Scene {
   loadStarBalance() {
     try {
       const raw = window.localStorage.getItem('shapey-stars');
-      // localStorage returns null for a new player; Number(null) is 0, not the intended starter 1.
-      if (raw == null || raw.trim() === '') return 1;
-      const saved = Number(raw);
-      return Number.isFinite(saved) && saved >= 0 ? saved : 1;
+      return RULES.initialStarBalance(raw);
     } catch (_) {
       return 1;
     }
@@ -1223,9 +1221,9 @@ class GameScene extends Phaser.Scene {
 
       if (['audiencePick', 'extraTime', 'doublePlay'].includes(offer.key) && ownedCount > 0) {
         const canUse = offer.key === 'extraTime'
-          ? this.modeCfg.turnClock && !this.turnClock.expired() && !this.turnEnding
+          ? this.modeCfg.turnClock && !this.turnClock.expired() && !this.turnEnding && !this.isAITurn()
           : offer.key === 'doublePlay'
-            ? !this.isBonusTurn && this.doublePlayPendingPlayer === null
+            ? this.modeCfg.twoPlayers && !this.isBonusTurn && this.doublePlayPendingPlayer === null
             : true;
         const useBg = this.add.rectangle(554, y - 43, 144, 54, canUse ? 0x3b7c3f : 0x665c50, 1)
           .setStrokeStyle(3, 0xf3d29a);
@@ -1297,7 +1295,7 @@ class GameScene extends Phaser.Scene {
       .setStrokeStyle(4, 0xd5ad72);
     this.addInventoryUI(counter);
     const counterText = this.add.text(GAME_WIDTH / 2, 1080,
-      'CANCEL COUNTER  ·  SPECIAL ITEM\nEarn by collecting a Cancel tile. Use it to block an opponent’s Score Strike, Double Time, or Double Play.', {
+      'CANCEL COUNTER  ·  SPECIAL ITEM\nEarn by collecting a Cancel tile. Use it to block an opponent’s Score Strike, Extra Time, or Double Play.', {
         fontFamily: FONT, fontSize: '20px', color: '#fff0c7',
         align: 'center', wordWrap: { width: 570 }, lineSpacing: 5,
       }).setOrigin(0.5);
