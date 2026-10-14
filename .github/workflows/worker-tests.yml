@@ -29,10 +29,20 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Install integration test dependency
+        run: npm install --no-audit --no-fund
+
       - name: Validate Worker bundle and Wrangler config without deploying
         run: npx --yes wrangler@4 deploy --dry-run --outdir /tmp/shapey-worker-dry-run
       - name: Run protocol tests
         run: npm test
+
+      - name: Run local Worker integration tests (no deployment)
+        run: |
+          npx --yes wrangler@4 dev --local --ip 127.0.0.1 --port 8787 > /tmp/shapey-local-worker.log 2>&1 &
+          WORKER_PID=$!
+          trap 'kill "$WORKER_PID" 2>/dev/null || true' EXIT
+          node test/worker.integration.test.js
       - name: Validate Wrangler JSON syntax
         run: node -e 'JSON.parse(require("node:fs").readFileSync("wrangler.jsonc", "utf8")); console.log("wrangler.jsonc is valid JSON")'
       - name: Run local turn-rule regression tests
