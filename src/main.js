@@ -1623,7 +1623,10 @@ class GameScene extends Phaser.Scene {
       } else {
         if (Math.abs(tile.x - targetX) > 0.5 || Math.abs(tile.y - targetY) > 0.5) {
           this.tweens.killTweensOf(tile);
-          this.tweens.add({ targets: tile, x: targetX, y: targetY, duration: initial ? 0 : 240, ease: 'Sine.easeInOut' });
+          const moveDuration = viewTile.moving && Number.isFinite(viewTile.movingUntil)
+            ? Math.max(0, viewTile.movingUntil - Date.now())
+            : (initial ? 0 : 240);
+          this.tweens.add({ targets: tile, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
           if (tile.ring) {
             this.tweens.killTweensOf(tile.ring);
             this.tweens.add({ targets: tile.ring, x: targetX, y: targetY, duration: initial ? 0 : 240, ease: 'Sine.easeInOut' });
