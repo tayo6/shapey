@@ -77,9 +77,16 @@ jobs:
             exit 1
           }
           node browser-smoke.mjs || {
-            echo "---- Local Worker log after browser failure ----"
+            echo "---- Local Worker log after PvP browser failure ----"
             cat /tmp/shapey-local-worker.log
-            echo "---- Static Pages log after browser failure ----"
+            echo "---- Static Pages log after PvP browser failure ----"
+            cat /tmp/shapey-local-pages.log
+            exit 1
+          }
+          node tag-browser-smoke.mjs || {
+            echo "---- Local Worker log after Tag browser failure ----"
+            cat /tmp/shapey-local-worker.log
+            echo "---- Static Pages log after Tag browser failure ----"
             cat /tmp/shapey-local-pages.log
             exit 1
           }
