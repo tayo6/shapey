@@ -95,15 +95,20 @@ async function run() {
       const oldRevision = await actor.evaluate(() =>
         window.game.scene.getScene("GameScene").onlineState.revision);
       await clickWorld(actor, 296, 1141); // Existing Submit button, with no tiles selected.
+      const expectedAfterTurn = {
+        revision: oldRevision,
+        nextPlayer: step.nextPlayer,
+        nextLabel: step.nextLabel
+      };
       await Promise.all(pages.map((page) =>
         waitForScene(page, (expected) => {
           const scene = window.game?.scene?.getScene("GameScene");
           const state = scene?.onlineState;
-          return state?.revision > expected &&
-            state?.activePlayerNumber === step.nextPlayer &&
+          return state?.revision > expected.revision &&
+            state?.activePlayerNumber === expected.nextPlayer &&
             state?.scores?.[0] === 0 && state?.scores?.[1] === 0 &&
-            scene?.goalText?.text === step.nextLabel;
-        }, "Tag handoff " + step.actorPlayer + " → " + step.nextPlayer, 10_000, oldRevision)));
+            scene?.goalText?.text === expected.nextLabel;
+        }, "Tag handoff " + step.actorPlayer + " → " + step.nextPlayer, 10_000, expectedAfterTurn)));
     }
 
     assert.deepEqual(pageErrors, [], "No uncaught browser exceptions should occur.");
