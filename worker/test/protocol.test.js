@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ALLOWED_ORIGINS, ROOM_IDLE_TTL_MS, ROOM_MAX_LIFETIME_MS,
+  MESSAGE_RATE_LIMIT, MESSAGE_RATE_WINDOW_MS, MAX_MESSAGE_BYTES,
   isAllowedOrigin, isRoomCode, modeDetails, isRoomExpired, roomExpiryDeadline,
+  messageByteLength, nextMessageRateState,
 } from "../src/protocol.js";
 
 test("only the production site and documented local origins are allowed", () => {
@@ -53,4 +55,40 @@ test("legacy room records without lastActivityAt fall back to createdAt", () => 
   const room = { createdAt };
   assert.equal(roomExpiryDeadline(room, createdAt, 0), createdAt + ROOM_IDLE_TTL_MS);
   assert.equal(isRoomExpired(room, createdAt + ROOM_IDLE_TTL_MS, 0), true);
+});
+
+test("WebSocket application messages have a bounded encoded byte length", () => {
+  assert.equal(messageByteLength("hello"), 5);
+  assert.equal(messageByteLength("😊"), 4);
+  assert.equal(messageByteLength(new Uint8Array([1, 2, 3])), 3);
+  assert.equal(messageByteLength(new Uint8Array(MAX_MESSAGE_BYTES)), MAX_MESSAGE_BYTES);
+});
+
+test("WebSocket messages are throttled per connection in a fixed window", () => {
+  const now = 50_000;
+  let attachment = {};
+  let result;
+  for (let i = 0; i < MESSAGE_RATE_LIMIT; i++) {
+    result = nextMessageRateState(attachment, now);
+    assert.equal(result.allowed, true);
+    attachment = {
+      messageWindowStartedAt: result.messageWindowStartedAt,
+      messageCount: result.messageCount,
+    };
+  }
+  result = nextMessageRateState(attachment, now);
+  assert.equal(result.allowed, false);
+  assert.equal(result.messageCount, MESSAGE_RATE_LIMIT + 1);
+  assert.equal(nextMessageRateState(attachment, now + MESSAGE_RATE_WINDOW_MS).allowed, true);
+});
+
+test("a clock moving backwards resets the per-connection message window", () => {
+  assert.deepEqual(nextMessageRateState({
+    messageWindowStartedAt: 1000,
+    messageCount: 50,
+  }, 900), {
+    allowed: true,
+    messageWindowStartedAt: 900,
+    messageCount: 1,
+  });
 });
