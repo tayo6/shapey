@@ -54,9 +54,9 @@ const MODES = {
            targetScore: null, hazard: HAZARD_CHANCE, twoPlayers: false, turnClock: false, ai: false },
   ai:    { label: 'PLAYER VS AI', hint: 'First to ' + RULES.targetScoreForMode('ai') + ' points wins. Choose Easy or Professional.',
            targetScore: RULES.targetScoreForMode('ai'), hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: true },
-  pvp:   { label: 'PLAYER 1 VS PLAYER 2', hint: 'First to ' + RULES.targetScoreForMode('pvp') + ' points wins. Choose local or online play.',
+  pvp:   { label: 'PLAYER 1 VS PLAYER 2', hint: 'Online 2-player match. First to ' + RULES.targetScoreForMode('pvp') + ' points wins.',
            targetScore: RULES.targetScoreForMode('pvp'), hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false },
-  tag:   { label: 'TAG: 2 VS 2', hint: 'First team to ' + RULES.targetScoreForMode('tag') + ' points wins. Play locally or online.',
+  tag:   { label: 'TAG: 2 VS 2', hint: 'Online team match · 2 vs 2. First team to ' + RULES.targetScoreForMode('tag') + ' points wins.',
            targetScore: RULES.targetScoreForMode('tag'), hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false, teams: true },
 };
 const TEAM_PLAYERS = [['Player 1', 'Player 2'], ['Player 3', 'Player 4']]; // Tag: Team 1 and Team 2
@@ -442,7 +442,7 @@ class MenuScene extends Phaser.Scene {
       woodButton(this, GAME_WIDTH / 2, 600 + i * 165, 620, 140, cfg.label, 42,
         () => {
           if (cfg.ai) this.openDifficulty();
-          else if (mode === 'pvp' || mode === 'tag') this.openMultiplayerChoice(mode);
+          else if (mode === 'pvp' || mode === 'tag') this.openOnlineLobby(mode);
           else this.scene.start('GameScene', { mode });
         }, 10, cfg.hint);
     });
@@ -860,8 +860,8 @@ class GameScene extends Phaser.Scene {
     this.goalText = this.numberText(GAME_WIDTH / 2, 166, '', 21)
       .setVisible(!this.modeCfg.twoPlayers || !!this.modeCfg.teams);
 
-    this.p1Stars = this.createStars(38, 213, 5);
-    this.p2Stars = this.createStars(546, 213, 5);
+    this.p1Stars = this.createStars(38, 213, this.starBalance);
+    this.p2Stars = this.createStars(546, 213, this.modeCfg.ai ? 0 : this.starBalance);
 
     // Everything that belongs to one player, so the inactive player can be dimmed.
     this.playerUI = [
@@ -1073,7 +1073,10 @@ class GameScene extends Phaser.Scene {
   // ---------------------------------------------------------- inventory/shop
   loadStarBalance() {
     try {
-      const saved = Number(window.localStorage.getItem('shapey-stars'));
+      const raw = window.localStorage.getItem('shapey-stars');
+      // localStorage returns null for a new player; Number(null) is 0, not the intended starter 1.
+      if (raw == null || raw.trim() === '') return 1;
+      const saved = Number(raw);
       return Number.isFinite(saved) && saved >= 0 ? saved : 1;
     } catch (_) {
       return 1;
@@ -1082,9 +1085,19 @@ class GameScene extends Phaser.Scene {
 
   loadInventoryItems() {
     try {
-      return JSON.parse(window.localStorage.getItem('shapey-inventory') || '{}') || {};
+      const stored = window.localStorage.getItem('shapey-inventory');
+      const items = stored ? (JSON.parse(stored) || {}) : {};
+      // Preserve previously purchased Double Time cards as the new +45-second Extra Time item.
+      if (Number(items.doubleTime) > 0) {
+        items.extraTime = Number(items.extraTime || 0) + Number(items.doubleTime);
+        delete items.doubleTime;
+      }
+      // A new local profile gets one free Audience Pick. A saved zero means it was already used.
+      if (!Object.prototype.hasOwnProperty.call(items, 'audiencePick')) items.audiencePick = 1;
+      try { window.localStorage.setItem('shapey-inventory', JSON.stringify(items)); } catch (_) {}
+      return items;
     } catch (_) {
-      return {};
+      return { audiencePick: 1 };
     }
   }
 
@@ -1094,6 +1107,16 @@ class GameScene extends Phaser.Scene {
       window.localStorage.setItem('shapey-inventory', JSON.stringify(this.inventoryItems));
     } catch (_) {
       // Storage may be unavailable in private browsing; the shop still works for this session.
+    }
+    this.updateStarDisplays();
+  }
+
+  updateStarDisplays() {
+    if (this.p1Stars && this.p1Stars[1] && this.p1Stars[1].active) {
+      this.p1Stars[1].setText('*' + this.starBalance);
+    }
+    if (this.p2Stars && this.p2Stars[1] && this.p2Stars[1].active) {
+      this.p2Stars[1].setText('*' + (this.modeCfg.ai ? 0 : this.starBalance));
     }
   }
 
@@ -1142,7 +1165,7 @@ class GameScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.addInventoryUI(title);
 
-    const balance = this.add.text(GAME_WIDTH / 2, 128, 'YOUR STARS: ' + this.starBalance + ' ★', {
+    const balance = this.add.text(GAME_WIDTH / 2, 128, 'YOUR STARS: *' + this.starBalance, {
       fontFamily: FONT, fontSize: '31px', color: '#ffe36e',
       stroke: '#4a2814', strokeThickness: 5,
     }).setOrigin(0.5);
@@ -1167,8 +1190,8 @@ class GameScene extends Phaser.Scene {
     }
 
     const offers = [
-      { key: 'audiencePick', name: 'AUDIENCE PICK', price: 3, desc: 'Ask the audience which shape to pursue.' },
-      { key: 'doubleTime', name: 'DOUBLE TIME', price: 3, desc: 'Make your next turn last 90 seconds.' },
+      { key: 'audiencePick', name: 'AUDIENCE PICK', price: 3, desc: 'Use your poll lifeline to get a practice audience recommendation.' },
+      { key: 'extraTime', name: 'EXTRA TIME (+45s)', price: 3, desc: 'Add 45 seconds to the current turn each time you use one.' },
       { key: 'doublePlay', name: 'DOUBLE PLAY', price: 4, desc: 'Take one extra 45-second turn.' },
       { key: 'scoreStrike', name: 'SCORE STRIKE', price: 5, desc: 'Remove 10 points from your opponent.' },
     ];
