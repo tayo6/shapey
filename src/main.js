@@ -448,48 +448,10 @@ class MenuScene extends Phaser.Scene {
     });
   }
 
-  // Existing multiplayer modes offer a local or online path; online is not a separate game mode.
-  openMultiplayerChoice(mode) {
-    if (this.modeChoiceUI && this.modeChoiceUI.length) return;
-    this.selectedMultiplayerMode = mode;
-    this.modeChoiceUI = [];
-    const add = (object) => { this.modeChoiceUI.push(object); return object; };
-    const cfg = MODES[mode];
-    add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.84)
-      .setDepth(40).setInteractive());
-    add(this.add.rectangle(GAME_WIDTH / 2, 650, 640, 760, 0x4b2d17, 1)
-      .setStrokeStyle(5, 0xd5ad72).setDepth(41));
-    add(this.add.text(GAME_WIDTH / 2, 375, cfg.label, {
-      fontFamily: FONT, fontSize: mode === 'tag' ? '40px' : '38px',
-      color: '#fff2c7', stroke: '#3a2412', strokeThickness: 8, align: 'center',
-      wordWrap: { width: 560 },
-    }).setOrigin(0.5).setDepth(42));
-    add(this.add.text(GAME_WIDTH / 2, 445, 'Choose how you want to play.', {
-      fontFamily: FONT, fontSize: '27px', color: '#fff2c7', align: 'center',
-      stroke: '#3a2412', strokeThickness: 4,
-    }).setOrigin(0.5).setDepth(42));
-    woodButton(this, GAME_WIDTH / 2, 575, 540, 118, 'PLAY ON THIS DEVICE', 34,
-      () => {
-        this.closeMultiplayerChoice();
-        this.scene.start('GameScene', { mode });
-      }, 42, 'Local pass-and-play').forEach(add);
-    woodButton(this, GAME_WIDTH / 2, 740, 540, 118, 'PLAY ONLINE', 38,
-      () => this.openOnlineLobby(mode), 42, 'Create a room or join a friend').forEach(add);
-    woodButton(this, GAME_WIDTH / 2, 900, 540, 88, 'BACK', 34,
-      () => this.closeMultiplayerChoice(), 42).forEach(add);
-  }
-
-  closeMultiplayerChoice() {
-    if (this.modeChoiceUI) this.modeChoiceUI.forEach((object) => object.destroy());
-    this.modeChoiceUI = [];
-    this.selectedMultiplayerMode = null;
-  }
-
   // Room creation and joining are attached to Player 1 vs Player 2 and Tag.
   openOnlineLobby(mode) {
     if (this.onlineUI && this.onlineUI.length) return;
-    this.closeMultiplayerChoice();
-    this.onlineMode = mode || this.selectedMultiplayerMode || 'pvp';
+    this.onlineMode = mode || 'pvp';
     this.onlineUI = [];
     const add = (object) => { this.onlineUI.push(object); return object; };
     const modeTitle = this.onlineMode === 'tag' ? 'ONLINE TAG · 2 VS 2' : 'ONLINE PLAYER 1 VS PLAYER 2';
