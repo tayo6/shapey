@@ -489,8 +489,12 @@ function applyPick(state, playerNumber, tileId, now, rng) {
 
 function applyBuyItem(state, playerNumber, itemKey) {
   if (!playerCanAct(state, playerNumber)) throw new Error("Shop purchases are available only during your active turn.");
+  // Only explicitly priced own-properties are valid; inherited names like "constructor"
+  // must never be interpreted as prices or allowed to corrupt the Star balance.
+  if (typeof itemKey !== "string" || !Object.prototype.hasOwnProperty.call(ITEM_PRICES, itemKey)) {
+    throw new Error("That item is not available in online play yet.");
+  }
   const price = ITEM_PRICES[itemKey];
-  if (!price) throw new Error("That item is not available in online play yet.");
   const data = state.playerData[String(playerNumber)];
   if (data.stars < price) throw new Error("Not enough Stars to buy that item.");
   data.stars -= price;
