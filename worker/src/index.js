@@ -1,7 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   isAllowedOrigin, isRoomCode, modeDetails, isRoomExpired,
-  roomExpiryDeadline, ROOM_IDLE_TTL_MS
+  roomExpiryDeadline, ROOM_IDLE_TTL_MS, MAX_MESSAGE_BYTES, messageByteLength,
+  nextMessageRateState
 } from "./protocol.js";
 
 // CORS and WebSocket origin policy share the tested protocol helper.
@@ -236,6 +237,24 @@ export class Room extends DurableObject {
   }
 
   async webSocketMessage(ws, message) {
+    const byteLength = messageByteLength(message);
+    if (byteLength > MAX_MESSAGE_BYTES) {
+      try { ws.send(JSON.stringify({ type: "error", message: "Message is too large." })); } catch {}
+      try { ws.close(1009, "Message too large"); } catch {}
+      return;
+    }
+
+    const attachment = ws.deserializeAttachment() || {};
+    const rate = nextMessageRateState(attachment, Date.now());
+    attachment.messageWindowStartedAt = rate.messageWindowStartedAt;
+    attachment.messageCount = rate.messageCount;
+    ws.serializeAttachment(attachment);
+    if (!rate.allowed) {
+      try { ws.send(JSON.stringify({ type: "error", message: "Too many messages. Slow down and reconnect." })); } catch {}
+      try { ws.close(1008, "Message rate exceeded"); } catch {}
+      return;
+    }
+
     await this.touchRoom();
     let data;
     try {
