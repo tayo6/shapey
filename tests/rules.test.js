@@ -57,6 +57,14 @@ test('turn durations follow the versus mode and AI difficulty', () => {
   assert.equal(rules.turnDurationForMode('ai', 'pro', 10000, 10000), 10000);
 });
 
+test('a new profile gets exactly one starter Star but saved balances are preserved', () => {
+  assert.equal(rules.initialStarBalance(null), 1);
+  assert.equal(rules.initialStarBalance(''), 1);
+  assert.equal(rules.initialStarBalance('not-a-number'), 1);
+  assert.equal(rules.initialStarBalance('0'), 0);
+  assert.equal(rules.initialStarBalance('4'), 4);
+});
+
 test('versus mode targets are fixed by mode', () => {
   assert.equal(rules.targetScoreForMode('alone'), null);
   assert.equal(rules.targetScoreForMode('ai'), 100);
