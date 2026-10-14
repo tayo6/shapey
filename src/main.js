@@ -1475,8 +1475,9 @@ class GameScene extends Phaser.Scene {
     // A hazard flipped while other shapes are picked destroys them all (no reward); on its own it costs points.
     if (tile.shape === 'hazard') {
       // Play alone: a hazard always blasts (and is free). Other modes: only when shapes are already picked.
-      // A picked Dummy is neutral for matching/scoring, but a Hazard still destroys it with the attempt.
-      if (RULES.hazardAction(this.modeCfg.twoPlayers, this.selection.length + this.dummySelection.length) === 'blast') this.hazardBlast(tile);
+      // Dummies are neutral: only actual shapes determine whether a Hazard was picked first.
+      // A Hazard still destroys any picked Dummies along with the rest of the attempt.
+      if (RULES.hazardAction(this.modeCfg.twoPlayers, this.selection.length) === 'blast') this.hazardBlast(tile);
       else this.hazardHit(tile);
       return;
     }
@@ -1611,10 +1612,20 @@ class GameScene extends Phaser.Scene {
   // -------------------------------------------------------------- submit
   async submit(fromAI = false) {
     // A late submit (after the turn clock ran out, or during hand-over) is ignored.
-    if (this.busy || this.turnEnding || this.gameOver || this.turnClock.expired() || this.selection.length === 0) return;
+    if (this.busy || this.turnEnding || this.gameOver || this.turnClock.expired()) return;
     if (!fromAI && (this.panelOpen || this.isAITurn())) return;
-    this.busy = true;
 
+    // Submitting a Dummy-only attempt simply hides the Dummies again. It is not a match,
+    // mismatch, penalty, or scored attempt, and it does not end the player's turn.
+    if (this.selection.length === 0) {
+      if (this.dummySelection.length === 0) return;
+      this.busy = true;
+      await this.resetDummies();
+      this.busy = false;
+      return;
+    }
+
+    this.busy = true;
     const tiles = this.selection;
     if (!RULES.isValidMatchSize(tiles.length, MIN_MATCH)) {
       // not enough for a match: flip back, no score (the -1 is only for a wrong shape)
@@ -1783,7 +1794,7 @@ class GameScene extends Phaser.Scene {
     let need = MIN_MATCH - (counts[best] || 0);
     for (const tile of fresh) {
       if (need <= 0) break;
-      if (tile.shape === best || tile.shape === 'hazard') continue; // never turn a hazard into a shape: keeps the ~20% hazard share
+      if (tile.shape === best || tile.shape === 'hazard') continue; // never turn a hazard into a shape: default hazard chance is 10%
       tile.shape = best;
       tile.setTexture('shape_' + best); // still face-up at this point
       need--;
