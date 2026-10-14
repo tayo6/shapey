@@ -83,11 +83,12 @@ async function createRoom(mode) {
   return data;
 }
 
-async function joinRoom(room, mode) {
+async function joinRoom(room, mode, seatToken = null) {
   const client = createClient(room.websocketUrl + "?mode=" + encodeURIComponent(mode));
   await waitForOpen(client);
+  client.send({ type: "join", seatToken });
   const welcome = await client.waitFor((message) => message.type === "welcome");
-  return { ...client, playerNumber: welcome.playerNumber };
+  return { ...client, playerNumber: welcome.playerNumber, seatToken: welcome.seatToken };
 }
 
 async function playingState(client) {
@@ -198,6 +199,18 @@ async function run() {
     assert.deepEqual(scored.state.scores, [1, 0]);
     assert.equal(scored.state.activePlayerNumber, 2);
 
+    // Closing and reconnecting with the saved seat token must restore the same player number and game.
+    const pvpSeatToken = pvp1.seatToken;
+    assert.match(pvpSeatToken, /^[a-f0-9]{64}$/);
+    await pvp1.close();
+    const pvp1Rejoined = await joinRoom(pvpRoom, "pvp", pvpSeatToken);
+    allClients.push(pvp1Rejoined);
+    assert.equal(pvp1Rejoined.playerNumber, 1);
+    assert.equal(pvp1Rejoined.seatToken, pvpSeatToken);
+    const resumed = await pvp1Rejoined.waitFor((message) => message.type === "game_started");
+    assert.equal(resumed.state.activePlayerNumber, 2);
+    assert.deepEqual(resumed.state.scores, [1, 0]);
+
     // Tag: execute four real empty-turn submissions and verify that the Worker enforces P1→P3→P2→P4.
     let tagRevision = tagPlaying[0].revision;
     for (const [current, next] of [[1, 3], [3, 2], [2, 4], [4, 1]]) {
@@ -210,7 +223,7 @@ async function run() {
       tagRevision = updates[0].state.revision;
     }
 
-    console.log("Local Worker integration passed: origin guard, 2-client PvP match/scoring, hidden shapes, out-of-turn rejection, and 4-client Tag turn sequence.");
+    console.log("Local Worker integration passed: origin guard, 2-client PvP match/scoring, stable reconnect seat and state recovery, hidden shapes, out-of-turn rejection, and 4-client Tag turn sequence.");
   } finally {
     await Promise.all(allClients.map((client) => client.close()));
   }
