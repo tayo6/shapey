@@ -251,6 +251,9 @@ test("three successful turns award Stars to that individual player once at each 
   assert.equal(state.playerData["1"].streak, 3);
   assert.equal(state.playerData["1"].stars, 4);
   assert.equal(state.playerData["1"].lastRewardedStreak, 3);
+  const view = gameViewForPlayer(state, 1);
+  assert.equal(view.me.stars, 4);
+  assert.equal(view.me.streak, 3);
 });
 
 test("a broken streak can earn the Star reward again after three new matches", () => {
