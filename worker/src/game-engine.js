@@ -156,7 +156,12 @@ function clearSelection(state, faceDown = true) {
 
 function breakStreak(state, playerNumber) {
   const data = state.playerData[String(playerNumber)];
-  if (data) data.streak = 0;
+  if (data) {
+    data.streak = 0;
+    // Reward thresholds belong to the current consecutive streak, not the player's lifetime.
+    // Resetting both lets a player earn the streak reward again after a failed turn.
+    data.lastRewardedStreak = 0;
+  }
 }
 
 function endTurn(state, now, { matched = false } = {}) {
