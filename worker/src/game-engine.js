@@ -300,7 +300,7 @@ function awardMatch(state, playerNumber, count, now, rng) {
   const data = state.playerData[String(playerNumber)];
   data.streak += 1;
   if (data.streak >= 3 && data.streak > data.lastRewardedStreak) {
-    data.stars += data.streak;
+    data.stars += data.streak - 2;
     data.lastRewardedStreak = data.streak;
   }
 
