@@ -1223,7 +1223,8 @@ class GameScene extends Phaser.Scene {
         const canUse = offer.key === 'extraTime'
           ? this.modeCfg.turnClock && !this.turnClock.expired() && !this.turnEnding && !this.isAITurn()
           : offer.key === 'doublePlay'
-            ? this.modeCfg.twoPlayers && !this.isBonusTurn && this.doublePlayPendingPlayer === null
+            ? this.modeCfg.twoPlayers && !this.turnClock.expired() && !this.turnEnding &&
+              !this.isBonusTurn && this.doublePlayPendingPlayer === null
             : true;
         const useBg = this.add.rectangle(554, y - 43, 144, 54, canUse ? 0x3b7c3f : 0x665c50, 1)
           .setStrokeStyle(3, 0xf3d29a);
@@ -1256,7 +1257,8 @@ class GameScene extends Phaser.Scene {
               return;
             }
             if (offer.key === 'doublePlay') {
-              if (this.isBonusTurn || this.doublePlayPendingPlayer !== null) return;
+              if (!this.modeCfg.twoPlayers || this.turnClock.expired() || this.turnEnding ||
+                  this.isBonusTurn || this.doublePlayPendingPlayer !== null) return;
               this.inventoryItems.doublePlay = count - 1;
               this.doublePlayPendingPlayer = this.activePlayer;
               this.saveInventory();
