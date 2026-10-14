@@ -116,7 +116,7 @@ Both difficulties use the same board, scoring, hazards, and match rules. The Pro
 
 ### Play online
 
-Online Human-vs-Human needs a shared real-time game service. GitHub Pages can host the client, but it cannot by itself coordinate live rooms, protect scores and inventory from browser tampering, or collect live audience votes. Use a service such as **Supabase Realtime** or **Firebase** for room codes, presence, turn state, server-side deadlines, inventory, match results, and fan votes.
+Online Human-vs-Human needs a shared real-time game service. GitHub Pages can host the client, but it cannot coordinate live rooms, protect scores and inventory from browser tampering, or collect live audience votes by itself. Shapey now has a Cloudflare Worker with Durable Objects for room creation and lobby presence. The Worker is still only a room/lobby prototype: authoritative board actions, turns, scoring, hazards, reconnect resynchronization, spectator chat, and audience polls are not implemented yet. The server must resolve these outcomes before online matches are considered playable. Supabase is not required for live room/gameplay state; a database may be added later for persistent accounts, match history, or analytics.
 
 Recommended lobby flow:
 1. Choose **Play Online** and create a private room or enter a room code.
