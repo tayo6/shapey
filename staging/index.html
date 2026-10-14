@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <base href="../" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Shapey — Staging Test</title>
+  <link rel="icon" type="image/webp" href="assets/ui/shapey%20icon.webp" />
+  <!-- Start the slow third-party connection, the font and the two loading-screen images as early as possible. -->
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin />
+  <link rel="preload" href="assets/fonts/HAPPY%20SCHOOL.TTF" as="font" type="font/ttf" crossorigin />
+  <link rel="preload" href="assets/ui/shapey%20logo.webp" as="image" type="image/webp" />
+  <link rel="preload" href="assets/ui/load%20rectangle.webp" as="image" type="image/webp" />
+  <style>
+    @font-face {
+      font-family: 'HappySchool';
+      src: url('assets/fonts/HAPPY%20SCHOOL.TTF') format('truetype');
+    }
+    #staging-banner { position: fixed; z-index: 9999; top: 0; left: 0; width: 100%; box-sizing: border-box; padding: 3px 6px; background: #8b2424; color: #fff; font: 11px/1.2 sans-serif; text-align: center; pointer-events: none; }
+    html, body { margin: 0; height: 100%; background: #2b1a0f; overflow: hidden; }
+    #game { width: 100%; height: 100%; }
+
+    /* Shown instantly, while Phaser itself is still downloading. It uses the same layout as the in-game
+       loading screen (a 720 x 1280 stage, logo centred at 470, load bar centred at 720), so the hand-over is seamless.
+       Keep these numbers in sync with LOGO_* / LOAD_BAR_* in src/main.js. */
+    #boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+    #boot .stage { position: relative; width: min(100vw, 56.25vh); height: min(177.78vw, 100vh); }
+    #boot img { position: absolute; left: 50%; transform: translate(-50%, -50%); height: auto; }
+    #boot .logo { top: 36.72%; width: 72.22%; }                 /* 520 / 720, 470 / 1280 */
+    #boot .bar { position: absolute; left: 50%; top: 56.25%; width: 77.78%; transform: translate(-50%, -50%); } /* 560 / 720, 720 / 1280 */
+    #boot .bar img { position: static; transform: none; width: 100%; display: block; }
+    #boot .fill {
+      position: absolute; left: 7.45%; top: 30.2%; height: 39.6%; width: 6%; border-radius: 3px;
+      background: linear-gradient(#ffd77a, #f2b84b 55%, #d9942c); animation: pulse 1s ease-in-out infinite alternate;
+    }
+    @keyframes pulse { from { opacity: .55; } to { opacity: 1; } }
+  </style>
+</head>
+<body>
+  <div id="staging-banner" aria-hidden="true">STAGING TEST — separate from the live game</div>
+  <div id="boot"><div class="stage">
+    <img class="logo" src="assets/ui/shapey%20logo.webp" alt="Shapey" width="1100" height="440" />
+    <div class="bar"><img src="assets/ui/load%20rectangle.webp" alt="" width="1100" height="205" /><div class="fill"></div></div>
+  </div></div>
+  <div id="game"></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.80.1/phaser.min.js"></script>
+  <script src="src/rules.js"></script>
+  <script src="staging/main.js"></script>
+</body>
+</html>
