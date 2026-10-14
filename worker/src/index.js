@@ -4,6 +4,9 @@ import {
   roomExpiryDeadline, ROOM_IDLE_TTL_MS, MAX_MESSAGE_BYTES, messageByteLength,
   nextMessageRateState
 } from "./protocol.js";
+import {
+  createGameState, gameViewForPlayer, applyGameAction, advanceGameByTime, nextGameDeadline
+} from "./game-engine.js";
 
 // CORS and WebSocket origin policy share the tested protocol helper.
 
@@ -186,7 +189,54 @@ export class Room extends DurableObject {
       status: this.connectedCount() >= room.maxPlayers ? "ready" : "waiting",
       players: this.playerList()
     });
+
+    // Once all seats are connected, create one canonical game state inside this Durable Object.
+    // Every participant receives a player-specific view; hidden tile shapes stay server-side.
+    const connected = this.connectedCount();
+    const existingGame = await this.ctx.storage.get("game");
+    if (connected >= room.maxPlayers && !existingGame) {
+      const playerNumbers = Array.from({ length: room.maxPlayers }, (_, index) => index + 1);
+      const game = createGameState({
+        roomCode: room.roomCode,
+        mode: room.mode,
+        playerNumbers
+      });
+      await this.ctx.storage.put("game", game);
+      await this.broadcastGameState("game_started");
+    }
+    await this.scheduleAlarm();
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async scheduleAlarm() {
+    const room = await this.ctx.storage.get("room");
+    if (!room) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    const now = Date.now();
+    const roomDeadline = roomExpiryDeadline(room, now, this.connectedCount());
+    const game = await this.ctx.storage.get("game");
+    const gameDeadline = nextGameDeadline(game);
+    const deadlines = [roomDeadline, gameDeadline].filter(Number.isFinite);
+    if (deadlines.length) await this.ctx.storage.setAlarm(Math.min(...deadlines));
+    else await this.ctx.storage.deleteAlarm();
+  }
+
+  async broadcastGameState(type = "game_state") {
+    const game = await this.ctx.storage.get("game");
+    if (!game) return;
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        if (ws.readyState !== WebSocket.OPEN) continue;
+        const attachment = ws.deserializeAttachment() || {};
+        if (!Number.isInteger(attachment.playerNumber)) continue;
+        ws.send(JSON.stringify({
+          type,
+          state: gameViewForPlayer(game, attachment.playerNumber)
+        }));
+      } catch {}
+    }
   }
 
   connectedCount() {
@@ -210,10 +260,9 @@ export class Room extends DurableObject {
   async touchRoom() {
     const room = await this.ctx.storage.get("room");
     if (!room) return null;
-    const now = Date.now();
-    room.lastActivityAt = now;
+    room.lastActivityAt = Date.now();
     await this.ctx.storage.put("room", room);
-    await this.ctx.storage.setAlarm(roomExpiryDeadline(room, now, this.connectedCount()));
+    await this.scheduleAlarm();
     return room;
   }
 
@@ -230,10 +279,17 @@ export class Room extends DurableObject {
         try { socket.close(4000, "Room expired"); } catch {}
       }
       await this.ctx.storage.delete("room");
+      await this.ctx.storage.delete("game");
       await this.ctx.storage.deleteAlarm();
       return;
     }
-    await this.ctx.storage.setAlarm(roomExpiryDeadline(room, now, connected));
+
+    const game = await this.ctx.storage.get("game");
+    if (game && advanceGameByTime(game, now)) {
+      await this.ctx.storage.put("game", game);
+      await this.broadcastGameState("game_state");
+    }
+    await this.scheduleAlarm();
   }
 
   async webSocketMessage(ws, message) {
@@ -276,7 +332,29 @@ export class Room extends DurableObject {
       });
       return;
     }
-    ws.send(JSON.stringify({ type: "error", message: "Gameplay synchronization is not enabled yet." }));
+
+    if (data?.type === "game_action") {
+      const game = await this.ctx.storage.get("game");
+      if (!game) {
+        ws.send(JSON.stringify({ type: "error", message: "Waiting for all players to connect." }));
+        return;
+      }
+      const attachment = ws.deserializeAttachment() || {};
+      const result = applyGameAction(game, attachment.playerNumber, data.action, Date.now());
+      if (result.changed) await this.ctx.storage.put("game", result.state);
+      if (!result.accepted) {
+        ws.send(JSON.stringify({ type: "error", message: result.error || "Action rejected." }));
+      }
+      if (result.accepted || result.changed) {
+        await this.broadcastGameState("game_state");
+        await this.touchRoom();
+      } else {
+        await this.scheduleAlarm();
+      }
+      return;
+    }
+
+    ws.send(JSON.stringify({ type: "error", message: "Unsupported message type." }));
   }
 
   async webSocketClose(ws) {
