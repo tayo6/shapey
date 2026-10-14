@@ -33,13 +33,13 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: Validate Worker bundle and Wrangler config without deploying
-        run: npx --yes wrangler@4 deploy --dry-run --outdir /tmp/shapey-worker-dry-run
+        run: npx --yes wrangler@4.151.0 deploy --dry-run --outdir /tmp/shapey-worker-dry-run
       - name: Run protocol tests
         run: npm test
 
       - name: Run local Worker integration tests (no deployment)
         run: |
-          npx --yes wrangler@4 dev --local --ip 127.0.0.1 --port 8787 > /tmp/shapey-local-worker.log 2>&1 &
+          npx --yes wrangler@4.151.0 dev --local --ip 127.0.0.1 --port 8787 > /tmp/shapey-local-worker.log 2>&1 &
           WORKER_PID=$!
           trap 'kill "$WORKER_PID" 2>/dev/null || true' EXIT
           node integration-smoke.mjs || {
