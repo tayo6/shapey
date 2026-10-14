@@ -37,27 +37,23 @@ jobs:
 
       - name: Validate Worker bundle and Wrangler config without deploying
         run: npx --yes wrangler@4.151.0 deploy --dry-run --outdir /tmp/shapey-worker-dry-run
-      - name: Run protocol tests
+      - name: Run protocol and game-engine tests
         run: npm test
 
-      - name: Run local Worker integration tests (no deployment)
+      # Start one local Worker and keep it alive for both integration suites. Starting a second
+      # Wrangler process on the same port left a child process behind on GitHub's Linux runner.
+      - name: Run local Worker integration and browser tests (no deployment)
         run: |
-          npx --yes wrangler@4.151.0 dev --local --ip 127.0.0.1 --port 8787 > /tmp/shapey-local-worker.log 2>&1 &
+          setsid npx --yes wrangler@4.151.0 dev --local --ip 127.0.0.1 --port 8787 > /tmp/shapey-local-worker.log 2>&1 &
           WORKER_PID=$!
-          trap 'kill "$WORKER_PID" 2>/dev/null || true' EXIT
-          node integration-smoke.mjs || {
-            echo "---- Local Wrangler Worker log ----"
-            cat /tmp/shapey-local-worker.log
-            exit 1
-          }
-
-      - name: Run two-browser online PvP smoke test (local only)
-        run: |
-          npx --yes wrangler@4.151.0 dev --local --ip 127.0.0.1 --port 8787 > /tmp/shapey-browser-worker.log 2>&1 &
-          WORKER_PID=$!
-          python3 -m http.server 8080 --bind 127.0.0.1 --directory .. > /tmp/shapey-browser-pages.log 2>&1 &
+          setsid python3 -m http.server 8080 --bind 127.0.0.1 --directory .. > /tmp/shapey-local-pages.log 2>&1 &
           PAGES_PID=$!
-          trap 'kill "$WORKER_PID" "$PAGES_PID" 2>/dev/null || true' EXIT
+          cleanup() {
+            kill -- "-$WORKER_PID" 2>/dev/null || true
+            kill -- "-$PAGES_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
           READY=0
           for attempt in $(seq 1 120); do
             if curl -fsS http://127.0.0.1:8787/health | grep -q 'authoritative-gameplay-v1' &&
@@ -69,16 +65,22 @@ jobs:
           done
           if [ "$READY" != "1" ]; then
             echo "---- Local Worker log ----"
-            cat /tmp/shapey-browser-worker.log
+            cat /tmp/shapey-local-worker.log
             echo "---- Static Pages log ----"
-            cat /tmp/shapey-browser-pages.log
+            cat /tmp/shapey-local-pages.log
             exit 1
           fi
+
+          node integration-smoke.mjs || {
+            echo "---- Local Worker log after integration failure ----"
+            cat /tmp/shapey-local-worker.log
+            exit 1
+          }
           node browser-smoke.mjs || {
-            echo "---- Local Worker log ----"
-            cat /tmp/shapey-browser-worker.log
-            echo "---- Static Pages log ----"
-            cat /tmp/shapey-browser-pages.log
+            echo "---- Local Worker log after browser failure ----"
+            cat /tmp/shapey-local-worker.log
+            echo "---- Static Pages log after browser failure ----"
+            cat /tmp/shapey-local-pages.log
             exit 1
           }
 
