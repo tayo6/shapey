@@ -326,6 +326,10 @@ export class Room extends DurableObject {
   }
 
   async joinSeat(ws, data) {
+    const rejectJoin = (message) => {
+      try { ws.send(JSON.stringify({ type: "error", message })); } catch {}
+      try { ws.close(1008, "Seat claim rejected"); } catch {}
+    };
     // The queue protects the persistent seat registry from overlapping WebSocket join messages.
     let release;
     const previousJoin = this.joinQueue;
@@ -336,13 +340,13 @@ export class Room extends DurableObject {
       if (ws.readyState !== WebSocket.OPEN) return;
       const attachment = ws.deserializeAttachment() || {};
       if (Number.isInteger(attachment.playerNumber)) {
-        ws.send(JSON.stringify({ type: "error", message: "This connection already has a player seat." }));
+        rejectJoin("This connection already has a player seat.");
         return;
       }
 
       const room = await this.ctx.storage.get("room");
       if (!room) {
-        ws.send(JSON.stringify({ type: "error", message: "Room not found. Please create a new room." }));
+        rejectJoin("Room not found. Please create a new room.");
         return;
       }
 
@@ -359,10 +363,7 @@ export class Room extends DurableObject {
         let playerNumber = 1;
         while (reserved.has(playerNumber) && playerNumber <= room.maxPlayers) playerNumber++;
         if (playerNumber > room.maxPlayers) {
-          ws.send(JSON.stringify({
-            type: "error",
-            message: "Every seat in this room has already been assigned. Reconnect from the device that first claimed your seat, or create a new room."
-          }));
+          rejectJoin("Every seat in this room has already been assigned. Reconnect from the device that first claimed your seat, or create a new room.");
           return;
         }
         seatToken = newSeatToken();
@@ -374,14 +375,14 @@ export class Room extends DurableObject {
         registry.seats.push(seat);
       } else {
         if (typeof suppliedToken !== "string" || !/^[a-f0-9]{64}$/.test(suppliedToken)) {
-          ws.send(JSON.stringify({ type: "error", message: "The saved player session is invalid. Create a new room or clear the saved session for this room." }));
+          rejectJoin("The saved player session is invalid. Create a new room or clear the saved session for this room.");
           return;
         }
         const tokenHash = await hashSeatToken(suppliedToken);
         seat = registry.seats.find(item => item.tokenHash === tokenHash);
         if (!seat || !Number.isInteger(seat.playerNumber) ||
             seat.playerNumber < 1 || seat.playerNumber > room.maxPlayers) {
-          ws.send(JSON.stringify({ type: "error", message: "That player session is not valid for this room. Create a new room." }));
+          rejectJoin("That player session is not valid for this room. Create a new room.");
           return;
         }
         seatToken = suppliedToken;
@@ -393,7 +394,7 @@ export class Room extends DurableObject {
         return (other.deserializeAttachment() || {}).playerNumber === playerNumber;
       });
       if (duplicate) {
-        ws.send(JSON.stringify({ type: "error", message: "That player seat is already connected on another device." }));
+        rejectJoin("That player seat is already connected on another device.");
         try { ws.close(1008, "Seat already connected"); } catch {}
         return;
       }
