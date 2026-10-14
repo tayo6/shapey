@@ -1,0 +1,40 @@
+name: Multiplayer Worker tests
+
+on:
+  pull_request:
+    paths:
+      - "worker/**"
+      - "src/**"
+      - "tests/**"
+      - ".github/workflows/worker-tests.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "worker/**"
+      - "src/**"
+      - "tests/**"
+      - ".github/workflows/worker-tests.yml"
+
+jobs:
+  worker-unit-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate Worker bundle and Wrangler config without deploying
+        run: npx --yes wrangler@4.151.0 deploy --dry-run --outdir /tmp/shapey-worker-dry-run
+      - name: Run protocol tests
+        run: npm test
+      - name: Validate Wrangler JSON syntax
+        run: node -e 'JSON.parse(require("node:fs").readFileSync("wrangler.jsonc", "utf8")); console.log("wrangler.jsonc is valid JSON")'
+      - name: Run local turn-rule regression tests
+        working-directory: .
+        run: node --test tests/turn-rules.test.js

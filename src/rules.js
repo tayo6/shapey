@@ -38,6 +38,22 @@
     return mode === 'ai' && difficulty === 'pro' ? professionalMs : standardMs;
   }
 
+  // Side turns always alternate. Tag partner identity is derived from normal-turn number;
+  // Double Play intentionally does not increment that number.
+  function nextVersusPlayer(activePlayer) {
+    if (activePlayer !== 0 && activePlayer !== 1) return null;
+    return 1 - activePlayer;
+  }
+
+  function tagMemberForTurn(turnNumber) {
+    if (!Number.isInteger(turnNumber) || turnNumber < 0) return 0;
+    return Math.floor(turnNumber / 2) % 2;
+  }
+
+  function shouldGrantDoublePlay(isBonusTurn, pendingPlayer, activePlayer) {
+    return isBonusTurn !== true && pendingPlayer === activePlayer;
+  }
+
   // Fixed versus targets: AI/PvP race to 100; Tag teams race to 200.
   function targetScoreForMode(mode) {
     if (mode === 'tag') return 200;
@@ -69,6 +85,9 @@
     penaltyToApply,
     targetScoreForMode,
     turnDurationForMode,
+    nextVersusPlayer,
+    tagMemberForTurn,
+    shouldGrantDoublePlay,
     initialStarBalance,
     hasReachedTarget,
     hasReachedScoreFloor,
