@@ -1159,6 +1159,11 @@ class GameScene extends Phaser.Scene {
   // can't be used to stall. Only a successful open is counted; redrawing the shop is not an open.
   openInventory() {
     if (this.inventoryOpen || this.turnEnding || this.gameOver || this.panelOpen || this.isAITurn()) return;
+    if (this.online && this.onlineState &&
+        this.onlineState.activePlayerNumber !== this.onlinePlayerNumber) {
+      this.showToast('Only the player whose turn it is can open the inventory.', 2200);
+      return;
+    }
     const attempt = this.inventoryLimiter.tryOpen(this.limiterSlot());
     if (!attempt.allowed) {
       const windowText = formatInventoryWindow();
@@ -1539,8 +1544,18 @@ class GameScene extends Phaser.Scene {
       return false;
     }
     const state = this.onlineState;
-    if (!state || state.status !== 'playing' || state.pendingEffect) return false;
-    if (state.activePlayerNumber !== this.onlinePlayerNumber) return false;
+    if (!state || state.status !== 'playing') {
+      if (state && state.status === 'study') this.showToast('Study the board; turns begin when the reveal ends.', 1800);
+      return false;
+    }
+    if (state.pendingEffect) {
+      this.showToast('Resolving that move. Please wait.', 1600);
+      return false;
+    }
+    if (state.activePlayerNumber !== this.onlinePlayerNumber) {
+      this.showToast('It is Player ' + state.activePlayerNumber + "'s turn.", 2000);
+      return false;
+    }
     try {
       this.onlineSocket.send(JSON.stringify({ type: 'game_action', action }));
       return true;
@@ -1561,7 +1576,9 @@ class GameScene extends Phaser.Scene {
     this.isBonusTurn = Boolean(state.isBonusTurn);
     this.doublePlayPendingPlayer = state.doublePlayPendingPlayer ?? null;
     this.turnClock.endsAt = Number.isFinite(state.turnEndsAt) ? state.turnEndsAt : Infinity;
-    this.currentTurnDurationMs = this.isBonusTurn ? TURN_MS : this.turnDurationMs;
+    this.currentTurnDurationMs = state.status === 'study'
+      ? this.turnDurationMs
+      : Math.max(this.turnDurationMs, Number.isFinite(state.turnEndsAt) ? state.turnEndsAt - Date.now() : this.turnDurationMs);
     this.updateActivePlayerUI();
     this.p1Score.setText(String(this.scores[0] || 0));
     this.p2Score.setText(String(this.scores[1] || 0));
@@ -1828,7 +1845,8 @@ class GameScene extends Phaser.Scene {
 
   onTileTap(tile, fromAI = false) {
     if (this.online) {
-      if (!tile || !tile.active || !tile.serverId || this.gameOver) return;
+      if (!tile || !tile.active || !tile.serverId || this.gameOver ||
+          tile.faceUp || tile.selected || tile.moving || tile.swapping) return;
       this.sendOnlineAction({ type: 'pick', tileId: tile.serverId });
       return;
     }
