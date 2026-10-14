@@ -6,8 +6,13 @@ if (!RULES) throw new Error('Load src/rules.js before src/main.js.');
 const GAME_WIDTH = 720;
 const GAME_HEIGHT = 1280;
 
-// Cloudflare Worker used by the first online-room prototype.
-const MULTIPLAYER_API = 'https://shapey-multiplayer.hellohuman100.workers.dev';
+const urlParams = new URLSearchParams(window.location.search);
+// Permit only exact local Worker URLs when the page itself is on localhost. Production pages ignore this parameter.
+const requestedLocalApi = urlParams.get('api');
+const MULTIPLAYER_API = ['localhost', '127.0.0.1'].includes(window.location.hostname) &&
+    ['http://localhost:8787', 'http://127.0.0.1:8787'].includes(requestedLocalApi)
+  ? requestedLocalApi
+  : 'https://shapey-multiplayer.hellohuman100.workers.dev';
 
 const FONT = 'HappySchool';
 const TILE_SIZE = 90;   // every shape tile is drawn at 90 x 90
@@ -17,7 +22,6 @@ const GRID_ROWS = 7;
 
 // ---- Game rules -----------------------------------------------------------
 // For quick testing you can shorten the timers in the URL, e.g. index.html?review=3000&turn=10000
-const urlParams = new URLSearchParams(window.location.search);
 const REVIEW_MS = Number(urlParams.get('review')) || 15000;      // the opening board stays face-up this long (study phase)
 // Tiles spawned after a match are shown only briefly, flip face-down, then shuffle places with each other.
 const SPAWN_REVEAL_MS = Number(urlParams.get('reveal')) || 5000;  // new tiles face-up
