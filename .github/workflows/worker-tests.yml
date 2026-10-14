@@ -32,6 +32,9 @@ jobs:
       - name: Install integration test dependency
         run: npm install --no-audit --no-fund
 
+      - name: Install Chromium for browser smoke tests
+        run: npx playwright install --with-deps chromium
+
       - name: Validate Worker bundle and Wrangler config without deploying
         run: npx --yes wrangler@4.151.0 deploy --dry-run --outdir /tmp/shapey-worker-dry-run
       - name: Run protocol tests
@@ -47,6 +50,38 @@ jobs:
             cat /tmp/shapey-local-worker.log
             exit 1
           }
+
+      - name: Run two-browser online PvP smoke test (local only)
+        run: |
+          npx --yes wrangler@4.151.0 dev --local --ip 127.0.0.1 --port 8787 > /tmp/shapey-browser-worker.log 2>&1 &
+          WORKER_PID=$!
+          python3 -m http.server 8080 --bind 127.0.0.1 --directory .. > /tmp/shapey-browser-pages.log 2>&1 &
+          PAGES_PID=$!
+          trap 'kill "$WORKER_PID" "$PAGES_PID" 2>/dev/null || true' EXIT
+          READY=0
+          for attempt in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:8787/health | grep -q 'authoritative-gameplay-v1' &&
+               curl -fsS http://127.0.0.1:8080/index.html >/dev/null; then
+              READY=1
+              break
+            fi
+            sleep 0.25
+          done
+          if [ "$READY" != "1" ]; then
+            echo "---- Local Worker log ----"
+            cat /tmp/shapey-browser-worker.log
+            echo "---- Static Pages log ----"
+            cat /tmp/shapey-browser-pages.log
+            exit 1
+          fi
+          node browser-smoke.mjs || {
+            echo "---- Local Worker log ----"
+            cat /tmp/shapey-browser-worker.log
+            echo "---- Static Pages log ----"
+            cat /tmp/shapey-browser-pages.log
+            exit 1
+          }
+
       - name: Validate Wrangler JSON syntax
         run: node -e 'JSON.parse(require("node:fs").readFileSync("wrangler.jsonc", "utf8")); console.log("wrangler.jsonc is valid JSON")'
       - name: Run local turn-rule regression tests
