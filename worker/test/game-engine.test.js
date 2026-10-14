@@ -239,6 +239,44 @@ test("three successful turns award Stars to that individual player once at each 
   assert.equal(state.playerData["1"].lastRewardedStreak, 3);
 });
 
+test("a broken streak can earn the Star reward again after three new matches", () => {
+  let state = startPlaying();
+  state.playerData["1"].stars = 4;
+  state.playerData["1"].streak = 3;
+  state.playerData["1"].lastRewardedStreak = 3;
+
+  // An empty turn breaks Player 1's streak and resets this streak's reward threshold.
+  state = act(state, 1, { type: "submit" }).state;
+  assert.equal(state.playerData["1"].streak, 0);
+  assert.equal(state.playerData["1"].lastRewardedStreak, 0);
+  state = act(state, 2, { type: "submit" }).state;
+
+  for (let matchNumber = 1; matchNumber <= 3; matchNumber++) {
+    const available = state.tiles.filter((tile) =>
+      !tile.faceUp && !tile.selected && !tile.moving &&
+      !["hazard", "dummy"].includes(tile.shape)).slice(0, 3);
+    assert.equal(available.length, 3);
+    for (const tile of available) tile.shape = "circle";
+    for (const tile of available) {
+      const picked = act(state, 1, { type: "pick", tileId: tile.id });
+      assert.equal(picked.accepted, true, picked.error);
+      state = picked.state;
+    }
+    const submitted = act(state, 1, { type: "submit" });
+    assert.equal(submitted.accepted, true, submitted.error);
+    state = submitted.state;
+    if (matchNumber < 3) {
+      assert.equal(state.activePlayerNumber, 2);
+      state = act(state, 2, { type: "submit" }).state;
+      assert.equal(state.activePlayerNumber, 1);
+    }
+  }
+
+  assert.equal(state.playerData["1"].streak, 3);
+  assert.equal(state.playerData["1"].stars, 7);
+  assert.equal(state.playerData["1"].lastRewardedStreak, 3);
+});
+
 test("player snapshots publish a swap deadline without exposing hidden shapes", () => {
   const state = startPlaying();
   const endAt = NOW + INITIAL_REVIEW_MS + 2_000;
