@@ -2,9 +2,15 @@
 
 This directory contains the source retrieved from the deployed `shapey-multiplayer` Cloudflare Worker and the Wrangler configuration for its existing `ROOMS` Durable Objects class.
 
-## Current scope
+## Current development-branch scope
 
-The service is still a **room/lobby prototype**, not a playable online game. It supports room creation for the existing `pvp` (2-player) and `tag` (4-player) modes, room status, WebSocket joins, player assignment, `ping`/ready notifications, and disconnect notifications. It does **not** yet synchronize board actions, turn order, scoring, hazards, Double Play, inventory, chat, spectators, or polls. Do not advertise online gameplay as complete until the authoritative game protocol and client integration are implemented and tested.
+The `feat/authoritative-online-gameplay` branch now contains an early authoritative game-state engine, Worker WebSocket wiring, and a Phaser client integration for the existing online-only modes:
+- PvP: 2 devices, target 100.
+- Tag: 4 devices; Team 1 = Players 1 and 2, Team 2 = Players 3 and 4; turn order P1 → P3 → P2 → P4; target 200.
+- The server owns the canonical board, active turn, score, hazards, timeout resolution, and the currently supported Extra Time and Double Play actions.
+- Hidden tile shapes are omitted from player snapshots while tiles are face-down.
+
+This is **not yet approved for release**. Browser/two-device end-to-end and staging tests have not been completed. Reconnection can return the current board, but stable player-seat identity after reconnect is not yet implemented. Room-creation abuse controls and full game integration tests remain outstanding. Audience Poll, Score Strike, Cancel Counter, spectators and chat are not implemented online. The live deployed Worker remains the older lobby prototype until a separately reviewed deployment is completed.
 
 ## Changes in this source-controlled version
 
