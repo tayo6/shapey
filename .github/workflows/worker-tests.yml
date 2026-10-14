@@ -38,3 +38,7 @@ jobs:
       - name: Run local turn-rule regression tests
         working-directory: .
         run: node --test tests/turn-rules.test.js
+
+      - name: Check frontend JavaScript syntax
+        working-directory: .
+        run: node --check src/main.js
