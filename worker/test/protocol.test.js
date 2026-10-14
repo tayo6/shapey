@@ -5,6 +5,7 @@ import {
   MESSAGE_RATE_LIMIT, MESSAGE_RATE_WINDOW_MS, MAX_MESSAGE_BYTES,
   isAllowedOrigin, isRoomCode, modeDetails, isRoomExpired, roomExpiryDeadline,
   messageByteLength, nextMessageRateState,
+  ROOM_CREATE_RATE_WINDOW_MS, ROOM_CREATE_RATE_LIMIT, nextRoomCreationWindow,
 } from "../src/protocol.js";
 
 test("only the production site and documented local origins are allowed", () => {
@@ -91,4 +92,29 @@ test("a clock moving backwards resets the per-connection message window", () => 
     messageWindowStartedAt: 900,
     messageCount: 1,
   });
+});
+
+
+test("room creation is capped per rolling window and becomes available again", () => {
+  const now = 1_000_000;
+  let timestamps = [];
+  for (let i = 0; i < ROOM_CREATE_RATE_LIMIT; i++) {
+    const result = nextRoomCreationWindow(timestamps, now);
+    assert.equal(result.allowed, true);
+    timestamps = result.timestamps;
+  }
+  const blocked = nextRoomCreationWindow(timestamps, now + 100);
+  assert.equal(blocked.allowed, false);
+  assert.equal(blocked.timestamps.length, ROOM_CREATE_RATE_LIMIT);
+  assert.equal(blocked.retryAfterMs, ROOM_CREATE_RATE_WINDOW_MS - 100);
+
+  const reset = nextRoomCreationWindow(timestamps, now + ROOM_CREATE_RATE_WINDOW_MS);
+  assert.equal(reset.allowed, true);
+  assert.deepEqual(reset.timestamps, [now + ROOM_CREATE_RATE_WINDOW_MS]);
+});
+
+test("room creation limiter safely ignores invalid old timestamps", () => {
+  const result = nextRoomCreationWindow([null, NaN, -10, 9_000], 10_000);
+  assert.equal(result.allowed, true);
+  assert.deepEqual(result.timestamps, [9_000, 10_000]);
 });
