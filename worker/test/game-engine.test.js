@@ -226,10 +226,10 @@ test("Tag partners contribute to the same team score across separate turns", () 
   assert.equal(state.activePlayerNumber, 4);
 });
 
-test("three successful turns award Stars to that individual player once at each streak length", () => {
+test("the 3rd, 4th, and 5th consecutive matching turns award +1, +2, and +3 bonus Stars", () => {
   let state = startPlaying();
   state.playerData["1"].stars = 1;
-  for (let matchNumber = 1; matchNumber <= 3; matchNumber++) {
+  for (let matchNumber = 1; matchNumber <= 5; matchNumber++) {
     const available = state.tiles.filter((tile) =>
       !tile.faceUp && !tile.selected && !tile.moving &&
       !["hazard", "dummy"].includes(tile.shape)).slice(0, 3);
@@ -242,18 +242,20 @@ test("three successful turns award Stars to that individual player once at each 
       state = result.state;
     }
     state = act(state, 1, { type: "submit" }).state;
-    if (matchNumber < 3) {
+    const expectedStars = [1, 1, 2, 4, 7][matchNumber - 1];
+    assert.equal(state.playerData["1"].stars, expectedStars);
+    if (matchNumber < 5) {
       assert.equal(state.activePlayerNumber, 2);
       state = act(state, 2, { type: "submit" }).state;
       assert.equal(state.activePlayerNumber, 1);
     }
   }
-  assert.equal(state.playerData["1"].streak, 3);
-  assert.equal(state.playerData["1"].stars, 4);
-  assert.equal(state.playerData["1"].lastRewardedStreak, 3);
+  assert.equal(state.playerData["1"].streak, 5);
+  assert.equal(state.playerData["1"].stars, 7);
+  assert.equal(state.playerData["1"].lastRewardedStreak, 5);
   const view = gameViewForPlayer(state, 1);
-  assert.equal(view.me.stars, 4);
-  assert.equal(view.me.streak, 3);
+  assert.equal(view.me.stars, 7);
+  assert.equal(view.me.streak, 5);
 });
 
 test("a broken streak can earn the Star reward again after three new matches", () => {
@@ -290,7 +292,7 @@ test("a broken streak can earn the Star reward again after three new matches", (
   }
 
   assert.equal(state.playerData["1"].streak, 3);
-  assert.equal(state.playerData["1"].stars, 7);
+  assert.equal(state.playerData["1"].stars, 5);
   assert.equal(state.playerData["1"].lastRewardedStreak, 3);
 });
 
