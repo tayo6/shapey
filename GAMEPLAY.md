@@ -44,11 +44,11 @@ Keep these existing values initially so the new mechanics can be tested without 
 
 ### Mode menu (implemented)
 
-The game has four modes: **Play Alone**, **Player vs AI**, **Player 1 vs Player 2**, and **Tag: 2 vs 2**. Player vs AI opens a **Choose difficulty** panel (Easy / Professional / Back). Product requirement: Player 1 vs Player 2 and Tag are online-only. In the authoritative-gameplay development branch, the Worker and Phaser client are wired together, but full browser/two-device and staging validation is still outstanding. For local-mode testing, `?mode=alone` or `?mode=ai` skips the menu; online-only Player 1 vs Player 2 and Tag must go through the room lobby. `?mode=ai` starts on Easy unless `?level=pro` is added.
+The game has four modes: **Play Alone**, **Player vs AI**, **Player 1 vs Player 2**, and **Tag: 2 vs 2**. Player vs AI opens a **Choose difficulty** panel (Easy / Professional / Back). Product requirement: Player 1 vs Player 2 and Tag are online-only. In the authoritative-gameplay development branch, the Worker and Phaser client are wired together and CI tests a local two-browser PvP match plus local Worker integration for two-player PvP and four-player Tag. Real-device and staging validation remain outstanding. For local-mode testing, `?mode=alone` or `?mode=ai` skips the menu; online-only Player 1 vs Player 2 and Tag must go through the room lobby. `?mode=ai` starts on Easy unless `?level=pro` is added.
 
 ### Tag: 2 vs 2 (authoritative engine integrated in development branch; validation outstanding)
 
-Tag is the online 2-vs-2 mode. Team 1 is Player 1 and Player 2; Team 2 is Player 3 and Player 4. The server-side engine now owns the Tag turn order and team score in the development branch. Its browser presentation and four-device flow still require end-to-end testing.
+Tag is the online 2-vs-2 mode. Team 1 is Player 1 and Player 2; Team 2 is Player 3 and Player 4. The server-side engine enforces the turn order P1 → P3 → P2 → P4 and keeps one shared score per team. Local Worker integration verifies all four player seats and their turn sequence, but the browser presentation and physical four-device flow still require staging/end-to-end testing.
 
 - **Turn order:** the teams alternate, and each team's partners take turns, so the sequence is Player 1 → Player 3 → Player 2 → Player 4 → Player 1 → ... A partner "tags in" every other turn.
 - **One score per team.** A match scores for the team of whoever played it, so partners add to the same score. The header planks read TEAM 1 / TEAM 2, and a line under the timer names the team and partner whose turn it is (for example "TEAM 1: PLAYER 2"). The turn toast says the same.
@@ -123,7 +123,7 @@ Recommended lobby flow:
 2. Wait for the second player; show both names and a ready state.
 3. Start with a shared board seed/state and randomly choose who goes first.
 4. Send each valid move to the backend and broadcast the accepted result to both clients.
-5. Reconnect gracefully after a network drop; a short reconnection grace period is better than instantly awarding a win.
+5. Reconnect with the same per-room seat token and restore the latest server state after a network drop. The current draft reserves that seat for the room's lifetime; a polished reconnect/abandoned-player grace policy still needs design and real-device testing.
 
 **Product decision:** Player 1 vs Player 2 and Tag are online-only modes. Do not add a same-device Pass & Play alternative. Each participant must use their own device; keep the room lobby status clear until synchronized gameplay is available.
 
@@ -322,11 +322,11 @@ Every turn should pass through one explicit state machine:
 
 ## 6. Code review findings in the current prototype
 
-- `src/main.js` implements local turn handling for Player vs AI and the underlying versus engine: submit, mismatch, timeout, AI participation, and Tag partner rotation. Player 1 vs Player 2 and Tag now open the online room lobby only, but synchronized online board actions, scoring, and deadlines are not implemented.
+- `src/main.js` retains local turn handling for Player vs AI and Play Alone. In the authoritative-gameplay development branch, Player 1 vs Player 2 and Tag open the online lobby and are wired to server snapshots/actions. The Worker is the source of truth for the board, hidden shapes, scores, active turn, hazard resolution, timeout deadlines, and match result. The live deployed Worker is still the older lobby-only version, so this branch's online gameplay is not enabled in production.
 - Player vs AI Easy uses 45-second turns; Professional uses 30 seconds. Versus submit and real mismatches end turns; a valid selection auto-submits at timeout. Extra Time (+45s) adds to the current deadline. Server-authoritative deadlines remain unimplemented.
-- The score-plank star display uses one star icon and the current local balance multiplier. A new local browser profile receives 1 Star and one free Practice Audience Poll; match-streak Star rewards and account-based wallets are not implemented.
+- The score-plank star display uses one star icon and the current balance multiplier. A new local browser profile receives 1 Star and one free Practice Audience Poll. Server-authoritative streak Stars are implemented in the online development branch; a persistent account wallet and equivalent local-mode earning rules are not implemented.
 - Inventory opens a working shop panel. Audience Pick works as an explicitly simulated Practice Audience; Extra Time and Double Play have use actions. Other power-up effects and real audience votes remain unimplemented.
-- The online room lobby supports room creation/joining and connection status, but there is no synchronized online game session or live audience/poll service.
+- The live deployed Worker still supports only the lobby/room prototype. The development branch contains a synchronized authoritative online game session, including a per-room seat token that restores a reconnecting player's seat and current state. A real-device/staging run is still required. There is no live audience/poll service.
 - The blank wooden dummy has its own `dummy.webp` asset and neutral behavior. Cancel Counter pickup, per-player item storage in an online match, and its counter-use flow still need implementation.
 - The old idle auto-submit was removed. A valid versus selection is auto-submitted at the turn deadline, rather than waiting beyond the timer for a manual Submit.
 - Player mode, scoring, turn deadline, inventory, streak, and board resolution should be owned by a small game-state layer instead of being scattered across animation callbacks. UI animations should react to resolved state, not decide the result themselves.
@@ -337,7 +337,7 @@ Every turn should pass through one explicit state machine:
 2. **AI modes:** Easy and Hard (Professional) using only information each player could reasonably observe. *(Done, except power-up use.)*
 3. **Stars and inventory:** 1 starting Star plus one free Practice Audience Pick per new local profile, account wallets for online players, successful-match streak rewards, Extra Time (+45s), Double Play, Score Strike, and the rare Counter Shield.
 4. **Audience Pick:** begin with a clearly labelled practice audience; replace it with real voting only after a live backend exists.
-5. **Online play:** room codes, presence, authoritative turn/move validation, persistent accounts and inventory, reconnect handling, and spectator voting.
+5. **Online play:** complete real-device/staging validation of the authoritative PvP and Tag game, Cloudflare migration safety, reconnect and abandoned-player policy; then implement the remaining online inventory effects, polls, spectator voting, chat, and optional persistent accounts/history.
 6. **Polish:** short tutorial, sound toggle, reduced-motion option, turn hand-off screen, match history, streak celebration, and a post-match rematch button.
 
 The order matters: the power-ups depend on reliable turn and score rules, and real online polls depend on the backend. Building those in the reverse order would create features that appear to work but can be exploited or desynchronise between clients.
