@@ -1304,8 +1304,9 @@ class GameScene extends Phaser.Scene {
     }).setOrigin(0.5));
 
     const candidates = [];
+    const pollCandidates = SHAPE_KEYS.filter((shape) => shape !== 'cancel');
     while (candidates.length < 4) {
-      const shape = randomItem(SHAPE_KEYS);
+      const shape = randomItem(pollCandidates);
       if (!candidates.includes(shape)) candidates.push(shape);
     }
     // Simulate 100 votes so the results look like a game-show audience poll.
