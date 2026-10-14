@@ -1,6 +1,6 @@
 # Shapey multiplayer Worker
 
-This directory contains the source for the deployed `shapey-multiplayer` Cloudflare Worker and its existing `ROOMS` Durable Objects namespace.
+This directory contains the source retrieved from the deployed `shapey-multiplayer` Cloudflare Worker and the Wrangler configuration for its existing `ROOMS` Durable Objects class.
 
 ## Current scope
 
@@ -25,12 +25,12 @@ Tests cover origin allowlisting, supported modes/capacities, room-code format, a
 
 ## Existing Cloudflare binding
 
-`wrangler.jsonc` targets the existing Durable Objects namespace ID recorded on the deployed Worker. It is included for review and reproducibility; **this PR does not deploy it**.
+`wrangler.jsonc` records the existing Worker name, Durable Object binding name/class, compatibility date, and migration tag observed on the deployed script. It uses Wrangler's legacy `migrations` configuration to match the existing `v1` class migration. **This PR does not deploy it.** Before any future deployment, verify Wrangler's remote migration comparison and dry-run output. Stop if Wrangler proposes creating a replacement namespace, creating a new migration, or deleting/migrating existing state unexpectedly.
 
-Before a future deployment:
-1. Run the local tests.
-2. Inspect the Wrangler dry-run/binding plan and verify it reuses the existing `ROOMS` namespace without creating a second namespace or applying a new migration.
+Before a future production deployment:
+1. Run the local tests and config validation.
+2. Inspect the Wrangler dry-run/binding plan and verify the existing `ROOMS` namespace is reused without creating a new migration.
 3. Run integration smoke tests in a staging Worker using two PvP clients and four Tag clients.
 4. Deploy production only after gameplay, reconnection, lifecycle, and regression tests are passing.
 
-Never put API tokens or secret values in this directory. The namespace ID is configuration metadata, not an API token.
+Never put API tokens or secret values in this directory.
