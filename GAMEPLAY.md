@@ -44,11 +44,11 @@ Keep these existing values initially so the new mechanics can be tested without 
 
 ### Mode menu (implemented)
 
-The game has four modes: **Play Alone**, **Player vs AI**, **Player 1 vs Player 2**, and **Tag: 2 vs 2**. Player vs AI opens a **Choose difficulty** panel (Easy / Professional / Back). Product requirement: Player 1 vs Player 2 and Tag are online-only; the room lobby exists, but synchronized online board actions and authoritative turn/scoring resolution remain incomplete. For local-mode testing, `?mode=alone` or `?mode=ai` skips the menu; online-only Player 1 vs Player 2 and Tag must go through the room lobby. `?mode=ai` starts on Easy unless `?level=pro` is added.
+The game has four modes: **Play Alone**, **Player vs AI**, **Player 1 vs Player 2**, and **Tag: 2 vs 2**. Player vs AI opens a **Choose difficulty** panel (Easy / Professional / Back). Product requirement: Player 1 vs Player 2 and Tag are online-only. In the authoritative-gameplay development branch, the Worker and Phaser client are wired together, but full browser/two-device and staging validation is still outstanding. For local-mode testing, `?mode=alone` or `?mode=ai` skips the menu; online-only Player 1 vs Player 2 and Tag must go through the room lobby. `?mode=ai` starts on Easy unless `?level=pro` is added.
 
-### Tag: 2 vs 2 (rules prototype present; online gameplay incomplete)
+### Tag: 2 vs 2 (authoritative engine integrated in development branch; validation outstanding)
 
-Tag is the online 2-vs-2 mode. Team 1 is Player 1 and Player 2; Team 2 is Player 3 and Player 4. The gameplay scene currently models team turns locally; online turn synchronization remains future work.
+Tag is the online 2-vs-2 mode. Team 1 is Player 1 and Player 2; Team 2 is Player 3 and Player 4. The server-side engine now owns the Tag turn order and team score in the development branch. Its browser presentation and four-device flow still require end-to-end testing.
 
 - **Turn order:** the teams alternate, and each team's partners take turns, so the sequence is Player 1 → Player 3 → Player 2 → Player 4 → Player 1 → ... A partner "tags in" every other turn.
 - **One score per team.** A match scores for the team of whoever played it, so partners add to the same score. The header planks read TEAM 1 / TEAM 2, and a line under the timer names the team and partner whose turn it is (for example "TEAM 1: PLAYER 2"). The turn toast says the same.
@@ -116,7 +116,7 @@ Both difficulties use the same board, scoring, hazards, and match rules. The Pro
 
 ### Play online
 
-Online Human-vs-Human needs a shared real-time game service. GitHub Pages can host the client, but it cannot coordinate live rooms, protect scores and inventory from browser tampering, or collect live audience votes by itself. Shapey now has a Cloudflare Worker with Durable Objects for room creation and lobby presence. The Worker is still only a room/lobby prototype: authoritative board actions, turns, scoring, hazards, reconnect resynchronization, spectator chat, and audience polls are not implemented yet. The server must resolve these outcomes before online matches are considered playable. Supabase is not required for live room/gameplay state; a database may be added later for persistent accounts, match history, or analytics.
+Online Human-vs-Human uses a Cloudflare Worker with Durable Objects; GitHub Pages hosts the Phaser client. The authoritative-gameplay development branch contains the server-side board, turn/scoring/hazard/timeout rules and client message integration for PvP and Tag. The live deployed Worker is still the earlier lobby prototype until a separately reviewed deployment is completed. Do not consider online matches release-ready before a real two-device PvP test, a four-device Tag test, security/reconnect checks and a verified non-destructive Cloudflare migration/deployment plan. Online Audience Polls, Score Strike, Cancel Counter, spectator access and chat remain unimplemented. Supabase is not required for live room/gameplay state; a database may be added later for persistent accounts, match history, or analytics.
 
 Recommended lobby flow:
 1. Choose **Play Online** and create a private room or enter a room code.
