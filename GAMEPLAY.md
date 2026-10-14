@@ -5,13 +5,13 @@ This document describes the recommended rules for turning the current Phaser pro
 ## 1. Core loop
 
 - The board is 7 × 7. At the beginning of a game, all normal shapes are visible for 15 seconds, then turn face-down. Face-up tiles can't be picked while they are showing (a shape is only revealed by the player flipping it), and the first turn's clock starts after this study phase.
-- Players alternate turns. Each turn lasts **45 seconds**.
+- Versus turns alternate. Player vs AI Easy, Player 1 vs Player 2, and Tag use **45 seconds per turn**; Player vs AI Professional uses **30 seconds per turn**. The opening study phase is not charged to the first turn.
 - On a turn, the player taps hidden tiles to reveal their shapes and tries to collect 3 or more of the same normal shape. Matches do not need to be adjacent.
-- A valid submitted match ends that player's turn, awards points, removes those tiles, and causes the board to cascade. Newly spawned tiles are shown for 5 seconds, flip face-down, and are then shuffled (see "New-tile shuffle" below).
-- A wrong shape resets the current selection, but does not immediately end the turn. This preserves the memory challenge without making one mis-tap fatal.
-- If the timer expires without a valid submitted match, award no points and pass the turn.
-- **Two clocks run at the same time.** The player's 45-second turn clock and the 5-second "memorize" reveal of newly spawned tiles (followed by their shuffle) are independent; a reveal or shuffle never pauses, resets, or extends the turn, and the turn ending never cuts one short. The header shows the turn timer plus a "MEMORIZE" countdown (or "SHUFFLING") while new tiles are being handled.
-- The Submit button confirms a valid group. There is no idle auto-submit (the old 10-second one was removed); the 45-second turn timer is the only automatic deadline.
+- A valid submitted match awards points, removes the matched shapes, causes the board to cascade, and ends the turn. Newly spawned tiles are shown for 5 seconds, flip face-down, and are then shuffled (see "New-tile shuffle" below).
+- In versus modes, picking a different normal shape resets the selection and ends the turn immediately. Submitting fewer than 3 shapes awards no points but still ends the turn. Play Alone is different: a wrong normal shape costs 1 point and play continues.
+- When a versus clock expires, a selected group of 3 or more matching shapes is **auto-submitted**. If there is no valid group, the selection is cleared and the turn passes without a reward.
+- **Two clocks run at the same time.** The turn clock and the 5-second "memorize" reveal of newly spawned tiles (followed by their shuffle) are independent; a reveal or shuffle never pauses, resets, or extends a turn.
+- The Submit button ends the active versus turn even if the player still has time or selected fewer than 3 shapes. **Double Play** is the sole exception: using it grants that same player one extra 45-second turn; it cannot chain. The turn deadline auto-submits any valid selected match.
 - **Versus targets are fixed by mode:** Player vs AI and Player 1 vs Player 2 end when a side first reaches or exceeds **100 points**; Tag ends when a team first reaches or exceeds **200 points**. Play Alone is survival mode: there is no attempt-based checkpoint, and the game ends only when the score reaches **−15**. Online, the server—not the browser—must authoritatively resolve scores and winners.
 
 ### Which shapes spawn (shuffle bag)
@@ -44,15 +44,15 @@ Keep these existing values initially so the new mechanics can be tested without 
 
 ### Mode menu (implemented)
 
-The game opens on a menu with four modes: **Play alone**, **Player vs AI**, **Player 1 vs Player 2** (same device) and **Tag: 2 vs 2** (same device). Choosing Player vs AI first opens a **Choose difficulty** panel (Easy / Professional / Back). Settings (in game) opens a small menu to resume, restart (keeping the chosen difficulty) or return here. For testing, `?mode=alone`, `?mode=ai`, `?mode=pvp` or `?mode=tag` skips the menu; `?mode=ai` starts on Easy unless `?level=pro` is added.
+The game has four modes: **Play Alone**, **Player vs AI**, **Player 1 vs Player 2**, and **Tag: 2 vs 2**. Player vs AI opens a **Choose difficulty** panel (Easy / Professional / Back). Product requirement: Player 1 vs Player 2 and Tag are online-only; the room lobby exists, but synchronized online board actions and authoritative turn/scoring resolution remain incomplete. For testing, `?mode=alone`, `?mode=ai`, `?mode=pvp` or `?mode=tag` skips the menu; `?mode=ai` starts on Easy unless `?level=pro` is added.
 
 ### Tag: 2 vs 2 (implemented)
 
-Two teams of two share one device (online play is still future work). Team 1 is Player 1 and Player 2; Team 2 is Player 3 and Player 4.
+Tag is the online 2-vs-2 mode. Team 1 is Player 1 and Player 2; Team 2 is Player 3 and Player 4. The gameplay scene currently models team turns locally; online turn synchronization remains future work.
 
 - **Turn order:** the teams alternate, and each team's partners take turns, so the sequence is Player 1 → Player 3 → Player 2 → Player 4 → Player 1 → ... A partner "tags in" every other turn.
 - **One score per team.** A match scores for the team of whoever played it, so partners add to the same score. The header planks read TEAM 1 / TEAM 2, and a line under the timer names the team and partner whose turn it is (for example "TEAM 1: PLAYER 2"). The turn toast says the same.
-- **Everything else matches Player vs Player:** 45-second turns, 10% hazards, same scoring, shuffle and timeout rules. A timeout passes to the next player in the sequence. First team to 200 points wins.
+- **Everything else matches Player 1 vs Player 2:** 45-second turns, 10% hazards, same scoring, shuffle and timeout rules. A timeout passes to the next player in the sequence. First team to 200 points wins.
 - **Inventory limit is per player:** each of the four players has their own 2-opens-per-5-minutes allowance (`limiterSlot()`).
 - Fixed score targets and the local winner screen are implemented. Stars, streaks and inventory still use one shared balance, and there is no hand-off screen hiding the board between players.
 
@@ -69,7 +69,7 @@ Two teams of two share one device (online play is still future work). Team 1 is 
 
 `hazard.webp` (skull and crossbones) is a special tile, not a normal shape: it never matches, never joins the selection and is excluded from the guaranteed-three distribution. What it does depends on whether other shapes are already picked:
 
-- **Player vs AI, Player vs Player, Tag:** picked first (nothing picked yet) it does no damage, reveals briefly and flips back, and the turn goes on. Picked after other shapes it costs **1 point** (`HAZARD_BLAST_PENALTY`) and **destroys itself and every shape picked before it, with no reward** (`hazardBlast()` in `src/main.js`).
+- **Versus modes:** picked first it does no damage, reveals briefly and flips back, and the turn goes on. Picked after real shapes it costs **1 point** (`HAZARD_BLAST_PENALTY`) and destroys itself and all picked tiles without a reward. A Dummy does not count as a real shape; Dummy + Hazard destroys both without a penalty.
 - **Play alone:** a hazard never costs anything. Whether picked first or after shapes, it destroys itself and every shape currently picked (it is not counted as an attempt).
 - In every mode the destroyed tiles burst with the normal effect, the board falls and refills, the new tiles get the usual 5-second reveal and shuffle, and the turn is spent like a match. A wrong shape only flips the picks back, and a match pays points.
 
@@ -91,12 +91,12 @@ The starting board gets about that share of hazards, and every newly spawned til
 | Remembers a tile as the wrong shape | 10% | 1% |
 | Forgets a shuffled tile | 50% | 10% |
 | Thinking pause / pause per tap | 1.4 s / 0.7–1.2 s | 0.9 s / 0.45–0.8 s |
-| Match attempts per turn | up to 3 | up to 5 |
+| Turn duration | 45 seconds | 30 seconds |
 | Picks the biggest remembered group | 20% of the time | always |
 | Reaches for | 3 tiles, sometimes 4 | 5 tiles (the 5+ score) |
 | With no full match remembered | guesses | starts from the shape it remembers most copies of, then explores tiles it has no memory of |
 
-Neither level reaches for a bigger match when under 6 seconds of the turn is left (`AI_SPARE_MS`). Inventory power-ups are not used by either level yet, because power-ups have no in-match effect for humans either.
+Neither level reaches for a bigger match when under 6 seconds of the turn is left (`AI_SPARE_MS`). The AI keeps acting during its turn until it submits a match, makes a real mismatch, or the clock expires. At timeout, any valid selected match auto-submits. Double Play is usable by a human player; other power-up effects are not yet active.
 
 **Easy**
 - Remembers roughly 45–60% of the tiles it saw, with intentional memory mistakes.
@@ -112,7 +112,7 @@ Neither level reaches for a bigger match when under 6 seconds of the turn is lef
 - Uses inventory powers strategically, with clear limits and the same star costs as a human.
 - Has realistic tap delays, so difficulty comes from better memory and decisions rather than implausibly instant actions.
 
-Both difficulties should use the same board, turn duration, scoring, and power-up rules. Do not secretly change the board odds for Hard.
+Both difficulties use the same board, scoring, hazards, and match rules. The Professional level has a shorter 30-second turn by design; Easy has 45 seconds. Do not secretly change the board odds for Professional.
 
 ### Play online
 
