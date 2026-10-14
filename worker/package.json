@@ -3,9 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "test:integration": "node test/worker.integration.test.js"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "ws": "8.18.3"
   }
 }
