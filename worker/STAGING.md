@@ -2,7 +2,7 @@
 
 This test environment is separate from production.
 
-- **Staging game page:** https://tayo6.github.io/staging/
+- **Staging game page:** https://tayo6.github.io/shapey/staging/
 - **Staging Worker health check:** https://shapey-multiplayer-staging.hellohuman100.workers.dev/health
 - **Staging Worker:** `shapey-multiplayer-staging`
 - **Staging Durable Object namespace:** `shapey-multiplayer-staging_Room` (SQLite-backed)
