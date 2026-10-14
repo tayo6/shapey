@@ -722,6 +722,9 @@ class GameScene extends Phaser.Scene {
     const level = (data && data.difficulty) || urlParams.get('level');
     this.difficulty = AI_LEVELS[level] ? level : 'easy';
     this.ai = AI_LEVELS[this.difficulty];
+    this.turnDurationMs = RULES.turnDurationForMode(
+      this.mode, this.difficulty, TURN_MS, urlParams.has('turn') ? TURN_MS : 30000
+    );
   }
 
   create() {
@@ -733,8 +736,11 @@ class GameScene extends Phaser.Scene {
     this.busy = false;        // true while animations run (input is ignored)
     this.names = this.modeCfg.teams ? ['TEAM 1', 'TEAM 2']
       : this.modeCfg.ai ? ['Player 1', 'AI ' + this.ai.tag] : PLAYER_NAMES.slice();
-    this.turnNumber = -1;            // counts turns from 0; in Tag the partners of a team alternate every other turn
+    this.turnNumber = -1;            // counts normal turns from 0; a Double Play bonus keeps the same member
     this.activeMember = 0;           // Tag: which partner (0 or 1) of the active team is playing
+    this.timeoutHandling = false;   // prevents duplicate timeout resolution across render frames
+    this.doublePlayPendingPlayer = null;
+    this.isBonusTurn = false;
     this.hazardChance = HAZARD_OVERRIDE !== null ? HAZARD_OVERRIDE : this.modeCfg.hazard;
     this.shapeBag = new ShapeBag(SHAPE_KEYS);
     this.gameOver = false;
@@ -782,8 +788,12 @@ class GameScene extends Phaser.Scene {
     this.hideFinishedReveals();
     this.healStuckTiles();
     this.refreshClocks();
-    // A turn that expires mid-animation (a submitted match resolving, a wrong pick flipping back) waits for it.
-    if (!this.turnEnding && !this.busy && this.turnClock.expired()) this.endTurn('timeout');
+    // Let an in-flight animation finish, then resolve the deadline once. A ready match is auto-submitted;
+    // otherwise the current selection is cleared and the turn passes.
+    if (this.modeCfg.turnClock && !this.turnEnding && !this.timeoutHandling && this.turnClock.expired() && !this.busy) {
+      this.timeoutHandling = true;
+      this.submit(this.isAITurn(), true);
+    }
   }
 
   // ---------------------------------------------------------------- layout
@@ -841,7 +851,7 @@ class GameScene extends Phaser.Scene {
     this.p2Name = this.numberText(p2.x - 4, p2.y + p2.displayHeight * 0.83, this.names[1], 21);
 
     const timer = this.fitToWidth(this.add.image(GAME_WIDTH / 2, 101, 'timerPlank'), 262).setDepth(10);
-    this.timerText = this.numberText(timer.x + 24, timer.y + 2, formatClock(TURN_MS), 46);
+    this.timerText = this.numberText(timer.x + 24, timer.y + 2, formatClock(this.turnDurationMs), 46);
 
     // Countdown for newly spawned tiles. It sits under the turn timer and only shows while tiles are face-up.
     this.revealText = this.numberText(GAME_WIDTH / 2, 190, '', 26).setVisible(false);
@@ -904,7 +914,7 @@ class GameScene extends Phaser.Scene {
 
   // Both clocks are redrawn from their own deadlines, so they can never hold each other up.
   refreshClocks() {
-    const turnLeft = this.modeCfg.turnClock ? formatClock(Math.min(TURN_MS, this.turnClock.remaining())) : '';
+    const turnLeft = this.modeCfg.turnClock ? formatClock(Math.min(this.turnDurationMs, this.turnClock.remaining())) : '';
     if (this.modeCfg.turnClock) this.setClockText(this.timerText, turnLeft);
 
     const revealLeft = this.reveals.remaining();
@@ -920,16 +930,21 @@ class GameScene extends Phaser.Scene {
   }
 
   // `player` is the side that plays (0 or 1; a team in Tag). Scores, planks and the AI all work per side.
-  startTurn(player) {
+  startTurn(player, options = {}) {
+    const bonus = options.bonus === true;
     this.activePlayer = player;
-    this.turnNumber++;
-    // Tag: each team's two partners alternate, so the order is Player 1, Player 3, Player 2, Player 4, Player 1 ...
+    if (!bonus) this.turnNumber++;
+    // Tag normal turns rotate partners: P1 → P3 → P2 → P4. A Double Play bonus repeats the same partner.
     this.activeMember = this.modeCfg.teams ? Math.floor(this.turnNumber / 2) % 2 : 0;
+    this.isBonusTurn = bonus;
     this.turnEnding = false;
+    this.timeoutHandling = false;
     this.turnId++;
-    // Play alone has no countdown: the "deadline" never arrives.
-    if (this.modeCfg.turnClock) this.turnClock.start(TURN_MS + (this.turnNumber === 0 ? REVIEW_MS : 0)); // the opening study phase has no input, so it is not charged to the first turn
-    else this.turnClock.endsAt = Infinity;
+    // Play Alone has no countdown. Professional AI matches use 30 seconds per turn; other versus turns use 45.
+    const duration = bonus ? TURN_MS : this.turnDurationMs;
+    if (this.modeCfg.turnClock) {
+      this.turnClock.start(duration + (this.turnNumber === 0 && !bonus ? REVIEW_MS : 0));
+    } else this.turnClock.endsAt = Infinity;
     this.updateActivePlayerUI();
     if (this.modeCfg.teams) this.goalText.setText(this.turnLabel().toUpperCase());
     if (this.modeCfg.ai && player === 1) this.runAITurn(this.turnId);
@@ -961,19 +976,31 @@ class GameScene extends Phaser.Scene {
     // Play alone: there is nobody to hand over to, so the player simply keeps playing.
     if (!this.modeCfg.twoPlayers) { this.turnEnding = false; return; }
 
+    // Double Play is the only exception to alternating turns. It grants exactly one extra turn,
+    // and the bonus turn cannot chain another Double Play.
+    if (!this.isBonusTurn && this.doublePlayPendingPlayer === this.activePlayer) {
+      const samePlayer = this.activePlayer;
+      this.doublePlayPendingPlayer = null;
+      this.startTurn(samePlayer, { bonus: true });
+      this.showToast(this.turnLabel() + ' gets a Double Play bonus turn!');
+      return;
+    }
+
     const next = 1 - this.activePlayer;
     this.startTurn(next);
-    const prefix = reason === 'timeout' ? 'Time is up. ' : reason === 'pass' ? 'The AI passes. '
-      : reason === 'hazard' ? 'Hazard! No reward. ' : '';
+    const prefix = reason === 'timeout' ? 'Time is up. '
+      : reason === 'pass' ? 'The AI passes. '
+      : reason === 'hazard' ? 'Hazard! No reward. '
+      : reason === 'mismatch' ? 'Mismatch. '
+      : reason === 'submit' ? 'Turn submitted. ' : '';
     this.showToast(prefix + this.turnLabel() + '’s turn');
   }
 
   createStars(startX, y, count) {
-    const stars = [];
-    for (let i = 0; i < count; i++) {
-      stars.push(this.add.image(startX + i * 31.7, y, 'starIcon').setDisplaySize(30, 30).setDepth(10));
-    }
-    return stars;
+    // One star icon plus a multiplier keeps the score plank uncluttered: ⭐*5, ⭐*2, etc.
+    const star = this.add.image(startX, y, 'starIcon').setDisplaySize(30, 30).setDepth(10);
+    const multiplier = this.numberText(startX + 33, y, '*' + count, 23).setColor('#ffe36e');
+    return [star, multiplier];
   }
 
   createBottomButtons() {
@@ -1167,6 +1194,29 @@ class GameScene extends Phaser.Scene {
         fontFamily: FONT, fontSize: '22px', color: '#ffdf78',
       }).setOrigin(0, 0.5);
       this.addInventoryUI(owned);
+
+      if (offer.key === 'doublePlay' && ownedCount > 0) {
+        const canUse = !this.isBonusTurn && this.doublePlayPendingPlayer === null;
+        const useBg = this.add.rectangle(554, y - 43, 144, 54, canUse ? 0x3b7c3f : 0x665c50, 1)
+          .setStrokeStyle(3, 0xf3d29a);
+        this.addInventoryUI(useBg);
+        const useText = this.add.text(554, y - 43, canUse ? 'USE' : 'UNAVAILABLE', {
+          fontFamily: FONT, fontSize: canUse ? '22px' : '14px', color: '#ffffff', align: 'center',
+        }).setOrigin(0.5);
+        this.addInventoryUI(useText);
+        if (canUse) {
+          useBg.setInteractive({ useHandCursor: true });
+          useBg.on('pointerdown', () => {
+            const count = Number(this.inventoryItems.doublePlay || 0);
+            if (count < 1 || this.isBonusTurn || this.doublePlayPendingPlayer !== null) return;
+            this.inventoryItems.doublePlay = count - 1;
+            this.doublePlayPendingPlayer = this.activePlayer;
+            this.saveInventory();
+            this.showToast('Double Play ready: after this turn, you get one extra turn.', 3200);
+            this.closeInventory();
+          });
+        }
+      }
 
       const buyBg = this.add.rectangle(554, y + 32, 144, 62,
         this.starBalance >= offer.price ? 0x3b7c3f : 0x665c50, 1)
@@ -1533,6 +1583,8 @@ class GameScene extends Phaser.Scene {
     this.penalizeMiss();
     this.busy = false;
     this.recordAttempt(0);
+    // In versus modes a wrong pair ends the turn immediately. Play Alone remains continuous.
+    if (this.modeCfg.twoPlayers && !this.gameOver) this.endTurn('mismatch');
   }
 
   // A hazard (skull) flipped after other shapes are picked: it costs HAZARD_BLAST_PENALTY point(s) (two-player
@@ -1611,18 +1663,19 @@ class GameScene extends Phaser.Scene {
   }
 
   // -------------------------------------------------------------- submit
-  async submit(fromAI = false) {
-    // A late submit (after the turn clock ran out, or during hand-over) is ignored.
-    if (this.busy || this.turnEnding || this.gameOver || this.turnClock.expired()) return;
-    if (!fromAI && (this.panelOpen || this.isAITurn())) return;
+  async submit(fromAI = false, forced = false) {
+    // A late submit is normally ignored. Forced is used only by the turn deadline to resolve a pick.
+    if (this.busy || this.turnEnding || this.gameOver || (this.turnClock.expired() && !forced)) return;
+    if (!forced && !fromAI && (this.panelOpen || this.isAITurn())) return;
 
-    // Submitting a Dummy-only attempt simply hides the Dummies again. It is not a match,
-    // mismatch, penalty, or scored attempt, and it does not end the player's turn.
+    // Even a Dummy-only or empty manual submit ends a versus turn; it never changes the score.
     if (this.selection.length === 0) {
-      if (this.dummySelection.length === 0) return;
-      this.busy = true;
-      await this.resetDummies();
-      this.busy = false;
+      if (this.dummySelection.length > 0) {
+        this.busy = true;
+        await this.resetDummies();
+        this.busy = false;
+      }
+      if (this.modeCfg.twoPlayers) this.endTurn(forced ? 'timeout' : 'submit');
       return;
     }
 
@@ -1632,7 +1685,11 @@ class GameScene extends Phaser.Scene {
       // not enough for a match: flip back, no score (the -1 is only for a wrong shape)
       await this.resetSelection();
       this.busy = false;
-      this.recordAttempt();
+      if (this.modeCfg.twoPlayers) {
+        this.endTurn(forced ? 'timeout' : 'submit');
+      } else {
+        this.recordAttempt();
+      }
       return;
     }
 
