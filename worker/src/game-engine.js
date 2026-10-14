@@ -572,6 +572,12 @@ export function gameViewForPlayer(state, playerNumber) {
   if (!state.turnOrder.includes(playerNumber)) throw new Error("Player is not part of this match.");
   const side = sideForPlayer(state.mode, playerNumber);
   const ownData = clone(state.playerData[String(playerNumber)]);
+  const movingUntilById = new Map();
+  for (const shuffle of state.shuffles) {
+    if (shuffle.move && Number.isFinite(shuffle.move.endsAt)) {
+      for (const id of shuffle.move.tileIds) movingUntilById.set(id, shuffle.move.endsAt);
+    }
+  }
   return {
     protocolVersion: state.protocolVersion,
     roomCode: state.roomCode,
@@ -599,7 +605,8 @@ export function gameViewForPlayer(state, playerNumber) {
       shape: tile.faceUp ? tile.shape : null,
       faceUp: tile.faceUp,
       selected: tile.selected,
-      moving: tile.moving
+      moving: tile.moving,
+      movingUntil: movingUntilById.get(tile.id) ?? null
     })),
     selectedTileIds: state.selectedTileIds.slice(),
     dummyTileIds: state.dummyTileIds.slice(),
