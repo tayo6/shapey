@@ -607,14 +607,29 @@ class MenuScene extends Phaser.Scene {
     const separator = websocketUrl.includes('?') ? '&' : '?';
     const socket = new WebSocket(websocketUrl + separator + 'mode=' + encodeURIComponent(mode));
     this.onlineSocket = socket;
+    let savedSeatToken = null;
+    try {
+      savedSeatToken = window.localStorage.getItem('shapey-seat-token:' + code);
+    } catch (_) {
+      // Storage may be disabled; the current session can still join, but won't retain a seat after reload.
+    }
     socket.addEventListener('open', () => {
-      this.setOnlineStatus('Connected. Waiting for room details...');
+      this.setOnlineStatus('Joining your player seat...');
+      try {
+        socket.send(JSON.stringify({ type: 'join', seatToken: savedSeatToken }));
+      } catch (_) {
+        this.setOnlineStatus('Could not join the room. Please reconnect.');
+        try { socket.close(); } catch {}
+      }
     });
     socket.addEventListener('message', (event) => {
       let message;
       try { message = JSON.parse(event.data); } catch { return; }
       if (message.type === 'welcome') {
         this.onlinePlayerNumber = message.playerNumber;
+        if (typeof message.seatToken === 'string') {
+          try { window.localStorage.setItem('shapey-seat-token:' + code, message.seatToken); } catch (_) {}
+        }
         if (message.mode && message.mode !== mode) {
           this.setOnlineStatus('This code belongs to a different game mode. Return and choose that mode.');
           socket.close();
