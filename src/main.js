@@ -1088,8 +1088,8 @@ class GameScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '56px', color: '#fff2c7', stroke: '#3a2412', strokeThickness: 9,
     }).setOrigin(0.5).setDepth(252));
     woodButton(this, GAME_WIDTH / 2, 530, 440, 90, 'RESUME', 36, () => this.closePanel(), 252).forEach(add);
-    woodButton(this, GAME_WIDTH / 2, 645, 440, 90, 'RESTART', 36,
-      () => this.scene.restart({ mode: this.mode, difficulty: this.difficulty }), 252).forEach(add);
+    woodButton(this, GAME_WIDTH / 2, 645, 440, 90, this.online ? 'LEAVE MATCH' : 'RESTART', 36,
+      () => this.online ? this.leaveOnlineMatch() : this.scene.restart({ mode: this.mode, difficulty: this.difficulty }), 252).forEach(add);
     woodButton(this, GAME_WIDTH / 2, 760, 440, 90, 'MAIN MENU', 36,
       () => this.online ? this.leaveOnlineMatch() : this.scene.start('MenuScene'), 252).forEach(add);
     if (this.modeCfg.turnClock) {
