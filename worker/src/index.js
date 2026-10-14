@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import {
   isAllowedOrigin, isRoomCode, modeDetails, isRoomExpired,
   roomExpiryDeadline, ROOM_IDLE_TTL_MS, MAX_MESSAGE_BYTES, messageByteLength,
-  nextMessageRateState
+  nextMessageRateState, nextRoomCreationWindow
 } from "./protocol.js";
 import {
   createGameState, gameViewForPlayer, applyGameAction, advanceGameByTime, nextGameDeadline
@@ -44,6 +44,25 @@ export default {
     }
 
     if (url.pathname === "/api/rooms" && request.method === "POST") {
+      // Origin is a browser abuse barrier, not authentication. The per-IP limit below also
+      // constrains direct API clients that forge Origin headers.
+      if (!isAllowedOrigin(request.headers.get("Origin") || "")) {
+        return json({ error: "Origin not allowed." }, 403, cors);
+      }
+      const clientAddress = request.headers.get("CF-Connecting-IP") || "unknown";
+      const digest = new Uint8Array(await crypto.subtle.digest(
+        "SHA-256", new TextEncoder().encode(clientAddress)
+      ));
+      const limiterKey = Array.from(digest.slice(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      const limiter = env.ROOMS.get(env.ROOMS.idFromName("create-limit:" + limiterKey));
+      const limited = await limiter.fetch("https://room.internal/rate-limit", { method: "POST" });
+      if (limited.status === 429) {
+        const detail = await limited.json();
+        const retryAfter = limited.headers.get("Retry-After");
+        return json(detail, 429, retryAfter ? { ...cors, "Retry-After": retryAfter } : cors);
+      }
+      if (!limited.ok) return json({ error: "Room creation is temporarily unavailable. Please retry later." }, 503, cors);
+
       let body;
       try { body = await request.json(); }
       catch { return json({ error: "Send a JSON body with mode set to pvp or tag." }, 400, cors); }
@@ -105,6 +124,20 @@ export class Room extends DurableObject {
 
   async fetch(request) {
     const url = new URL(request.url);
+
+    if (url.pathname === "/rate-limit" && request.method === "POST") {
+      const timestamps = await this.ctx.storage.get("roomCreationTimestamps") || [];
+      const result = nextRoomCreationWindow(timestamps, Date.now());
+      await this.ctx.storage.put("roomCreationTimestamps", result.timestamps);
+      if (!result.allowed) {
+        return json(
+          { error: "Too many rooms created from this connection. Please wait before trying again." },
+          429,
+          { "Retry-After": String(Math.ceil(result.retryAfterMs / 1000)) }
+        );
+      }
+      return json({ ok: true });
+    }
 
     if (url.pathname === "/create" && request.method === "POST") {
       let data;
