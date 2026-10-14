@@ -591,6 +591,7 @@ export function gameViewForPlayer(state, playerNumber) {
     winnerPlayerNumber: state.winnerPlayerNumber,
     pendingEffect: state.pendingEffect ? { ...state.pendingEffect } : null,
     reveals: state.reveals.map((batch) => ({ endsAt: batch.endsAt, tileIds: batch.tileIds.slice() })),
+    shuffling: state.shuffles.length > 0,
     tiles: state.tiles.map((tile) => ({
       id: tile.id,
       row: tile.row,
