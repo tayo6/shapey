@@ -26,6 +26,13 @@
     return Math.max(0, score - Math.max(floor, score - requestedPoints));
   }
 
+  // A genuinely new local profile starts with 1 Star. Stored zero remains zero.
+  function initialStarBalance(raw) {
+    if (raw == null || String(raw).trim() === '') return 1;
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 ? value : 1;
+  }
+
   // Only Professional AI uses the shorter 30-second turn; all other versus turns use 45 seconds.
   function turnDurationForMode(mode, difficulty, standardMs = 45000, professionalMs = 30000) {
     return mode === 'ai' && difficulty === 'pro' ? professionalMs : standardMs;
@@ -62,6 +69,7 @@
     penaltyToApply,
     targetScoreForMode,
     turnDurationForMode,
+    initialStarBalance,
     hasReachedTarget,
     hasReachedScoreFloor,
     parseProbabilityOverride,
