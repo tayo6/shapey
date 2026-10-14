@@ -914,7 +914,8 @@ class GameScene extends Phaser.Scene {
 
   // Both clocks are redrawn from their own deadlines, so they can never hold each other up.
   refreshClocks() {
-    const turnLeft = this.modeCfg.turnClock ? formatClock(Math.min(this.turnDurationMs, this.turnClock.remaining())) : '';
+    const turnLeft = this.modeCfg.turnClock
+      ? formatClock(Math.min(this.currentTurnDurationMs || this.turnDurationMs, this.turnClock.remaining())) : '';
     if (this.modeCfg.turnClock) this.setClockText(this.timerText, turnLeft);
 
     const revealLeft = this.reveals.remaining();
@@ -942,6 +943,7 @@ class GameScene extends Phaser.Scene {
     this.turnId++;
     // Play Alone has no countdown. Professional AI matches use 30 seconds per turn; other versus turns use 45.
     const duration = bonus ? TURN_MS : this.turnDurationMs;
+    this.currentTurnDurationMs = duration;
     if (this.modeCfg.turnClock) {
       this.turnClock.start(duration + (this.turnNumber === 0 && !bonus ? REVIEW_MS : 0));
     } else this.turnClock.endsAt = Infinity;
@@ -1158,7 +1160,7 @@ class GameScene extends Phaser.Scene {
     // The turn clock keeps running while the shop is open, so show it here too.
     if (this.modeCfg.turnClock) {
       this.inventoryTimerText = this.addInventoryUI(this.add.text(84, 66,
-        'TURN\n' + formatClock(Math.min(TURN_MS, this.turnClock.remaining())), {
+        'TURN\n' + formatClock(Math.min(this.currentTurnDurationMs || this.turnDurationMs, this.turnClock.remaining())), {
           fontFamily: FONT, fontSize: '24px', color: '#ffe36e',
           stroke: '#4a2814', strokeThickness: 4, align: 'center',
         }).setOrigin(0.5));
@@ -1525,10 +1527,9 @@ class GameScene extends Phaser.Scene {
 
     // A hazard flipped while other shapes are picked destroys them all (no reward); on its own it costs points.
     if (tile.shape === 'hazard') {
-      // Play alone: a hazard always blasts (and is free). Other modes: only when shapes are already picked.
-      // Dummies are neutral: only actual shapes determine whether a Hazard was picked first.
-      // A Hazard still destroys any picked Dummies along with the rest of the attempt.
-      if (RULES.hazardAction(this.modeCfg.twoPlayers, this.selection.length) === 'blast') this.hazardBlast(tile);
+      // Dummies do not count as shapes or penalties. In versus, Dummy + Hazard destroys both for free;
+      // only a previously picked real shape makes the Hazard a penalized blast.
+      if (!this.modeCfg.twoPlayers || this.selection.length > 0 || this.dummySelection.length > 0) this.hazardBlast(tile);
       else this.hazardHit(tile);
       return;
     }
@@ -1594,13 +1595,14 @@ class GameScene extends Phaser.Scene {
   async hazardBlast(hazard) {
     this.busy = true;
     this.cancelShuffles(); // the board is about to change: stop any shuffle and settle the swap in progress
+    const hadRealShapes = this.selection.length > 0;
     const tiles = [...this.selection, ...this.dummySelection, hazard];
     this.selection = [];
     this.dummySelection = [];
     this.selectedShape = null;
     hazard.selected = true; // nothing else may pick it while it is being destroyed
     await this.flipTile(hazard, true);
-    const lost = this.modeCfg.twoPlayers ? this.applyPenalty(HAZARD_BLAST_PENALTY) : 0; // play alone: never a penalty
+    const lost = this.modeCfg.twoPlayers && hadRealShapes ? this.applyPenalty(HAZARD_BLAST_PENALTY) : 0; // Dummies alone never trigger the penalty
     this.showToast('Hazard! It destroys everything you picked.\n' +
       (lost > 0 ? '−' + lost + ' point, no reward.' : 'No reward.'));
     this.tweens.add({ targets: hazard, angle: { from: -8, to: 8 }, duration: 70, yoyo: true, repeat: 3,
@@ -1968,14 +1970,17 @@ class GameScene extends Phaser.Scene {
 
   // One match attempt. Returns true when it submitted a match (submit() then ends the turn).
   async aiAttempt(alive) {
-    let group = this.aiChooseGroup();
-    if (!group && this.ai.followHunch) {
+    const alreadyPicking = this.selection.length > 0;
+    let group = alreadyPicking ? this.aiKnown(this.selectedShape) : this.aiChooseGroup();
+    if (!alreadyPicking && !group && this.ai.followHunch) {
       // No full match remembered: start from the shape it remembers most copies of (two or more), so it
       // has fewer new tiles left to find.
       const partial = this.aiGroups().sort((a, b) => b.length - a.length)[0];
       if (partial && partial.length >= 2) group = partial;
     }
-    const first = group ? group[0] : this.aiGuess();
+    const first = alreadyPicking
+      ? (group.length ? randomItem(group) : (this.aiGuess(this.selectedShape) || this.aiGuess()))
+      : (group ? group[0] : this.aiGuess());
     if (!first || !(await this.aiTap(first, alive))) return false;
 
     // How many tiles it reaches for: 5 (the 5+ score) for Professional, 3 or sometimes 4 for Easy.
@@ -1985,8 +1990,10 @@ class GameScene extends Phaser.Scene {
       const known = have ? this.aiKnown(this.selectedShape) : [];
       // Once it has a match it only keeps going while it remembers more tiles of that shape and has time to spare.
       if (have >= MIN_MATCH && (have >= goal || !known.length || this.turnClock.remaining() < AI_SPARE_MS)) break;
-      // A first pick may be a Dummy; the AI keeps picking because Dummies do not count as a shape.
-      const next = have === 0 ? this.aiGuess() : (known.length ? randomItem(known) : this.aiGuess(this.selectedShape));
+      // Dummies do not count: if a shape is already selected, keep seeking that shape. If none is known,
+      // make a plausible guess (and a genuine mismatch ends the AI's turn like any other player's).
+      const next = have === 0 ? this.aiGuess()
+        : (known.length ? randomItem(known) : (this.aiGuess(this.selectedShape) || this.aiGuess()));
       if (!next || !(await this.aiTap(next, alive))) break;
     }
     if (!alive()) return false;
@@ -1999,15 +2006,19 @@ class GameScene extends Phaser.Scene {
   }
 
   async runAITurn(turnId) {
-    const alive = () => turnId === this.turnId && !this.turnEnding && !this.gameOver;
+    const alive = () => turnId === this.turnId && !this.turnEnding &&
+      !this.timeoutHandling && !this.gameOver && !this.turnClock.expired();
     await this.sleep(this.ai.thinkMs);
-    for (let i = 0; i < this.ai.maxAttempts && alive(); i++) {
+    // Keep participating until the AI submits a match, makes a genuine mismatch, or its clock expires.
+    // Neutral first-pick hazards and Dummy-only attempts do not prematurely consume its turn.
+    while (alive()) {
       await this.aiIdle(alive);
       if (!alive()) return;
       if (await this.aiAttempt(alive)) return;
+      if (!alive()) return;
       await this.sleep(this.ai.gapMs);
     }
-    if (alive()) this.endTurn('pass');
+    // The frame update resolves an expired clock, including any valid selection eligible for auto-submit.
   }
 }
 
