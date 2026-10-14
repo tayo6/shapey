@@ -97,7 +97,7 @@ test('hazard URL overrides reject invalid input and clamp finite values to 0–1
 });
 
 
-test('match streaks reward 3, then 4, then 5 Stars for consecutive successful turns', () => {
+test('match streaks reward +1, +2, and +3 Stars at streak lengths 3, 4, and 5 for consecutive successful turns', () => {
   assert.deepEqual(rules.nextMatchStreak(0, 0, true), {
     streak: 1, lastRewardedStreak: 0, reward: 0,
   });
@@ -105,13 +105,13 @@ test('match streaks reward 3, then 4, then 5 Stars for consecutive successful tu
     streak: 2, lastRewardedStreak: 0, reward: 0,
   });
   assert.deepEqual(rules.nextMatchStreak(2, 0, true), {
-    streak: 3, lastRewardedStreak: 3, reward: 3,
+    streak: 3, lastRewardedStreak: 3, reward: 1,
   });
   assert.deepEqual(rules.nextMatchStreak(3, 3, true), {
-    streak: 4, lastRewardedStreak: 4, reward: 4,
+    streak: 4, lastRewardedStreak: 4, reward: 2,
   });
   assert.deepEqual(rules.nextMatchStreak(4, 4, true), {
-    streak: 5, lastRewardedStreak: 5, reward: 5,
+    streak: 5, lastRewardedStreak: 5, reward: 3,
   });
 });
 
@@ -126,6 +126,6 @@ test('a failed turn resets a match streak so a later three-match streak can earn
     streak: 2, lastRewardedStreak: 0, reward: 0,
   });
   assert.deepEqual(rules.nextMatchStreak(2, 0, true), {
-    streak: 3, lastRewardedStreak: 3, reward: 3,
+    streak: 3, lastRewardedStreak: 3, reward: 1,
   });
 });
