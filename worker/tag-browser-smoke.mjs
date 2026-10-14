@@ -76,7 +76,7 @@ async function run() {
         return scene?.online === true &&
           scene.onlinePlayerNumber === expectedPlayer &&
           ["study", "playing"].includes(scene.onlineState?.status);
-      }, "Tag Player " + (index + 1) + " initial board")));
+      }, "Tag Player " + (index + 1) + " initial board", TIMEOUT, index + 1)));
     await Promise.all(pages.map((page, index) =>
       waitForScene(page, (expectedPlayer) => {
         const scene = window.game?.scene?.getScene("GameScene");
