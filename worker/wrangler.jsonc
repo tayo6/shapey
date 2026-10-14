@@ -1,5 +1,5 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
+  "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "shapey-multiplayer",
   "main": "src/index.js",
   "compatibility_date": "2026-10-13",
@@ -8,11 +8,16 @@
     "bindings": [
       {
         "name": "ROOMS",
-        "class_name": "Room",
-        "id": "566db39250bd40f596969d6c7f4189b2"
+        "class_name": "Room"
       }
     ]
   },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Room"]
+    }
+  ],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,
