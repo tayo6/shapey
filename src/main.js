@@ -972,6 +972,7 @@ class GameScene extends Phaser.Scene {
     if (this.turnEnding || this.gameOver) return;
     this.turnEnding = true; // from here on, late taps and submits are ignored
     if (this.inventoryOpen) this.closeInventory();
+    this.closeAudiencePoll();
     await this.resetSelection(); // flip any picked tiles back (nothing to do after a match)
     if (this.gameOver) return;
 
@@ -1220,8 +1221,12 @@ class GameScene extends Phaser.Scene {
       }).setOrigin(0, 0.5);
       this.addInventoryUI(owned);
 
-      if (offer.key === 'doublePlay' && ownedCount > 0) {
-        const canUse = !this.isBonusTurn && this.doublePlayPendingPlayer === null;
+      if (['audiencePick', 'extraTime', 'doublePlay'].includes(offer.key) && ownedCount > 0) {
+        const canUse = offer.key === 'extraTime'
+          ? this.modeCfg.turnClock && !this.turnClock.expired() && !this.turnEnding
+          : offer.key === 'doublePlay'
+            ? !this.isBonusTurn && this.doublePlayPendingPlayer === null
+            : true;
         const useBg = this.add.rectangle(554, y - 43, 144, 54, canUse ? 0x3b7c3f : 0x665c50, 1)
           .setStrokeStyle(3, 0xf3d29a);
         this.addInventoryUI(useBg);
@@ -1232,13 +1237,34 @@ class GameScene extends Phaser.Scene {
         if (canUse) {
           useBg.setInteractive({ useHandCursor: true });
           useBg.on('pointerdown', () => {
-            const count = Number(this.inventoryItems.doublePlay || 0);
-            if (count < 1 || this.isBonusTurn || this.doublePlayPendingPlayer !== null) return;
-            this.inventoryItems.doublePlay = count - 1;
-            this.doublePlayPendingPlayer = this.activePlayer;
-            this.saveInventory();
-            this.showToast('Double Play ready: after this turn, you get one extra turn.', 3200);
-            this.closeInventory();
+            const count = Number(this.inventoryItems[offer.key] || 0);
+            if (count < 1) return;
+            if (offer.key === 'audiencePick') {
+              this.inventoryItems.audiencePick = count - 1;
+              this.saveInventory();
+              this.closeInventory();
+              this.showAudiencePoll();
+              return;
+            }
+            if (offer.key === 'extraTime') {
+              if (!this.modeCfg.turnClock || this.turnClock.expired() || this.turnEnding || this.isAITurn()) return;
+              this.inventoryItems.extraTime = count - 1;
+              this.turnClock.endsAt += 45000;
+              this.currentTurnDurationMs = (this.currentTurnDurationMs || this.turnDurationMs) + 45000;
+              this.saveInventory();
+              this.closeInventory();
+              this.refreshClocks();
+              this.showToast('Extra Time used: +45 seconds added to this turn.', 3200);
+              return;
+            }
+            if (offer.key === 'doublePlay') {
+              if (this.isBonusTurn || this.doublePlayPendingPlayer !== null) return;
+              this.inventoryItems.doublePlay = count - 1;
+              this.doublePlayPendingPlayer = this.activePlayer;
+              this.saveInventory();
+              this.showToast('Double Play ready: after this turn, you get one extra turn.', 3200);
+              this.closeInventory();
+            }
           });
         }
       }
@@ -1290,6 +1316,68 @@ class GameScene extends Phaser.Scene {
   closeInventory() {
     this.clearInventoryUI();
     this.inventoryOpen = false;
+  }
+
+  // Local Practice Audience: explicitly simulated votes, not live players or a guaranteed match.
+  showAudiencePoll() {
+    this.closeAudiencePoll();
+    if (this.gameOver) return;
+    this.pollUI = [];
+    const add = (object) => {
+      object.setDepth(250);
+      this.pollUI.push(object);
+      return object;
+    };
+    add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.78)
+      .setInteractive());
+    add(this.add.rectangle(GAME_WIDTH / 2, 650, 640, 690, 0x4b2d17, 1)
+      .setStrokeStyle(5, 0xd5ad72));
+    add(this.add.text(GAME_WIDTH / 2, 365, 'AUDIENCE POLL', {
+      fontFamily: FONT, fontSize: '48px', color: '#fff2c7',
+      stroke: '#3a2112', strokeThickness: 8, align: 'center',
+    }).setOrigin(0.5));
+    add(this.add.text(GAME_WIDTH / 2, 420, 'PRACTICE AUDIENCE · SIMULATED VOTES', {
+      fontFamily: FONT, fontSize: '20px', color: '#ffe36e', align: 'center',
+      stroke: '#3a2112', strokeThickness: 4,
+    }).setOrigin(0.5));
+
+    const candidates = [];
+    while (candidates.length < 4) {
+      const shape = randomItem(SHAPE_KEYS);
+      if (!candidates.includes(shape)) candidates.push(shape);
+    }
+    // Simulate 100 votes so the results look like a game-show audience poll.
+    const weights = candidates.map(() => 0.15 + Math.random());
+    const totalWeight = weights.reduce((sum, n) => sum + n, 0);
+    const votes = weights.map((weight) => Math.round((weight / totalWeight) * 100));
+    votes[0] += 100 - votes.reduce((sum, n) => sum + n, 0);
+    const ranked = candidates.map((shape, i) => ({ shape, votes: votes[i] }))
+      .sort((a, b) => b.votes - a.votes);
+    add(this.add.text(GAME_WIDTH / 2, 470, 'TOP CHOICE: ' + ranked[0].shape.toUpperCase(), {
+      fontFamily: FONT, fontSize: '28px', color: '#ffe36e',
+      stroke: '#3a2112', strokeThickness: 5, align: 'center',
+    }).setOrigin(0.5));
+
+    ranked.forEach((item, i) => {
+      const y = 545 + i * 75;
+      add(this.add.text(86, y, item.shape.toUpperCase(), {
+        fontFamily: FONT, fontSize: '20px', color: '#fff2c7',
+        stroke: '#3a2112', strokeThickness: 4,
+      }).setOrigin(0, 0.5));
+      add(this.add.rectangle(280, y, 300, 24, 0x25180f, 1).setOrigin(0, 0.5));
+      add(this.add.rectangle(280, y, Math.max(3, 3 * item.votes), 18, 0xd7a849, 1).setOrigin(0, 0.5));
+      add(this.add.text(620, y, item.votes + '%', {
+        fontFamily: FONT, fontSize: '22px', color: '#ffffff',
+        stroke: '#3a2112', strokeThickness: 4, align: 'right',
+      }).setOrigin(1, 0.5));
+    });
+    woodButton(this, GAME_WIDTH / 2, 885, 420, 82, 'CLOSE POLL', 30,
+      () => this.closeAudiencePoll(), 252).forEach(add);
+  }
+
+  closeAudiencePoll() {
+    if (this.pollUI) this.pollUI.forEach((object) => object.destroy());
+    this.pollUI = [];
   }
 
   // ------------------------------------------------------------------ fx
