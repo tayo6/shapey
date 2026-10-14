@@ -129,7 +129,7 @@ A same-device **Pass & Play** mode is a useful interim option while the online s
 
 ## 3. Stars, streaks, and the inventory
 
-Treat **Stars as a persistent currency**, not as the five decorative icons beside the score. Every player starts with **1 free Star**. The inventory screen displays the actual spendable balance and owned item cards.
+Treat **Stars as a persistent currency**. A new local browser profile starts with **exactly 1 free Star** and **one free Audience Pick**. The score planks show one star icon and a dynamic multiplier (for example, ⭐*1 or ⭐*4) reflecting that profile's spendable balance. In the current prototype, balances and inventory are stored in that browser's LocalStorage; account-based per-player wallets await online gameplay integration.
 
 ### Inventory access limit (anti-stalling)
 
@@ -154,20 +154,19 @@ Buying an item deducts its Stars immediately and puts a card into the player's i
 
 | Item | Cost | Effect |
 |---|---:|---|
-| **Audience Pick** | 3 Stars | Starts a short fan poll to recommend one of the candidate shapes for the current attempt. |
-| **Double Time** | 3 Stars | Makes the player's next turn 90 seconds instead of 45. |
+| **Audience Pick** | 3 Stars | Additional uses cost 3 Stars; a new local profile receives one free use. It opens a clearly labeled simulated Practice Audience poll. |
+| **Extra Time (+45s)** | 3 Stars | Each use adds 45 seconds to the current turn's remaining deadline, including in Professional AI mode. | 
 | **Double Play** | 4 Stars | After the current turn, the player immediately gets one extra 45-second turn before control passes to the opponent. |
 | **Score Strike** | 5 Stars | Subtracts 10 points from the opponent, with their score floored at 0. Limit it to once per player per match. |
 
-Double Play must not chain into another Double Play during its bonus turn. Double Time and Double Play should show a visible active badge so players know what is in effect. If a match ends, unused inventory items should remain owned.
+Extra Time can be used repeatedly if the player owns multiple cards; each use adds another 45 seconds to the current turn and consumes one card. Double Play must not chain into another Double Play during its bonus turn. If a match ends, unused inventory items should remain owned.
 
 ### Audience Pick (the “Who Wants to Be a Millionaire?” moment)
 
-- The player chooses Audience Pick from inventory while making a match.
-- The poll asks the audience which shape to pursue from the available candidates; show a short countdown and a live vote bar/percentage.
-- Each eligible fan can vote once. Do not let the opponent or the active player vote in their own poll.
-- Do not reveal exact hidden tile coordinates. The poll is advice, not a cheat that guarantees a match.
-- If no real audience is connected, label the feature **Practice Audience** and simulate an explicitly fictional vote. Never present generated votes as real fans.
+- A new local profile starts with one free Audience Pick; additional poll cards cost 3 Stars.
+- Using it consumes one card and displays four candidate shape names with simulated vote bars/percentages.
+- The panel is explicitly labeled **Practice Audience · Simulated Votes**. These are fictional practice votes, not a live audience.
+- The recommendation is advice, not a guarantee of a match; it does not reveal tile coordinates.
 - Real fan polls require a backend, vote validation, rate limiting, and a policy for who may join a poll (for example, invited spectators or followers).
 
 ## 4. Special tiles: Wooden Dummy and Cancel Counter
@@ -183,7 +182,7 @@ The new `assets/shapes/dummy.webp` is a plain wooden tile with no symbol or shap
 
 ### Existing Cancel tile = defensive inventory card
 
-The existing `cancel.webp` represents the **Cancel Counter**. It is not a normal scoring shape and must not be matchable for points. When collected, it grants a Cancel Counter card to the player's inventory. The player can deliberately use that card to cancel an opponent's **Score Strike (-10), Double Time, or Double Play** before the effect takes place.
+The planned `cancel.webp` pickup represents the **Cancel Counter**. The full collectible-and-counter flow is not yet implemented. When implemented, it should grant a Cancel Counter card to the player's inventory and cancel an opponent's **Score Strike (-10), Extra Time (+45s), or Double Play** before the effect takes place.
 
 - The card is consumed only when it successfully cancels one of those effects.
 - It does not cancel Audience Pick, and it does not itself add or subtract score.
@@ -256,7 +255,7 @@ Keep these concepts separate in code and UI:
 - **Cancel Counter inventory** is a defensive count gained from collecting Cancel tiles.
 - **Using an item** spends one owned item; buying an item spends Stars and increases owned inventory. Buying must not automatically activate the item.
 
-Use the documented shop prices: Audience Pick costs 3 Stars, Double Time costs 3 Stars, Double Play costs 4 Stars, and Score Strike costs 5 Stars. A player begins with 1 free Star. The shop must reject purchases when the balance is below the price, must never make the balance negative, and must update the displayed balance and inventory count together after a successful purchase. If persistence is enabled, save the updated balance and counts as one coherent state change so a refresh cannot save one without the other.
+Use the documented shop prices: additional Audience Picks cost 3 Stars, Extra Time (+45s) costs 3 Stars, Double Play costs 4 Stars, and Score Strike costs 5 Stars. A new local profile begins with 1 free Star and one free Practice Audience Pick. The shop must reject purchases when the balance is below the price, must never make the balance negative, and must update the displayed balance and inventory count together after a successful purchase. If persistence is enabled, save the updated balance and counts as one coherent state change so a refresh cannot save one without the other.
 
 A successful purchase flow is: validate price and balance → deduct the price once → increment that item's owned count once → save state → refresh the UI. A failed purchase changes nothing. A successful use flow is: validate that the item is owned and can legally be used in the current match state → create the effect or pending-effect event → consume one item according to the item's rule → update/save state. If validation fails, do not consume the item. Do not let button double-clicks purchase or spend the same item twice.
 
@@ -266,7 +265,7 @@ LocalStorage is acceptable for a local single-device prototype, but it is not se
 
 #### E. Counter response: cancel eligible attacks before they take effect
 
-A Cancel Counter is a response to an opponent's **pending** power-up, not a general undo button. Eligible attacks are **Score Strike, Double Time, and Double Play**. **Audience Pick cannot be countered.**
+A Cancel Counter is a response to an opponent's **pending** power-up, not a general undo button. Eligible attacks are **Score Strike, Extra Time (+45s), and Double Play**. **Audience Pick cannot be countered.**
 
 Use this event sequence for each eligible attack:
 
@@ -282,7 +281,7 @@ If a counter is attempted when there is no eligible pending attack, the attack i
 
 **Why this matters:** without a pending state and response window, the attack might apply immediately before the defender has a chance to react. Without one unique pending-action record, latency or repeated taps can cause duplicate attacks, duplicate counters, or different results on the two players' screens.
 
-For Score Strike, the intended effect is to subtract 10 points from the opponent, subject to the game's score floor of zero, and it can be used at most once per player per match. For Double Time, the intended effect is to make the affected player's next turn 90 seconds instead of 45. For Double Play, the intended effect is to grant the affected player one additional 45-second turn; do not allow the bonus turn to chain into another Double Play unless a future rule explicitly permits it. The code should apply these effects only after the counter window closes without a successful counter. Audience Pick follows its own voting/poll flow and does not open a Cancel Counter response window.
+For Score Strike, the intended effect is to subtract 10 points from the opponent, subject to the game's score floor of zero, and it can be used at most once per player per match. For Extra Time, each use adds 45 seconds to the affected player's current turn deadline. For Double Play, the intended effect is to grant the affected player one additional 45-second turn; do not allow the bonus turn to chain into another Double Play unless a future rule explicitly permits it. The code should apply these effects only after the counter window closes without a successful counter. Audience Pick follows its own voting/poll flow and does not open a Cancel Counter response window.
 
 #### F. Keep the turn and board state consistent around special tiles
 
@@ -323,20 +322,20 @@ Every turn should pass through one explicit state machine:
 
 ## 6. Code review findings in the current prototype
 
-- `src/main.js` keeps one score per side (teams share a score in Tag), passes turns after matches/timeouts, and ends versus modes at their fixed score targets with a winner screen. AI and Tag are implemented; online play is not.
-- The 45-second turn clock now runs from an absolute deadline, ends the turn on timeout, and runs alongside the 5-second reveal and shuffle of new tiles. Double Time (90 seconds) and a server-authoritative deadline are not implemented.
-- The star rows are currently decorative; there is no starting free Star, successful-match streak tracker, or inventory currency.
-- Only Submit has a click handler. Polls, Inventory, and Settings do not yet open working panels.
-- There is no online lobby or live audience/poll service. Play Alone loss and the local versus winner flow are implemented; Easy and Professional AI, Tag mode and hazard rules are implemented (section 2).
-- The blank wooden dummy now has its own `dummy.webp` asset and neutral tap behavior. The existing `cancel.webp` should become a defensive inventory card rather than a normal scoring shape; its collection, inventory display, and counter-use flow still need implementation.
-- The old 10-second idle auto-submit has been removed, so a valid selection now waits for the Submit button.
+- `src/main.js` implements local turn handling for Player vs AI and the underlying versus engine: submit, mismatch, timeout, AI participation, and Tag partner rotation. Player 1 vs Player 2 and Tag now open the online room lobby only, but synchronized online board actions, scoring, and deadlines are not implemented.
+- Player vs AI Easy uses 45-second turns; Professional uses 30 seconds. Versus submit and real mismatches end turns; a valid selection auto-submits at timeout. Extra Time (+45s) adds to the current deadline. Server-authoritative deadlines remain unimplemented.
+- The score-plank star display uses one star icon and the current local balance multiplier. A new local browser profile receives 1 Star and one free Practice Audience Poll; match-streak Star rewards and account-based wallets are not implemented.
+- Inventory opens a working shop panel. Audience Pick works as an explicitly simulated Practice Audience; Extra Time and Double Play have use actions. Other power-up effects and real audience votes remain unimplemented.
+- The online room lobby supports room creation/joining and connection status, but there is no synchronized online game session or live audience/poll service.
+- The blank wooden dummy has its own `dummy.webp` asset and neutral behavior. Cancel Counter pickup, per-player item storage in an online match, and its counter-use flow still need implementation.
+- The old idle auto-submit was removed. A valid versus selection is auto-submitted at the turn deadline, rather than waiting beyond the timer for a manual Submit.
 - Player mode, scoring, turn deadline, inventory, streak, and board resolution should be owned by a small game-state layer instead of being scattered across animation callbacks. UI animations should react to resolved state, not decide the result themselves.
 
 ## 7. Recommended implementation order
 
 1. **Core rules:** active player, score per player, 45-second countdown, turn timeout, match end/rematch, correct reset on wrong tiles.
 2. **AI modes:** Easy and Hard (Professional) using only information each player could reasonably observe. *(Done, except power-up use.)*
-3. **Stars and inventory:** 1 starting Star, successful-match streak rewards, persistent wallet, buy/use flows, Double Time, Double Play, Score Strike, and the rare Counter Shield.
+3. **Stars and inventory:** 1 starting Star plus one free Practice Audience Pick per new local profile, account wallets for online players, successful-match streak rewards, Extra Time (+45s), Double Play, Score Strike, and the rare Counter Shield.
 4. **Audience Pick:** begin with a clearly labelled practice audience; replace it with real voting only after a live backend exists.
 5. **Online play:** room codes, presence, authoritative turn/move validation, persistent accounts and inventory, reconnect handling, and spectator voting.
 6. **Polish:** short tutorial, sound toggle, reduced-motion option, turn hand-off screen, match history, streak celebration, and a post-match rematch button.
