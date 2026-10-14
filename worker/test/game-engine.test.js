@@ -238,3 +238,25 @@ test("three successful turns award Stars to that individual player once at each 
   assert.equal(state.playerData["1"].stars, 4);
   assert.equal(state.playerData["1"].lastRewardedStreak, 3);
 });
+
+test("player snapshots publish a swap deadline without exposing hidden shapes", () => {
+  const state = startPlaying();
+  const endAt = NOW + INITIAL_REVIEW_MS + 2_000;
+  state.tiles.find((tile) => tile.id === "t1").moving = true;
+  state.tiles.find((tile) => tile.id === "t2").moving = true;
+  state.shuffles = [{
+    tileIds: ["t1", "t2"],
+    steps: [[0, 1]],
+    nextStep: 1,
+    move: { tileIds: ["t1", "t2"], endsAt: endAt },
+    nextAt: null
+  }];
+  const view = gameViewForPlayer(state, 1);
+  assert.equal(view.shuffling, true);
+  for (const id of ["t1", "t2"]) {
+    const tile = view.tiles.find((candidate) => candidate.id === id);
+    assert.equal(tile.moving, true);
+    assert.equal(tile.movingUntil, endAt);
+    assert.equal(tile.shape, null);
+  }
+});
