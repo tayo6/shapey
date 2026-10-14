@@ -19,6 +19,7 @@ async function waitForScene(page, predicate, description, timeout = TIMEOUT, arg
       activeScenes: window.game?.scene?.getScenes(true).map((scene) => scene.scene.key),
       lobbyMode: window.game?.scene?.getScene("MenuScene")?.onlineMode,
       status: window.game?.scene?.getScene("MenuScene")?.onlineStatus?.text,
+      roomCode: window.game?.scene?.getScene("MenuScene")?.currentRoomCode,
       gameState: window.game?.scene?.getScene("GameScene")?.onlineState?.status
     })).catch(() => null);
     throw new Error("Timed out waiting for " + description + ". Browser state: " +
@@ -45,14 +46,6 @@ async function run() {
   const pageErrors = [];
   for (const page of [page1, page2]) {
     page.on("pageerror", (error) => pageErrors.push(error.message));
-    page.on("dialog", async (dialog) => {
-      if (dialog.type === "prompt") {
-        const code = page === page2 ? page2.__roomCode : "";
-        await dialog.accept(code);
-      } else {
-        await dialog.dismiss();
-      }
-    });
   }
 
   try {
@@ -68,10 +61,16 @@ async function run() {
       "created PvP room code");
     const roomCode = await page1.evaluate(() =>
       window.game.scene.getScene("MenuScene").currentRoomCode);
-    page2.__roomCode = roomCode;
 
-    // Install the prompt answer before clicking JOIN ROOM.
+    // Return the known room code from inside the second browser instead of using a native
+    // prompt dialog. This keeps the test deterministic while still clicking the real JOIN ROOM UI.
+    await page2.evaluate((code) => {
+      window.prompt = () => code;
+    }, roomCode);
     await clickWorld(page2, 360, 810);
+    await waitForScene(page2, () =>
+      window.game?.scene?.getScene("MenuScene")?.onlineStatus?.text?.includes("Room connected as Player 2"),
+      "second browser joined as Player 2", 15_000);
 
     await Promise.all([
       waitForScene(page1, () => window.game?.scene?.getScene("GameScene")?.online === true &&
