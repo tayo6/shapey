@@ -35,7 +35,12 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
 
     if (url.pathname === "/health" && request.method === "GET") {
-      return json({ ok: true, service: "shapey-multiplayer", stage: "mode-aware-rooms" }, 200, cors);
+      return json({
+        ok: true,
+        service: "shapey-multiplayer",
+        stage: "authoritative-gameplay-v1",
+        protocolVersion: 1
+      }, 200, cors);
     }
 
     if (url.pathname === "/api/rooms" && request.method === "POST") {
