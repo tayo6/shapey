@@ -1,14 +1,28 @@
 # Shapey multiplayer staging
 
-This configuration is intentionally isolated from production.
+This test environment is separate from production.
 
-- Worker name: `shapey-multiplayer-staging`
-- Durable Object binding: `ROOMS`
-- Durable Object class: `Room`
-- Migration: a new `v1` SQLite-backed `Room` class for this new Worker only
-- No production Worker name or production namespace ID is referenced here.
+- **Staging game page:** https://tayo6.github.io/staging/
+- **Staging Worker health check:** https://shapey-multiplayer-staging.hellohuman100.workers.dev/health
+- **Staging Worker:** `shapey-multiplayer-staging`
+- **Staging Durable Object namespace:** `shapey-multiplayer-staging_Room` (SQLite-backed)
+- **Protocol:** version 1
+- **Production Worker:** `shapey-multiplayer` — unchanged
+- **Production Durable Object namespace:** `shapey-multiplayer_Room` — unchanged
 
-## Deploy to staging
+The staging game page is an additional path on the site's static hosting. The existing home page and `src/main.js` are not changed; only `staging/main.js` points to the staging Worker. The staging Worker has its own namespace and does not share game-room storage with production.
+
+## What to test
+
+1. Open the staging game page on two different devices and play **Player 1 vs Player 2**.
+2. Confirm turns alternate, scores agree on both devices, and the other player's turn cannot be played.
+3. Open a fresh Tag room on four devices. Confirm team scores and turn order: P1 → P3 → P2 → P4.
+4. Confirm a face-down tile does not reveal its shape, then test reconnecting a player to the same seat.
+5. Leave the normal game home page untouched during these tests.
+
+The staging service currently supports online Player 1 vs Player 2 and Tag. Online Audience Poll, Score Strike, Cancel Counter, spectators and chat are not implemented yet.
+
+## Redeploy staging
 
 From the `worker/` directory, with Wrangler authenticated to the Shapey Cloudflare account:
 
@@ -16,13 +30,6 @@ From the `worker/` directory, with Wrangler authenticated to the Shapey Cloudfla
 npx wrangler@4.151.0 deploy --config wrangler.staging.jsonc
 ```
 
-Do not change `wrangler.jsonc` for this staging task and do not deploy it. That file names the live `shapey-multiplayer` Worker and its existing `ROOMS` namespace.
+Do not deploy `wrangler.jsonc` for this task. It names the live `shapey-multiplayer` Worker and its existing `ROOMS` namespace. The staging config uses a separate Worker name and has its own new `v1` SQLite migration.
 
-## Checks after staging deploy
-
-1. Open `https://shapey-multiplayer-staging.<account-subdomain>.workers.dev/health`; it must report `protocolVersion: 1`.
-2. Verify room creation, PvP with two separate clients, and Tag with four separate clients.
-3. Verify turn order, score updates, hidden tile privacy, reconnect, out-of-turn rejection, and room expiry.
-4. Keep production unchanged until the staging frontend and real-device tests pass.
-
-The staging Worker is not a production release. It may create isolated test rooms and staging storage only.
+The staging Worker is not a production release. Use it only for testing; it may create isolated test rooms and staging storage.
