@@ -10,6 +10,7 @@ The service is still a **room/lobby prototype**, not a playable online game. It 
 
 - The Worker module was retrieved from the live Cloudflare script and brought under version control before deployment changes.
 - WebSocket handshakes explicitly validate the `Origin` header against the same allowlist used for CORS.
+- WebSocket messages are capped at 4 KiB and throttled to 60 messages per connection per 10-second window; repeated excess closes that socket.
 - Empty rooms expire after 30 minutes of inactivity. Rooms have a six-hour hard maximum lifetime. Expiry uses Durable Object alarms; the idle timeout does not remove active connected rooms.
 - Existing mode capacities remain unchanged: PvP = 2; Tag = 4. No new game mode is introduced.
 
