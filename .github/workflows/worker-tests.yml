@@ -4,12 +4,16 @@ on:
   pull_request:
     paths:
       - "worker/**"
+      - "src/**"
+      - "tests/**"
       - ".github/workflows/worker-tests.yml"
   push:
     branches:
       - main
     paths:
       - "worker/**"
+      - "src/**"
+      - "tests/**"
       - ".github/workflows/worker-tests.yml"
 
 jobs:
