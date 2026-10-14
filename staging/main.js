@@ -779,6 +779,7 @@ class GameScene extends Phaser.Scene {
     this.starBalance = this.loadStarBalance();
     // Track streaks per player seat even though the local prototype shares its Star wallet.
     this.matchStreaks = new Map();
+    this.pendingStreakToast = null;
     this.inventoryItems = this.loadInventoryItems();
     this.inventoryUI = [];
     this.inventoryOpen = false;
@@ -946,6 +947,13 @@ class GameScene extends Phaser.Scene {
     });
   }
 
+  // Keep the Star reward visible alongside the turn handoff message.
+  showTurnToast(message, holdMs = 2600) {
+    const reward = this.pendingStreakToast;
+    this.pendingStreakToast = null;
+    this.showToast(reward ? reward + ' · ' + message : message, reward ? 3600 : holdMs);
+  }
+
   // ------------------------------------------------------- clocks and turns
   setClockText(textObject, value) {
     if (textObject.lastClock === value) return; // only redraw the text when it changes
@@ -1033,7 +1041,7 @@ class GameScene extends Phaser.Scene {
       const samePlayer = this.activePlayer;
       this.doublePlayPendingPlayer = null;
       this.startTurn(samePlayer, { bonus: true });
-      this.showToast(this.turnLabel() + ' gets a Double Play bonus turn!');
+      this.showTurnToast(this.turnLabel() + ' gets a Double Play bonus turn!');
       return;
     }
 
@@ -1049,7 +1057,7 @@ class GameScene extends Phaser.Scene {
       : reason === 'hazard' ? 'Hazard! No reward. '
       : reason === 'mismatch' ? 'Mismatch. '
       : reason === 'submit' ? 'Turn submitted. ' : '';
-    this.showToast(prefix + this.turnLabel() + '’s turn');
+    this.showTurnToast(prefix + this.turnLabel() + '’s turn');
   }
 
   createStars(startX, y, count) {
@@ -1190,7 +1198,8 @@ class GameScene extends Phaser.Scene {
     if (!next.reward || (this.modeCfg.ai && this.activePlayer === 1)) return;
     this.starBalance += next.reward;
     this.saveInventory();
-    this.showToast(next.streak + '-match streak! +' + next.reward + ' Stars', 3200);
+    // Defer the reward message until turn handoff so the ordinary turn message cannot hide it.
+    this.pendingStreakToast = next.streak + '-match streak! +' + next.reward + ' Stars';
   }
 
   breakLocalMatchStreak() {
