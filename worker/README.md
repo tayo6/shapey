@@ -16,13 +16,14 @@ The service is still a **room/lobby prototype**, not a playable online game. It 
 
 ## Local tests
 
-Requires Node.js 20 or later; no external test package is needed:
+Use Node.js 22 or later for the current Wrangler runtime. Install the test dependency once:
 
 ```sh
+npm install --no-audit --no-fund
 npm test
 ```
 
-Tests cover origin allowlisting, supported modes/capacities, room-code format, and the expiry policy. They do not replace end-to-end tests against a local Worker runtime.
+`npm test` runs the unit tests for protocol policy and (on the authoritative-gameplay branch) server game rules. The CI workflow validates the Worker bundle and configuration without deployment. These checks are not a substitute for end-to-end tests against a local Worker runtime.
 
 ## Existing Cloudflare binding
 
