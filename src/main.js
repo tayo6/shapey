@@ -898,7 +898,7 @@ class GameScene extends Phaser.Scene {
     this.activePlayer = player;
     if (!bonus) this.turnNumber++;
     // Tag normal turns rotate partners: P1 → P3 → P2 → P4. A Double Play bonus repeats the same partner.
-    this.activeMember = this.modeCfg.teams ? Math.floor(this.turnNumber / 2) % 2 : 0;
+    this.activeMember = this.modeCfg.teams ? RULES.tagMemberForTurn(this.turnNumber) : 0;
     this.isBonusTurn = bonus;
     this.turnEnding = false;
     this.timeoutHandling = false;
@@ -944,7 +944,7 @@ class GameScene extends Phaser.Scene {
 
     // Double Play is the only exception to alternating turns. It grants exactly one extra turn,
     // and the bonus turn cannot chain another Double Play.
-    if (!this.isBonusTurn && this.doublePlayPendingPlayer === this.activePlayer) {
+    if (RULES.shouldGrantDoublePlay(this.isBonusTurn, this.doublePlayPendingPlayer, this.activePlayer)) {
       const samePlayer = this.activePlayer;
       this.doublePlayPendingPlayer = null;
       this.startTurn(samePlayer, { bonus: true });
@@ -952,7 +952,12 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
-    const next = 1 - this.activePlayer;
+    const next = RULES.nextVersusPlayer(this.activePlayer);
+    if (next == null) {
+      console.error('Invalid versus turn owner; turn handoff stopped safely.');
+      this.turnEnding = false;
+      return;
+    }
     this.startTurn(next);
     const prefix = reason === 'timeout' ? 'Time is up. '
       : reason === 'pass' ? 'The AI passes. '
