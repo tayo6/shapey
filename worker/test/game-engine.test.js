@@ -183,3 +183,58 @@ test("scores retain the existing 3/4/5+ scoring table", () => {
   assert.equal(scoreForMatch(5), 5);
   assert.equal(scoreForMatch(8), 5);
 });
+
+test("Tag partners contribute to the same team score across separate turns", () => {
+  let state = startPlaying("tag");
+  const first = ["t1", "t2", "t3"];
+  for (const id of first) state.tiles.find((tile) => tile.id === id).shape = "circle";
+  for (const tileId of first) {
+    const result = act(state, 1, { type: "pick", tileId });
+    assert.equal(result.accepted, true, result.error);
+    state = result.state;
+  }
+  state = act(state, 1, { type: "submit" }).state;
+  assert.deepEqual(state.scores, [1, 0]);
+  assert.equal(state.activePlayerNumber, 3);
+
+  // Player 3 (Team 2) ends their turn without scoring; Player 2 (Team 1) then matches.
+  state = act(state, 3, { type: "submit" }).state;
+  assert.equal(state.activePlayerNumber, 2);
+  const second = ["t4", "t5", "t6"];
+  for (const id of second) state.tiles.find((tile) => tile.id === id).shape = "square";
+  for (const tileId of second) {
+    const result = act(state, 2, { type: "pick", tileId });
+    assert.equal(result.accepted, true, result.error);
+    state = result.state;
+  }
+  state = act(state, 2, { type: "submit" }).state;
+  assert.deepEqual(state.scores, [2, 0]);
+  assert.equal(state.activePlayerNumber, 4);
+});
+
+test("three successful turns award Stars to that individual player once at each streak length", () => {
+  let state = startPlaying();
+  state.playerData["1"].stars = 1;
+  for (let matchNumber = 1; matchNumber <= 3; matchNumber++) {
+    const available = state.tiles.filter((tile) =>
+      !tile.faceUp && !tile.selected && !tile.moving &&
+      !["hazard", "dummy"].includes(tile.shape)).slice(0, 3);
+    assert.equal(available.length, 3);
+    const shape = "circle";
+    for (const tile of available) tile.shape = shape;
+    for (const tile of available) {
+      const result = act(state, 1, { type: "pick", tileId: tile.id });
+      assert.equal(result.accepted, true, result.error);
+      state = result.state;
+    }
+    state = act(state, 1, { type: "submit" }).state;
+    if (matchNumber < 3) {
+      assert.equal(state.activePlayerNumber, 2);
+      state = act(state, 2, { type: "submit" }).state;
+      assert.equal(state.activePlayerNumber, 1);
+    }
+  }
+  assert.equal(state.playerData["1"].streak, 3);
+  assert.equal(state.playerData["1"].stars, 4);
+  assert.equal(state.playerData["1"].lastRewardedStreak, 3);
+});
