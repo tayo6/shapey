@@ -464,8 +464,11 @@ class MenuScene extends Phaser.Scene {
       color: '#fff2c7', stroke: '#3a2412', strokeThickness: 8, align: 'center',
       wordWrap: { width: 590 },
     }).setOrigin(0.5).setDepth(82));
+    const lobbyInstructions = this.onlineMode === 'tag'
+      ? 'Four devices. Team 1: Players 1 and 2. Team 2: Players 3 and 4. Invite your teammate first, then invite the other team.'
+      : 'Two devices. Take alternating turns; the first player to 100 points wins.';
     this.onlineStatus = add(this.add.text(GAME_WIDTH / 2, 415,
-      'Create a room and share its code, or join a friend.', {
+      lobbyInstructions, {
         fontFamily: FONT, fontSize: '23px', color: '#fff2c7', align: 'center',
         wordWrap: { width: 560 }, stroke: '#3a2412', strokeThickness: 4,
       }).setOrigin(0.5).setDepth(82));
@@ -532,9 +535,21 @@ class MenuScene extends Phaser.Scene {
     }
   }
 
+  async ensureGameplayService() {
+    const response = await fetch(MULTIPLAYER_API + '/health');
+    let status;
+    try { status = await response.json(); } catch {}
+    if (!response.ok || !status || status.stage !== 'authoritative-gameplay-v1' || status.protocolVersion !== 1) {
+      throw new Error('Online gameplay is not enabled on the live server yet. Please try again later; no room was created.');
+    }
+    return status;
+  }
+
   async createOnlineRoom() {
-    this.setOnlineStatus('Creating your room...');
+    this.setOnlineStatus('Checking multiplayer service...');
     try {
+      await this.ensureGameplayService();
+      this.setOnlineStatus('Creating your room...');
       const response = await fetch(MULTIPLAYER_API + '/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -545,7 +560,7 @@ class MenuScene extends Phaser.Scene {
       this.showOnlineRoomCode(data.roomCode);
       this.connectOnlineRoom(data.roomCode, data.websocketUrl, this.onlineMode);
     } catch (error) {
-      this.setOnlineStatus('Could not create a room. Check your connection and try again.');
+      this.setOnlineStatus(error.message || 'Could not create a room. Check your connection and try again.');
       console.error('Shapey room creation failed:', error);
     }
   }
@@ -558,8 +573,10 @@ class MenuScene extends Phaser.Scene {
       this.setOnlineStatus('That code is not valid. Room codes have 6 letters or numbers.');
       return;
     }
-    this.setOnlineStatus('Checking room code...');
+    this.setOnlineStatus('Checking multiplayer service...');
     try {
+      await this.ensureGameplayService();
+      this.setOnlineStatus('Checking room code...');
       const response = await fetch(MULTIPLAYER_API + '/api/rooms/' + code);
       const room = await response.json();
       if (!response.ok) throw new Error(room.error || 'Room not found.');
