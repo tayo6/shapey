@@ -71,8 +71,8 @@ export function isRoomExpired(room, now, connectedCount) {
 
 export function nextRoomCreationWindow(timestamps, now) {
   const recent = Array.isArray(timestamps)
-    ? timestamps.filter((timestamp) => Number.isFinite(timestamp) &&
-        timestamp > now - ROOM_CREATE_RATE_WINDOW_MS)
+    ? timestamps.filter((timestamp) => Number.isFinite(timestamp) && timestamp >= 0 &&
+        timestamp <= now && timestamp > now - ROOM_CREATE_RATE_WINDOW_MS)
     : [];
   if (recent.length >= ROOM_CREATE_RATE_LIMIT) {
     return {
