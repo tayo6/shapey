@@ -29,3 +29,6 @@ jobs:
         run: npm test
       - name: Validate Wrangler JSON syntax
         run: node -e 'JSON.parse(require("node:fs").readFileSync("wrangler.jsonc", "utf8")); console.log("wrangler.jsonc is valid JSON")'
+      - name: Run local turn-rule regression tests
+        working-directory: .
+        run: node --test tests/turn-rules.test.js
