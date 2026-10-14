@@ -866,6 +866,7 @@ class GameScene extends Phaser.Scene {
   // Play Alone has no clock or attempt limit; the centre panel shows attempts and the score floor.
   updateAloneHUD() {
     if (this.modeCfg.twoPlayers) return;
+    this.timerText.setFontSize(23); // "TRIES: 17" must fit the timer plank; half the previous 46px size.
     this.timerText.setText('TRIES: ' + this.totalAttempts);
     this.goalText.setText('LOSE AT ' + ALONE_SCORE_FLOOR);
   }
