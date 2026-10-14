@@ -25,6 +25,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Validate Worker bundle and Wrangler config without deploying
+        run: npx --yes wrangler@4 deploy --dry-run --outdir /tmp/shapey-worker-dry-run
       - name: Run protocol tests
         run: npm test
       - name: Validate Wrangler JSON syntax
