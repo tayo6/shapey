@@ -11,11 +11,12 @@ The `feat/authoritative-online-gameplay` branch now contains an early authoritat
 - Hidden tile shapes are omitted from player snapshots while tiles are face-down.
 - Room creation requires an allowed origin and is limited to 5 requests per client IP per rolling 10 minutes. This is a basic abuse barrier, not full DDoS protection.
 
-This is **not yet approved for release**. Browser/two-device end-to-end and staging tests have not been completed. Reconnection can return the current board, but stable player-seat identity after reconnect is not yet implemented. Room-creation abuse controls and full game integration tests remain outstanding. Audience Poll, Score Strike, Cancel Counter, spectators and chat are not implemented online. The live deployed Worker remains the older lobby prototype until a separately reviewed deployment is completed.
+This is **not yet approved for release**. CI now exercises the local Worker with two PvP clients and four Tag clients, and runs a local Playwright smoke test using two separate browser contexts. Those checks are not a substitute for real-device and staging tests. Reconnecting clients use a random per-room seat token: the browser stores the token locally and the Worker stores only its hash, so a returning player receives the same seat and current match state. If that browser storage is cleared or unavailable, the seat cannot be recovered; create a new room. A seat stays reserved for that room's lifetime. Audience Poll, Score Strike, Cancel Counter, spectators and chat are not implemented online. The live deployed Worker remains the older lobby prototype until a separately reviewed deployment is completed.
 
 ## Changes in this source-controlled version
 
 - The Worker module was retrieved from the live Cloudflare script and brought under version control before deployment changes.
+- New room seats receive 256-bit random reconnect tokens. Only SHA-256 token hashes are persisted in the Durable Object; the token is not placed in a URL. A reconnect with the token restores the original player number and the current match snapshot.
 - WebSocket handshakes explicitly validate the `Origin` header against the same allowlist used for CORS.
 - WebSocket messages are capped at 4 KiB and throttled to 60 messages per connection per 10-second window; the first message beyond this limit closes that socket.
 - Empty rooms expire after 30 minutes of inactivity. Rooms have a six-hour hard maximum lifetime. Expiry uses Durable Object alarms; the idle timeout does not remove active connected rooms.
@@ -37,11 +38,11 @@ npx --yes wrangler@4.151.0 dev --local --ip 127.0.0.1 --port 8787
 node integration-smoke.mjs
 ```
 
-The smoke test exercises local PvP/Tag sockets and does not deploy a Worker. CI starts the local Worker and runs it automatically. It complements, but does not replace, a visual browser test on real devices.
+The integration test exercises local PvP/Tag sockets, seat-token reconnect/state recovery, and does not deploy a Worker. CI also drives two browser contexts through a PvP match. Both run against a local Worker only. They still need to be complemented by real-device staging tests.
 
 ## Existing Cloudflare binding
 
-`wrangler.jsonc` records the existing Worker name, Durable Object binding name/class, compatibility date, and migration tag observed on the deployed script. It uses Wrangler's legacy `migrations` configuration to match the existing `v1` class migration. **This PR does not deploy it.** Before any future deployment, verify Wrangler's remote migration comparison and dry-run output. Stop if Wrangler proposes creating a replacement namespace, creating a new migration, or deleting/migrating existing state unexpectedly.
+`wrangler.jsonc` records the existing Worker name, Durable Object binding name/class, compatibility date, and an expected legacy `v1` SQLite-class migration. The live `ROOMS` namespace and its SQLite backing were read-only verified, but the exact remote migration tag could not be independently confirmed. **This PR does not deploy it.** Before any future deployment, verify Wrangler's remote migration comparison and dry-run output against the live account. Stop if Wrangler proposes creating a replacement namespace, creating a new migration, or deleting/migrating existing state unexpectedly.
 
 Before a future production deployment:
 1. Run the local tests and config validation.
