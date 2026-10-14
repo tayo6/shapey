@@ -26,6 +26,11 @@
     return Math.max(0, score - Math.max(floor, score - requestedPoints));
   }
 
+  // Only Professional AI uses the shorter 30-second turn; all other versus turns use 45 seconds.
+  function turnDurationForMode(mode, difficulty, standardMs = 45000, professionalMs = 30000) {
+    return mode === 'ai' && difficulty === 'pro' ? professionalMs : standardMs;
+  }
+
   // Fixed versus targets: AI/PvP race to 100; Tag teams race to 200.
   function targetScoreForMode(mode) {
     if (mode === 'tag') return 200;
@@ -56,6 +61,7 @@
     hazardAction,
     penaltyToApply,
     targetScoreForMode,
+    turnDurationForMode,
     hasReachedTarget,
     hasReachedScoreFloor,
     parseProbabilityOverride,
