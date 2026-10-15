@@ -666,6 +666,122 @@ class MenuScene extends Phaser.Scene {
     }
   }
 
+  openWatchLive() {
+    if (this.onlineUI && this.onlineUI.length) return;
+    const entered = window.prompt('Enter the 6-character room code to watch:');
+    if (entered == null) return;
+    const code = entered.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!/^[A-Z0-9]{6}$/.test(code)) {
+      this.setOnlineStatus('That code is not valid. Room codes have 6 letters or numbers.');
+      return;
+    }
+    this.setOnlineStatus('Checking room...');
+    fetch(MULTIPLAYER_API + '/api/rooms/' + code)
+      .then(async response => {
+        const room = await response.json();
+        if (!response.ok) throw new Error(room.error || 'Room not found.');
+        this.connectSpectatorRoom(code, room.mode);
+      })
+      .catch(error => this.setOnlineStatus(error.message || 'Could not open the watch room.'));
+  }
+
+  connectSpectatorRoom(code, mode) {
+    if (this.onlineSocket) {
+      try { this.onlineSocket.close(); } catch {}
+    }
+    const websocketUrl = MULTIPLAYER_API.replace(/^http/, 'ws') + '/ws/' + code + '?mode=' +
+      encodeURIComponent(mode) + '&role=spectator';
+    const socket = new WebSocket(websocketUrl);
+    this.onlineSocket = socket;
+    socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'spectate' })));
+    socket.addEventListener('message', event => {
+      let message;
+      try { message = JSON.parse(event.data); } catch { return; }
+      if (message.type === 'spectator_welcome') {
+        this.setOnlineStatus('Watching ' + code + ' · ' + mode.toUpperCase() + '. Live chat is enabled.');
+        this.showSpectatorPanel(socket, code, message);
+      } else if (message.type === 'chat_message' && this.spectatorChatLog) {
+        this.spectatorChatLog.setText((this.spectatorChatLog.text || '') + '\\n' +
+          message.message.sender + ': ' + message.message.text);
+      } else if (message.type === 'audience_poll_state' && this.spectatorPollText) {
+        const poll = message.poll;
+        this.spectatorPollText.setText(!poll ? 'No active audience poll.' :
+          'AUDIENCE PICK · ' + poll.totalVotes + ' votes\\n' +
+          poll.options.map(option => option + ': ' + poll.counts[option]).join('  ·  '));
+        if (poll && !poll.closed && this.spectatorVoteButtons) {
+          this.spectatorVoteButtons.forEach(({ button, option }) =>
+            button.setText(option + ' (' + poll.counts[option] + ')'));
+        }
+      } else if (message.type === 'error') {
+        this.setOnlineStatus(message.message || 'The watch room reported an error.');
+      }
+    });
+    socket.addEventListener('close', () => this.setOnlineStatus('Watch connection closed.'));
+  }
+
+  showSpectatorPanel(socket, code, welcome) {
+    this.spectatorUI = [];
+    const add = object => { this.spectatorUI.push(object); return object; };
+    add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.9)
+      .setDepth(100).setInteractive());
+    add(this.add.rectangle(GAME_WIDTH / 2, 650, 650, 900, 0x4b2d17, 1)
+      .setStrokeStyle(5, 0xd5ad72).setDepth(101));
+    add(this.add.text(GAME_WIDTH / 2, 250, 'WATCH LIVE · ' + code, {
+      fontFamily: FONT, fontSize: '37px', color: '#ffe36e', align: 'center',
+      stroke: '#3a2412', strokeThickness: 7,
+    }).setOrigin(0.5).setDepth(102));
+    add(this.add.text(GAME_WIDTH / 2, 310,
+      'Spectators: ' + (welcome.spectatorCount || 0) + ' · ' + welcome.status, {
+        fontFamily: FONT, fontSize: '21px', color: '#fff2c7', align: 'center',
+      }).setOrigin(0.5).setDepth(102));
+    this.spectatorPollText = add(this.add.text(GAME_WIDTH / 2, 390, 'No active audience poll.', {
+      fontFamily: FONT, fontSize: '20px', color: '#fff2c7', align: 'center',
+      wordWrap: { width: 560 },
+    }).setOrigin(0.5).setDepth(102));
+    this.spectatorVoteButtons = [];
+    if (modeIsTag(welcome.mode) && welcome.poll && welcome.poll.options) {
+      welcome.poll.options.forEach((option, index) => {
+        const button = this.add.text(180 + (index % 2) * 300, 450 + Math.floor(index / 2) * 58,
+          option + ' (' + welcome.poll.counts[option] + ')', {
+            fontFamily: FONT, fontSize: '21px', color: '#ffe36e', backgroundColor: '#38210f',
+            padding: { x: 12, y: 10 },
+          }).setOrigin(0.5).setDepth(103).setInteractive({ useHandCursor: true });
+        button.on('pointerdown', () => socket.send(JSON.stringify({ type: 'poll_vote', shape: option })));
+        add(button);
+        this.spectatorVoteButtons.push({ button, option });
+      });
+    }
+    this.spectatorChatLog = add(this.add.text(110, 580,
+      (welcome.chatHistory || []).map(item => item.sender + ': ' + item.text).join('\\n') || 'Chat is ready.',
+      { fontFamily: FONT, fontSize: '17px', color: '#fff2c7', wordWrap: { width: 540 },
+        lineSpacing: 4 }).setDepth(102));
+    const input = add(this.add.dom(GAME_WIDTH / 2, 1010).createElement('input', {
+      type: 'text', placeholder: 'Type a message…', maxlength: 280,
+      style: 'width:430px;padding:12px;font-size:18px;border-radius:8px;'
+    }));
+    const send = () => {
+      const element = input.node;
+      const field = element && (element.tagName === 'INPUT' ? element : element.querySelector('input'));
+      if (!field || !field.value.trim() || socket.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify({ type: 'chat', text: field.value }));
+      field.value = '';
+    };
+    woodButton(this, GAME_WIDTH / 2, 1080, 240, 58, 'SEND CHAT', 23, send, 104).forEach(add);
+    woodButton(this, GAME_WIDTH / 2, 1150, 240, 58, 'STOP WATCHING', 21, () => {
+      try { socket.close(); } catch {}
+      if (this.spectatorUI) this.spectatorUI.forEach(object => object.destroy());
+      this.spectatorUI = [];
+      this.spectatorChatLog = null;
+      this.spectatorPollText = null;
+      this.spectatorVoteButtons = null;
+      this.onlineSocket = null;
+    }, 104).forEach(add);
+    this.spectatorPollText.setText(welcome.poll
+      ? 'AUDIENCE PICK · ' + welcome.poll.totalVotes + ' votes\\n' +
+        welcome.poll.options.map(option => option + ': ' + welcome.poll.counts[option]).join('  ·  ')
+      : 'No active audience poll.');
+  }
+
   connectOnlineRoom(code, websocketUrl, mode) {
     if (this.onlineSocket) {
       try { this.onlineSocket.close(); } catch {}
