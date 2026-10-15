@@ -521,8 +521,13 @@ class MenuScene extends Phaser.Scene {
 
   openAudienceDirectory() {
     const url = new URL('/shapey/staging/audience.html', window.location.origin);
-    const opened = window.open(url.href, '_blank', 'noopener,noreferrer');
-    if (!opened) this.setOnlineStatus('Open the Live Games directory here: ' + url.href);
+    const opened = window.open(url.href, '_blank');
+    if (opened) {
+      opened.opener = null;
+      this.setOnlineStatus('Live Games directory opened in a new tab.');
+    } else {
+      this.setOnlineStatus('Your browser blocked the new tab. Open: ' + url.href);
+    }
   }
 
   audienceWatchUrl() {
