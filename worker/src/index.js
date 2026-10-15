@@ -13,6 +13,10 @@ const MAX_SPECTATORS_PER_ROOM = 100;
 const MAX_CHAT_CHARS = 280;
 const CHAT_HISTORY_LIMIT = 50;
 const AUDIENCE_POLL_MS = 20_000;
+const LIVE_DIRECTORY_OBJECT_NAME = "shapey-live-directory-v1";
+const LIVE_DIRECTORY_PREFIX = "listed-room:";
+const LIVE_DIRECTORY_STALE_MS = 5 * 60_000;
+const LIVE_DIRECTORY_REFRESH_MS = 45_000;
 
 function shortRandomId() {
   return newSeatToken().slice(0, 12).toUpperCase();
@@ -88,6 +92,21 @@ export default {
         stage: "authoritative-gameplay-v1",
         protocolVersion: 1
       }, 200, cors);
+    }
+
+    if (url.pathname === "/api/rooms" && request.method === "GET") {
+      if (!isAllowedOrigin(request.headers.get("Origin") || "")) {
+        return json({ error: "Origin not allowed." }, 403, cors);
+      }
+      const directory = env.ROOMS.get(env.ROOMS.idFromName(LIVE_DIRECTORY_OBJECT_NAME));
+      const target = new URL("https://directory.internal/directory/list");
+      for (const key of ["mode", "status"]) {
+        const value = url.searchParams.get(key);
+        if (value) target.searchParams.set(key, value);
+      }
+      const response = await directory.fetch(target.toString());
+      const payload = await response.json();
+      return json(payload, response.status, { ...cors, "Cache-Control": "no-store" });
     }
 
     if (url.pathname === "/api/rooms" && request.method === "POST") {
@@ -167,12 +186,78 @@ export class Room extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.ctx = ctx;
+    this.lastDirectorySignature = null;
+    this.lastDirectoryPublishedAt = 0;
     // Serialize seat claims so simultaneous initial joins cannot claim the same seat.
     this.joinQueue = Promise.resolve();
   }
 
   async fetch(request) {
     const url = new URL(request.url);
+
+    // A dedicated singleton instance of this class stores lightweight public room cards.
+    // Its internal routes are only reached through the Worker binding, never the public router.
+    if (url.pathname === "/directory/list" && request.method === "GET") {
+      const now = Date.now();
+      const stored = await this.ctx.storage.list({ prefix: LIVE_DIRECTORY_PREFIX });
+      const rooms = [];
+      for (const [key, room] of stored.entries()) {
+        if (!room || !Number.isFinite(room.expiresAt) || room.expiresAt <= now ||
+            !["waiting", "ready", "starting", "live"].includes(room.status)) {
+          await this.ctx.storage.delete(key);
+          continue;
+        }
+        rooms.push(room);
+      }
+      const requestedMode = url.searchParams.get("mode");
+      const requestedStatus = url.searchParams.get("status");
+      const filtered = rooms.filter(room =>
+        (!["pvp", "tag"].includes(requestedMode) || room.mode === requestedMode) &&
+        (!["waiting", "ready", "starting", "live"].includes(requestedStatus) || room.status === requestedStatus));
+      const statusRank = { live: 0, starting: 1, ready: 2, waiting: 3 };
+      filtered.sort((a, b) => statusRank[a.status] - statusRank[b.status] || b.updatedAt - a.updatedAt);
+      return json({ rooms: filtered, count: filtered.length, generatedAt: now }, 200, { "Cache-Control": "no-store" });
+    }
+
+    if (url.pathname === "/directory/upsert" && request.method === "POST") {
+      let data;
+      try { data = await request.json(); }
+      catch { return json({ error: "Invalid directory entry." }, 400); }
+      const details = modeDetails(data?.mode);
+      const statuses = ["waiting", "ready", "starting", "live"];
+      if (!details || !isRoomCode(data?.roomCode) || !statuses.includes(data?.status)) {
+        return json({ error: "Invalid directory entry." }, 400);
+      }
+      const now = Date.now();
+      const scores = Array.isArray(data.scores) && data.scores.length >= 2 &&
+        data.scores.slice(0, 2).every(Number.isFinite) ? data.scores.slice(0, 2) : [0, 0];
+      const activePlayerNumber = Number.isInteger(data.activePlayerNumber) &&
+        data.activePlayerNumber >= 1 && data.activePlayerNumber <= details.maxPlayers
+        ? data.activePlayerNumber : null;
+      const summary = {
+        roomCode: data.roomCode,
+        mode: details.mode,
+        status: data.status,
+        playerCount: Number.isInteger(data.playerCount) ? Math.min(details.maxPlayers, Math.max(0, data.playerCount)) : 0,
+        maxPlayers: details.maxPlayers,
+        spectatorCount: Number.isInteger(data.spectatorCount) ? Math.min(MAX_SPECTATORS_PER_ROOM, Math.max(0, data.spectatorCount)) : 0,
+        scores,
+        activePlayerNumber,
+        targetScore: Number.isFinite(data.targetScore) ? data.targetScore : (details.mode === "tag" ? 200 : 100),
+        createdAt: Number.isFinite(data.createdAt) ? data.createdAt : now,
+        updatedAt: now,
+        expiresAt: now + LIVE_DIRECTORY_STALE_MS
+      };
+      await this.ctx.storage.put(LIVE_DIRECTORY_PREFIX + summary.roomCode, summary);
+      return json({ ok: true });
+    }
+
+    if (url.pathname === "/directory/remove" && request.method === "DELETE") {
+      const roomCode = url.searchParams.get("roomCode");
+      if (!isRoomCode(roomCode)) return json({ error: "Invalid room code." }, 400);
+      await this.ctx.storage.delete(LIVE_DIRECTORY_PREFIX + roomCode);
+      return json({ ok: true });
+    }
 
     if (url.pathname === "/rate-limit" && request.method === "POST") {
       const timestamps = await this.ctx.storage.get("roomCreationTimestamps") || [];
@@ -214,6 +299,7 @@ export class Room extends DurableObject {
       });
       // Empty/waiting rooms expire; activity refreshes the alarm, with a hard maximum lifetime.
       await this.ctx.storage.setAlarm(now + ROOM_IDLE_TTL_MS);
+      await this.publishRoomSummary(true);
       return json({ ok: true });
     }
 
@@ -224,6 +310,7 @@ export class Room extends DurableObject {
       for (const socket of this.ctx.getWebSockets()) {
         try { socket.close(4000, "Room expired"); } catch {}
       }
+      await this.removeRoomFromDirectory(room.roomCode);
       await this.ctx.storage.delete("room");
       await this.ctx.storage.delete("game");
       await this.ctx.storage.delete("seatRegistry");
@@ -291,6 +378,63 @@ export class Room extends DurableObject {
     const deadlines = [roomDeadline, gameDeadline, pollDeadline].filter(Number.isFinite);
     if (deadlines.length) await this.ctx.storage.setAlarm(Math.min(...deadlines));
     else await this.ctx.storage.deleteAlarm();
+    await this.publishRoomSummary();
+  }
+
+  async removeRoomFromDirectory(roomCode) {
+    if (!isRoomCode(roomCode)) return;
+    try {
+      const directory = this.env.ROOMS.get(this.env.ROOMS.idFromName(LIVE_DIRECTORY_OBJECT_NAME));
+      await directory.fetch("https://directory.internal/directory/remove?roomCode=" + roomCode, { method: "DELETE" });
+    } catch (error) {
+      console.error("Could not remove expired Shapey room from live directory:", error);
+    }
+  }
+
+  async publishRoomSummary(force = false) {
+    const room = await this.ctx.storage.get("room");
+    if (!room) return;
+    const game = await this.ctx.storage.get("game");
+    const status = game?.status === "finished" ? "finished" :
+      game?.status === "playing" ? "live" :
+      game?.status === "study" ? "starting" :
+      this.connectedCount() >= room.maxPlayers ? "ready" : "waiting";
+    if (status === "finished") {
+      await this.removeRoomFromDirectory(room.roomCode);
+      this.lastDirectorySignature = null;
+      this.lastDirectoryPublishedAt = 0;
+      return;
+    }
+    const connectedPlayerNumbers = new Set(this.playerList()
+      .filter(player => player.connected).map(player => player.playerNumber));
+    const summary = {
+      roomCode: room.roomCode,
+      mode: room.mode,
+      status,
+      playerCount: connectedPlayerNumbers.size,
+      maxPlayers: room.maxPlayers,
+      spectatorCount: this.spectatorCount(),
+      scores: Array.isArray(game?.scores) ? game.scores.slice(0, 2) : [0, 0],
+      activePlayerNumber: Number.isInteger(game?.activePlayerNumber) ? game.activePlayerNumber : null,
+      targetScore: Number.isFinite(game?.targetScore) ? game.targetScore : (room.mode === "tag" ? 200 : 100),
+      createdAt: room.createdAt
+    };
+    const signature = JSON.stringify(summary);
+    const now = Date.now();
+    if (!force && signature === this.lastDirectorySignature && now - this.lastDirectoryPublishedAt < LIVE_DIRECTORY_REFRESH_MS) return;
+    try {
+      const directory = this.env.ROOMS.get(this.env.ROOMS.idFromName(LIVE_DIRECTORY_OBJECT_NAME));
+      const response = await directory.fetch("https://directory.internal/directory/upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(summary)
+      });
+      if (!response.ok) throw new Error("Directory returned HTTP " + response.status);
+      this.lastDirectorySignature = signature;
+      this.lastDirectoryPublishedAt = now;
+    } catch (error) {
+      console.error("Could not update Shapey live directory:", error);
+    }
   }
 
   async broadcastGameState(type = "game_state") {
@@ -376,6 +520,7 @@ export class Room extends DurableObject {
       for (const socket of this.ctx.getWebSockets()) {
         try { socket.close(4000, "Room expired"); } catch {}
       }
+      await this.removeRoomFromDirectory(room.roomCode);
       await this.ctx.storage.delete("room");
       await this.ctx.storage.delete("game");
       await this.ctx.storage.delete("seatRegistry");
