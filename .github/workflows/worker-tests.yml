@@ -7,15 +7,6 @@ on:
       - "src/**"
       - "tests/**"
       - ".github/workflows/worker-tests.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "worker/**"
-      - "src/**"
-      - "tests/**"
-      - ".github/workflows/worker-tests.yml"
-
 jobs:
   worker-unit-tests:
     runs-on: ubuntu-latest
