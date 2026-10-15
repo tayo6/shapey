@@ -478,12 +478,15 @@ class MenuScene extends Phaser.Scene {
       stroke: '#3a2412', strokeThickness: 8, letterSpacing: 8,
     }).setOrigin(0.5).setDepth(83));
 
-    woodButton(this, GAME_WIDTH / 2, 710, 530, 88, 'CREATE ROOM', 36,
-      () => this.createOnlineRoom(), 82, 'Generate a shareable room code').forEach(add);
-    woodButton(this, GAME_WIDTH / 2, 810, 530, 88, 'JOIN ROOM', 36,
-      () => this.promptJoinRoom(), 82, 'Enter a friend’s room code').forEach(add);
-    woodButton(this, GAME_WIDTH / 2, 935, 530, 78, 'BACK', 33,
-      () => this.closeOnlineLobby(), 82).forEach(add);
+    this.onlineCreateUI = woodButton(this, GAME_WIDTH / 2, 710, 530, 88, 'CREATE ROOM', 36,
+      () => this.createOnlineRoom(), 82, 'Generate a shareable room code');
+    this.onlineCreateUI.forEach(add);
+    this.onlineJoinUI = woodButton(this, GAME_WIDTH / 2, 810, 530, 88, 'JOIN ROOM', 36,
+      () => this.promptJoinRoom(), 82, 'Enter a friend’s room code');
+    this.onlineJoinUI.forEach(add);
+    this.onlineBackUI = woodButton(this, GAME_WIDTH / 2, 935, 530, 78, 'BACK', 33,
+      () => this.closeOnlineLobby(), 82);
+    this.onlineBackUI.forEach(add);
   }
 
   setOnlineStatus(message) {
@@ -493,11 +496,76 @@ class MenuScene extends Phaser.Scene {
   showOnlineRoomCode(code) {
     this.currentRoomCode = code;
     if (this.onlineRoomCodeText && this.onlineRoomCodeText.active) this.onlineRoomCodeText.setText(code);
+    for (const object of [...(this.onlineCreateUI || []), ...(this.onlineJoinUI || [])]) {
+      object.setVisible(false);
+      if (object.disableInteractive) object.disableInteractive();
+    }
     if (!this.onlineCopyUI || !this.onlineCopyUI.length) {
       this.onlineCopyUI = woodButton(this, GAME_WIDTH / 2, 600, 390, 68, 'COPY ROOM CODE', 28,
         () => this.copyOnlineRoomCode(), 84);
       this.onlineCopyUI.forEach((object) => this.onlineUI.push(object));
       this.onlineCopyLabel = this.onlineCopyUI[1];
+    }
+    if (!this.onlineWatchUI || !this.onlineWatchUI.length) {
+      this.onlineWatchUI = woodButton(this, GAME_WIDTH / 2, 690, 390, 68, 'WATCH LIVE', 28,
+        () => this.openAudienceWatch(), 84);
+      this.onlineWatchUI.forEach((object) => this.onlineUI.push(object));
+      this.onlineCopyWatchUI = woodButton(this, GAME_WIDTH / 2, 775, 390, 68, 'COPY WATCH LINK', 27,
+        () => this.copyAudienceWatchLink(), 84);
+      this.onlineCopyWatchUI.forEach((object) => this.onlineUI.push(object));
+    }
+  }
+
+  audienceWatchUrl() {
+    if (!this.currentRoomCode) return null;
+    const url = new URL('/shapey/staging/audience.html', window.location.origin);
+    url.searchParams.set('room', this.currentRoomCode);
+    url.searchParams.set('mode', this.onlineMode || this.mode || 'tag');
+    return url.href;
+  }
+
+  openAudienceWatch() {
+    const url = this.audienceWatchUrl();
+    if (!url) {
+      this.setOnlineStatus('Create or join a room first.');
+      return;
+    }
+    const opened = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!opened) this.setOnlineStatus('The watch page was blocked. Use COPY WATCH LINK to share it.');
+  }
+
+  async copyAudienceWatchLink() {
+    const url = this.audienceWatchUrl();
+    if (!url) {
+      this.setOnlineStatus('Create or join a room first.');
+      return;
+    }
+    let copied = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(url);
+        copied = true;
+      }
+    } catch {}
+    if (!copied) {
+      let field;
+      try {
+        field = document.createElement('textarea');
+        field.value = url;
+        field.setAttribute('readonly', '');
+        field.style.position = 'fixed';
+        field.style.left = '-9999px';
+        document.body.appendChild(field);
+        field.select();
+        copied = document.execCommand('copy');
+      } catch {}
+      if (field && field.parentNode) field.parentNode.removeChild(field);
+    }
+    if (copied) {
+      if (this.onlineCopyWatchUI && this.onlineCopyWatchUI[1]?.active) this.onlineCopyWatchUI[1].setText('LINK COPIED!');
+      this.setOnlineStatus('Watch link copied. Share it with your audience.');
+    } else {
+      this.setOnlineStatus('Copy failed. Share this link manually: ' + url);
     }
   }
 
