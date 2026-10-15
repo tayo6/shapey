@@ -20,7 +20,7 @@ The staging game page is an additional path on the site's static hosting. The ex
 4. Confirm a face-down tile does not reveal its shape, then test reconnecting a player to the same seat.
 5. Leave the normal game home page untouched during these tests.
 
-The staging service currently supports online Player 1 vs Player 2 and Tag. Online Audience Poll, Score Strike, Cancel Counter, spectators and chat are not implemented yet.
+The review branch now adds a public Live Games directory at `/api/rooms` (GET), read-only spectator WebSockets, room chat, and live Tag audience polls. The staging audience page is `staging/audience.html`; it displays the board without hidden tile identities, lists available PvP/Tag rooms, lets spectators chat and vote while a Tag poll is open, and links directly to individual rooms. These features are source-controlled and covered by local Worker integration/CI, but must still be deployed to the staging Worker before the public directory can work there. Score Strike and Cancel Counter remain unsupported online.
 
 ## Redeploy staging
 
