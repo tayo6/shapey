@@ -20,7 +20,7 @@ function shortRandomId() {
 
 function cleanChatText(value) {
   if (typeof value !== "string") return "";
-  return value.replace(/[\\u0000-\\u001f\\u007f]/g, " ").trim().slice(0, MAX_CHAT_CHARS);
+  return value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, MAX_CHAT_CHARS);
 }
 
 function audiencePollSnapshot(poll) {
