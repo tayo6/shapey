@@ -585,6 +585,17 @@ export function nextGameDeadline(state) {
   return valid.length ? Math.min(...valid) : null;
 }
 
+// Spectator snapshots use the same hidden-tile privacy rules as player snapshots,
+ // but omit the active player's private inventory, Stars and streak data.
+export function gameViewForSpectator(state) {
+  if (!state || !Array.isArray(state.turnOrder) || !state.turnOrder.includes(state.activePlayerNumber)) {
+    return null;
+  }
+  const view = gameViewForPlayer(state, state.activePlayerNumber);
+  delete view.me;
+  return view;
+}
+
 // Never send hidden tile shapes to any browser. The backend keeps the actual shape privately.
 export function gameViewForPlayer(state, playerNumber) {
   if (!state.turnOrder.includes(playerNumber)) throw new Error("Player is not part of this match.");
