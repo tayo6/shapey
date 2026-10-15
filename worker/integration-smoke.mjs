@@ -91,6 +91,14 @@ async function joinRoom(room, mode, seatToken = null) {
   return { ...client, playerNumber: welcome.playerNumber, seatToken: welcome.seatToken };
 }
 
+async function joinSpectator(room, mode) {
+  const client = createClient(room.websocketUrl + "?mode=" + encodeURIComponent(mode) + "&role=spectator");
+  await waitForOpen(client);
+  client.send({ type: "spectate" });
+  await client.waitFor((message) => message.type === "spectator_welcome");
+  return client;
+}
+
 async function playingState(client) {
   const message = await client.waitFor((item) =>
     (item.type === "game_started" || item.type === "game_state") &&
@@ -168,6 +176,37 @@ async function run() {
       assert.ok(state.tiles.every((tile) => !tile.faceUp && tile.shape === null),
         "Face-down shapes must remain hidden in client snapshots.");
     }
+
+    // A spectator can watch a live Tag room without receiving player-only inventory data.
+    const audience = await joinSpectator(tagRoom, "tag");
+    allClients.push(audience);
+    const watched = await audience.waitFor((message) => message.type === "spectator_welcome");
+    assert.equal(watched.mode, "tag");
+    assert.equal(watched.state.status, "playing");
+    assert.equal("me" in watched.state, false);
+    assert.ok(watched.state.tiles.every((tile) => !tile.faceUp && tile.shape === null),
+      "Spectator snapshots must keep hidden shapes private.");
+
+    // Player 1 starts a real poll; a spectator vote is validated and counts are broadcast live.
+    tagClients[0].send({ type: "audience_poll_start" });
+    const poll = await audience.waitFor((message) =>
+      message.type === "audience_poll_state" && message.poll && !message.poll.closed);
+    assert.equal(poll.poll.options.length, 4);
+    audience.send({ type: "poll_vote", shape: poll.poll.options[0] });
+    const voted = await tagClients[0].waitFor((message) =>
+      message.type === "audience_poll_state" && message.poll?.id === poll.poll.id &&
+      message.poll.totalVotes === 1);
+    assert.equal(voted.poll.counts[poll.poll.options[0]], 1);
+
+    // Live chat is relayed to players and spectators with bounded, plain-text messages.
+    audience.send({ type: "chat", text: "Hello <audience> viewer" });
+    const playerChat = await tagClients[0].waitFor((message) =>
+      message.type === "chat_message" && message.message?.text === "Hello <audience> viewer");
+    const audienceChat = await audience.waitFor((message) =>
+      message.type === "chat_message" && message.message?.text === "Hello <audience> viewer");
+    assert.equal(playerChat.message.role, "spectator");
+    assert.match(playerChat.message.sender, /^Spectator /);
+    assert.equal(audienceChat.message.id, playerChat.message.id);
 
     // Player 2 cannot submit a move while Player 1 owns the turn.
     pvp2.send({ type: "game_action", action: { type: "pick", tileId: pvpPlaying2.tiles[0].id } });
