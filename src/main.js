@@ -1454,10 +1454,20 @@ class GameScene extends Phaser.Scene {
     this.inventoryOpen = false;
   }
 
-  // Local Practice Audience: explicitly simulated votes, not live players or a guaranteed match.
+  // Tag's bottom Polls action opens a live audience poll when online. Local-mode practice
+  // still uses clearly labelled simulated votes so it cannot be mistaken for real audience data.
   showAudiencePoll() {
     this.closeAudiencePoll();
     if (this.gameOver) return;
+    if (this.online) {
+      if (!this.modeCfg.teams || !this.onlineSocket || this.onlineSocket.readyState !== WebSocket.OPEN) {
+        this.showToast('Live audience polling requires a connected Tag room.', 2500);
+        return;
+      }
+      this.onlineSocket.send(JSON.stringify({ type: 'audience_poll_start' }));
+      this.showToast('Opening a live poll for spectators…', 1800);
+      return;
+    }
     this.pollUI = [];
     const add = (object) => {
       object.setDepth(250);
@@ -1509,6 +1519,50 @@ class GameScene extends Phaser.Scene {
       }).setOrigin(1, 0.5));
     });
     woodButton(this, GAME_WIDTH / 2, 885, 420, 82, 'CLOSE POLL', 30,
+      () => this.closeAudiencePoll(), 252).forEach(add);
+  }
+
+  renderOnlineAudiencePoll(poll) {
+    this.closeAudiencePoll();
+    if (!poll || this.gameOver) return;
+    this.pollUI = [];
+    const add = (object) => {
+      object.setDepth(250);
+      this.pollUI.push(object);
+      return object;
+    };
+    add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.78)
+      .setInteractive());
+    add(this.add.rectangle(GAME_WIDTH / 2, 650, 640, 690, 0x4b2d17, 1)
+      .setStrokeStyle(5, 0xd5ad72));
+    add(this.add.text(GAME_WIDTH / 2, 365, poll.closed ? 'AUDIENCE POLL RESULTS' : 'LIVE AUDIENCE PICK', {
+      fontFamily: FONT, fontSize: poll.closed ? '38px' : '44px', color: '#fff2c7',
+      stroke: '#3a2112', strokeThickness: 8, align: 'center', wordWrap: { width: 590 },
+    }).setOrigin(0.5));
+    const totalVotes = Number(poll.totalVotes) || 0;
+    add(this.add.text(GAME_WIDTH / 2, 420,
+      poll.closed ? 'POLL CLOSED · ' + totalVotes + ' VOTES'
+        : 'LIVE SPECTATOR VOTES · ' + totalVotes + ' VOTES', {
+        fontFamily: FONT, fontSize: '21px', color: '#ffe36e', align: 'center',
+        stroke: '#3a2112', strokeThickness: 4,
+      }).setOrigin(0.5));
+    (poll.options || []).forEach((shape, index) => {
+      const y = 520 + index * 80;
+      const count = Number((poll.counts || {})[shape]) || 0;
+      const percent = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
+      add(this.add.text(78, y, String(shape).toUpperCase(), {
+        fontFamily: FONT, fontSize: '20px', color: '#fff2c7',
+        stroke: '#3a2112', strokeThickness: 4,
+      }).setOrigin(0, 0.5));
+      add(this.add.rectangle(270, y, 288, 24, 0x25180f, 1).setOrigin(0, 0.5));
+      add(this.add.rectangle(270, y, Math.max(3, 2.88 * percent), 18, 0xd7a849, 1).setOrigin(0, 0.5));
+      add(this.add.text(625, y, count + ' · ' + percent + '%', {
+        fontFamily: FONT, fontSize: '21px', color: '#ffffff',
+        stroke: '#3a2112', strokeThickness: 4, align: 'right',
+      }).setOrigin(1, 0.5));
+    });
+    woodButton(this, GAME_WIDTH / 2, 885, 420, 82,
+      poll.closed ? 'CLOSE RESULTS' : 'CLOSE PANEL', 30,
       () => this.closeAudiencePoll(), 252).forEach(add);
   }
 
@@ -1616,6 +1670,11 @@ class GameScene extends Phaser.Scene {
       try { message = JSON.parse(event.data); } catch { return; }
       if (message.type === 'game_state' && message.state) {
         this.applyOnlineState(message.state);
+      } else if (message.type === 'audience_poll_state' && message.poll) {
+        this.onlineAudiencePoll = message.poll;
+        this.renderOnlineAudiencePoll(message.poll);
+      } else if (message.type === 'spectator_count') {
+        this.onlineSpectatorCount = Number(message.count) || 0;
       } else if (message.type === 'error') {
         this.showToast(message.message || 'The server rejected that action.', 3000);
       } else if (message.type === 'player_disconnected') {
