@@ -51,7 +51,7 @@ const ALONE_MISS_PENALTY = 1;   // a wrong shape costs this much (a too-small su
 const HAZARD_CHANCE = 0.1;
 // teams = Tag mode: two teams of two share the device, and each team's partners take turns (see turnLabel()).
 const MODES = {
-  alone: { label: 'PLAY ALONG', hint: 'Reach 100 points to win. Lose when your score reaches ' + ALONE_SCORE_FLOOR + '.',
+  alone: { label: 'PLAY ALONE', hint: 'Reach 100 points to win. Lose when your score reaches ' + ALONE_SCORE_FLOOR + '.',
            targetScore: 100, hazard: HAZARD_CHANCE, twoPlayers: false, turnClock: false, ai: false },
   ai:    { label: 'PLAYER VS AI', hint: 'First to ' + RULES.targetScoreForMode('ai') + ' points wins. Choose Easy or Professional.',
            targetScore: RULES.targetScoreForMode('ai'), hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: true },
@@ -450,9 +450,12 @@ class MenuScene extends Phaser.Scene {
         }, 10, cfg.hint);
     });
 
-    // Watching is chosen here, once, instead of inside each mode's lobby: a spectator needs no mode.
-    woodButton(this, GAME_WIDTH / 2, 1228, 620, 76, 'WATCH LIVE GAMES', 34,
-      () => this.openAudienceDirectory(), 10);
+    // Spectating is deliberately separated from playable modes and styled as a watch-only destination.
+    const audienceButton = woodButton(this, GAME_WIDTH / 2, 1228, 620, 76, 'WATCH LIVE GAMES', 32,
+      () => this.openAudienceDirectory(), 10, 'SPECTATOR AREA · WATCH ONLY · NO GAME MOVES');
+    audienceButton[0].setFillStyle(0x12303b, 1).setStrokeStyle(4, 0x66e0ff);
+    audienceButton[1].setColor('#a9e8ff').setStroke('#10252c', 6);
+    if (audienceButton[2]) audienceButton[2].setColor('#d7f7ff');
   }
 
   // Room creation and joining are attached to Player 1 vs Player 2 and Tag.
