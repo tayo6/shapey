@@ -15,9 +15,10 @@ test("only the production site and documented local origins are allowed", () => 
   }
 });
 
-test("only the existing online modes are admitted with their intended capacity", () => {
+test("online modes and the read-only AI demo are admitted with the intended capacity", () => {
   assert.deepEqual(modeDetails("pvp"), { mode: "pvp", maxPlayers: 2 });
   assert.deepEqual(modeDetails("tag"), { mode: "tag", maxPlayers: 4 });
+  assert.deepEqual(modeDetails("demo"), { mode: "demo", maxPlayers: 0 });
   for (const mode of ["alone", "ai", "spectator", "", null]) assert.equal(modeDetails(mode), null);
 });
 
