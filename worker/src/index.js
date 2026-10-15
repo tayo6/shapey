@@ -310,8 +310,8 @@ export class Room extends DurableObject {
         game.demoCleanupAt = null;
         await this.ctx.storage.put("game", game);
       }
-      // Empty/waiting rooms expire; activity refreshes the alarm, with a hard maximum lifetime.
-      await this.ctx.storage.setAlarm(now + ROOM_IDLE_TTL_MS);
+      // Schedule the opening study phase, AI turns, and eventual demo cleanup as well as room expiry.
+      await this.scheduleAlarm();
       await this.publishRoomSummary(true);
       return json({ ok: true });
     }
