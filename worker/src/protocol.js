@@ -19,6 +19,7 @@ export function isAllowedOrigin(origin) {
 export function modeDetails(mode) {
   if (mode === "tag") return { mode: "tag", maxPlayers: 4 };
   if (mode === "pvp") return { mode: "pvp", maxPlayers: 2 };
+  if (mode === "demo") return { mode: "demo", maxPlayers: 0 };
   return null;
 }
 
