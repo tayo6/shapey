@@ -129,6 +129,23 @@ async function run() {
   assert.equal(denied.status, 403, "Room creation must reject an unapproved origin.");
 
   const [pvpRoom, tagRoom] = await Promise.all([createRoom("pvp"), createRoom("tag")]);
+  const directoryResponse = await fetch(BASE_URL + "/api/rooms", {
+    headers: { Origin: ALLOWED_ORIGIN }
+  });
+  const directory = await directoryResponse.json();
+  assert.equal(directoryResponse.status, 200, JSON.stringify(directory));
+  assert.ok(directory.rooms.some(room => room.roomCode === pvpRoom.roomCode && room.mode === "pvp"),
+    "New PvP rooms must be browsable before players join.");
+  assert.ok(directory.rooms.some(room => room.roomCode === tagRoom.roomCode && room.mode === "tag"),
+    "New Tag rooms must be browsable before players join.");
+  assert.ok(directory.rooms.every(room => !("websocketUrl" in room) && !("seatToken" in room)),
+    "The public room directory must not expose player connection credentials.");
+  const tagDirectoryResponse = await fetch(BASE_URL + "/api/rooms?mode=tag", {
+    headers: { Origin: ALLOWED_ORIGIN }
+  });
+  const tagDirectory = await tagDirectoryResponse.json();
+  assert.equal(tagDirectoryResponse.status, 200, JSON.stringify(tagDirectory));
+  assert.ok(tagDirectory.rooms.every(room => room.mode === "tag"), "Mode filters must be applied server-side.");
   const allClients = [];
 
   try {
@@ -176,6 +193,12 @@ async function run() {
       assert.ok(state.tiles.every((tile) => !tile.faceUp && tile.shape === null),
         "Face-down shapes must remain hidden in client snapshots.");
     }
+    const liveDirectoryResponse = await fetch(BASE_URL + "/api/rooms", {
+      headers: { Origin: ALLOWED_ORIGIN }
+    });
+    const liveDirectory = await liveDirectoryResponse.json();
+    assert.ok(liveDirectory.rooms.some(room => room.roomCode === tagRoom.roomCode && room.status === "live"),
+      "The public directory must update when a Tag room starts playing.");
 
     // A spectator can watch a live Tag room without receiving player-only inventory data.
     const audience = await joinSpectator(tagRoom, "tag");
