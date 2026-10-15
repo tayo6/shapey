@@ -449,6 +449,10 @@ class MenuScene extends Phaser.Scene {
           else this.scene.start('GameScene', { mode });
         }, 10, cfg.hint);
     });
+
+    // Watching is chosen here, once, instead of inside each mode's lobby: a spectator needs no mode.
+    woodButton(this, GAME_WIDTH / 2, 1228, 620, 76, 'WATCH LIVE GAMES', 34,
+      () => this.openAudienceDirectory(), 10);
   }
 
   // Room creation and joining are attached to Player 1 vs Player 2 and Tag.
@@ -486,10 +490,7 @@ class MenuScene extends Phaser.Scene {
     this.onlineJoinUI = woodButton(this, GAME_WIDTH / 2, 810, 530, 88, 'JOIN ROOM', 36,
       () => this.promptJoinRoom(), 82, 'Enter a friend’s room code');
     this.onlineJoinUI.forEach(add);
-    this.onlineBrowseUI = woodButton(this, GAME_WIDTH / 2, 900, 530, 72, 'BROWSE LIVE GAMES', 30,
-      () => this.openAudienceDirectory(), 82, 'Watch public Shapey rooms as a spectator');
-    this.onlineBrowseUI.forEach(add);
-    this.onlineBackUI = woodButton(this, GAME_WIDTH / 2, 1000, 530, 72, 'BACK', 32,
+    this.onlineBackUI = woodButton(this, GAME_WIDTH / 2, 925, 530, 72, 'BACK', 32,
       () => this.closeOnlineLobby(), 82);
     this.onlineBackUI.forEach(add);
   }
@@ -501,7 +502,7 @@ class MenuScene extends Phaser.Scene {
   showOnlineRoomCode(code) {
     this.currentRoomCode = code;
     if (this.onlineRoomCodeText && this.onlineRoomCodeText.active) this.onlineRoomCodeText.setText(code);
-    for (const object of [...(this.onlineCreateUI || []), ...(this.onlineJoinUI || []), ...(this.onlineBrowseUI || [])]) {
+    for (const object of [...(this.onlineCreateUI || []), ...(this.onlineJoinUI || [])]) {
       object.setVisible(false);
       if (object.disableInteractive) object.disableInteractive();
     }
@@ -521,15 +522,9 @@ class MenuScene extends Phaser.Scene {
     }
   }
 
+  // Opens the public room directory in this tab; the directory has its own way back to the game.
   openAudienceDirectory() {
-    const url = new URL('/shapey/staging/audience.html', window.location.origin);
-    const opened = window.open(url.href, '_blank');
-    if (opened) {
-      opened.opener = null;
-      this.setOnlineStatus('Live Games directory opened in a new tab.');
-    } else {
-      this.setOnlineStatus('Your browser blocked the new tab. Open: ' + url.href);
-    }
+    window.location.assign(new URL('/shapey/staging/audience.html', window.location.origin).href);
   }
 
   audienceWatchUrl() {
