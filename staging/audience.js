@@ -217,7 +217,7 @@ function makeRoomCard(room) {
   meta.append(score);
   const target = document.createElement('div');
   const targetScore = Number(room.targetScore) || (room.mode === 'tag' ? 200 : 100);
-  const sideNames = room.mode === 'tag' ? ['Team A', 'Team B'] : ['Player 1', 'Player 2'];
+  const sideNames = room.mode === 'tag' ? ['Team A', 'Team B'] : room.mode === 'demo' ? ['AI 1', 'AI 2'] : ['Player 1', 'Player 2'];
   const turnSide = room.activePlayerNumber ? (room.mode === 'tag' ? (room.activePlayerNumber <= 2 ? 0 : 1) : room.activePlayerNumber - 1) : -1;
   const details = ['First to ' + targetScore];
   if (room.status === 'live' && turnSide >= 0) details.push(sideNames[turnSide] + ' to play');
