@@ -566,7 +566,7 @@ export function nextGameDeadline(state) {
   if (!state || state.status === "finished") return null;
   const deadlines = [];
   if (state.status === "study" && Number.isFinite(state.reviewEndsAt)) deadlines.push(state.reviewEndsAt);
-  if (state.status === "playing" && Number.isFinite(state.turnEndsAt)) deadlines.push(state.turnEndsAt);
+  if (state.status === "playing" && !state.pendingEffect && Number.isFinite(state.turnEndsAt)) deadlines.push(state.turnEndsAt);
   if (state.pendingEffect && Number.isFinite(state.pendingEffect.endsAt)) deadlines.push(state.pendingEffect.endsAt);
   for (const reveal of state.reveals) deadlines.push(reveal.endsAt);
   for (const shuffle of state.shuffles) {
