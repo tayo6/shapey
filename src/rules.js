@@ -49,8 +49,10 @@
     };
   }
 
-  // Only Professional AI uses the shorter 30-second turn; all other versus turns use 45 seconds.
-  function turnDurationForMode(mode, difficulty, standardMs = 45000, professionalMs = 30000) {
+  // Easy AI and ordinary PvP turns last 45 seconds; Hard AI and each Tag pick last 30.
+  // Optional durations keep the URL-based test override deterministic.
+  function turnDurationForMode(mode, difficulty, standardMs = 45000, professionalMs = 30000, tagMs = 30000) {
+    if (mode === 'tag') return tagMs;
     return mode === 'ai' && difficulty === 'pro' ? professionalMs : standardMs;
   }
 
@@ -70,11 +72,19 @@
     return isBonusTurn !== true && pendingPlayer === activePlayer;
   }
 
-  // Fixed versus targets: AI/PvP race to 100; Tag teams race to 200.
+  // Play Along and AI/PvP target 100 points; Tag teams target 200.
   function targetScoreForMode(mode) {
+    if (mode === 'alone' || mode === 'ai' || mode === 'pvp') return 100;
     if (mode === 'tag') return 200;
-    if (mode === 'ai' || mode === 'pvp') return 100;
     return null;
+  }
+
+  // The bottom navigation is mode-specific: Play Along has no inventory or polls,
+  // AI/PvP has inventory but no polls, and Tag exposes all four actions.
+  function navigationForMode(mode) {
+    if (mode === 'alone') return ['settings', 'submit'];
+    if (mode === 'tag') return ['settings', 'submit', 'polls', 'inventory'];
+    return ['settings', 'submit', 'inventory'];
   }
 
   function hasReachedTarget(score, target) {
@@ -101,6 +111,7 @@
     penaltyToApply,
     targetScoreForMode,
     turnDurationForMode,
+    navigationForMode,
     nextVersusPlayer,
     tagMemberForTurn,
     shouldGrantDoublePlay,
