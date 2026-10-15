@@ -340,7 +340,9 @@ function renderPlayers() {
     const status = document.createElement('span');
     status.className = 'notice';
     const dot = document.createElement('i');
-    dot.className = connected.has(number) ? 'online-dot' : 'online-dot offline-dot';
+    dot.className = activeMode === 'demo'
+      ? (currentState && currentState.activePlayerNumber === number ? 'online-dot' : 'online-dot offline-dot')
+      : connected.has(number) ? 'online-dot' : 'online-dot offline-dot';
     status.append(dot, document.createTextNode(activeMode === 'demo' ? (currentState && currentState.activePlayerNumber === number ? 'Taking turn' : 'Ready') : connected.has(number) ? 'Connected' : 'Waiting'));
     row.append(name, status);
     els.playersList.append(row);
