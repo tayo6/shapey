@@ -11,7 +11,7 @@ The `feat/authoritative-online-gameplay` branch now contains an early authoritat
 - Hidden tile shapes are omitted from player snapshots while tiles are face-down.
 - Room creation requires an allowed origin and is limited to 5 requests per client IP per rolling 10 minutes. This is a basic abuse barrier, not full DDoS protection.
 
-This is **not yet approved for release**. CI now exercises the local Worker with two PvP clients and four Tag clients, and runs a local Playwright smoke test using two separate browser contexts. Those checks are not a substitute for real-device and staging tests. Reconnecting clients use a random per-room seat token: the browser stores the token locally and the Worker stores only its hash, so a returning player receives the same seat and current match state. If that browser storage is cleared or unavailable, the seat cannot be recovered; create a new room. A seat stays reserved for that room's lifetime. Audience Poll, Score Strike, Cancel Counter, spectators and chat are not implemented online. The live deployed Worker remains the older lobby prototype until a separately reviewed deployment is completed.
+This is **not yet approved for production release**. CI exercises the local Worker with two PvP clients and four Tag clients and runs a local Playwright smoke test using separate browser contexts; those checks are not a substitute for real-device and staging tests. Reconnecting clients use a random per-room seat token: the browser stores the token locally and the Worker stores only its hash, so a returning player receives the same seat and current match state. If browser storage is cleared or unavailable, the seat cannot be recovered; create a new room. A seat stays reserved for that room's lifetime. The isolated `shapey-multiplayer-staging` Worker was deployed with the public Live Games directory, spectator watch snapshots, room chat, and live Tag audience polls on 2026-10-15. The production `shapey-multiplayer` Worker remains unchanged. Score Strike and Cancel Counter are not supported online.
 
 ## Changes in this source-controlled version
 
@@ -42,7 +42,7 @@ The integration test exercises local PvP/Tag sockets, seat-token reconnect/state
 
 ## Existing Cloudflare binding
 
-`wrangler.jsonc` records the existing Worker name, Durable Object binding name/class, compatibility date, and an expected legacy `v1` SQLite-class migration. The live `ROOMS` namespace and its SQLite backing were read-only verified, but the exact remote migration tag could not be independently confirmed. **This PR does not deploy it.** Before any future deployment, verify Wrangler's remote migration comparison and dry-run output against the live account. Stop if Wrangler proposes creating a replacement namespace, creating a new migration, or deleting/migrating existing state unexpectedly.
+`wrangler.jsonc` describes the production Worker and its existing `ROOMS` Durable Objects class. It was not deployed. `wrangler.staging.jsonc` describes the separate staging Worker and namespace; the staging Worker was updated through the Cloudflare API while preserving its existing `ROOMS` namespace binding and compatibility settings. No production deployment or migration was performed. Before any future production deployment, verify Wrangler's remote migration comparison and dry-run output against the live account. Stop if Wrangler proposes creating a replacement namespace, an unexpected migration, or deleting/migrating existing state.
 
 Before a future production deployment:
 1. Run the local tests and config validation.
