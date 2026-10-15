@@ -34,6 +34,13 @@
     .filters { display:flex; align-items:end; flex-wrap:wrap; gap:12px; margin-bottom:18px; }
     .field { display:flex; flex-direction:column; gap:6px; color:var(--muted); font:13px system-ui,sans-serif; }
     select,input { background:#21140c; color:var(--cream); border:1px solid #99704a; border-radius:9px; padding:10px; min-height:42px; }
+    .chips { display:flex; gap:8px; flex-wrap:wrap; }
+    .chip { padding:8px 13px; border-radius:999px; box-shadow:none; font-size:.95rem; background:#21140c; }
+    .chip.is-active { background:linear-gradient(#754a27,#4a2b16); border-color:var(--cyan); color:#fff; }
+    .mode-badge { border-radius:8px; padding:3px 8px; font:12px system-ui,sans-serif; letter-spacing:.04em; text-transform:uppercase; border:1px solid; }
+    .mode-badge.tag { color:#ffd98a; border-color:#b8863d; background:#43290f; }
+    .mode-badge.pvp { color:#a9e8ff; border-color:#3f8aa5; background:#12303b; }
+    .badges { display:flex; gap:6px; align-items:center; }
     .room-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:14px; }
     .room-card { display:flex; flex-direction:column; gap:11px; min-height:210px; }
     .room-card h3 { font-size:1.3rem; margin:0; overflow-wrap:anywhere; }
@@ -72,6 +79,7 @@
     .poll-option img { width:34px; height:34px; object-fit:contain; flex:0 0 auto; }
     .poll-option .option-copy { min-width:0; flex:1; font-size:13px; overflow-wrap:anywhere; }
     .poll-option .vote-count { font:12px system-ui,sans-serif; color:#ffdd8a; }
+    .poll-option.winner { border-color:#ffd45e; box-shadow:0 0 0 2px #ffd45e66, 0 3px 0 #1b1009; }
     .poll-option.chosen { outline:3px solid var(--cyan); outline-offset:1px; }
     .chat-box { display:flex; flex-direction:column; min-height:260px; }
     .chat-messages { display:flex; flex-direction:column; gap:8px; max-height:330px; overflow:auto; padding:0 2px 8px; font:13px/1.4 system-ui,sans-serif; }
@@ -109,18 +117,18 @@
       </div>
       <div class="panel">
         <div class="filters">
-          <label class="field">Mode
-            <select id="modeFilter">
-              <option value="all">All modes</option>
-              <option value="pvp">Player 1 vs Player 2</option>
-              <option value="tag">Tag · 2 vs 2</option>
-            </select>
-          </label>
+          <div class="field">Mode
+            <div id="modeChips" class="chips" role="group" aria-label="Filter by mode">
+              <button type="button" class="chip is-active" data-mode="all" aria-pressed="true">All</button>
+              <button type="button" class="chip" data-mode="tag" aria-pressed="false">Tag · 2 vs 2</button>
+              <button type="button" class="chip" data-mode="pvp" aria-pressed="false">1 vs 1</button>
+            </div>
+          </div>
           <label class="field">Status
             <select id="statusFilter">
-              <option value="all">All available rooms</option>
-              <option value="live">Live games</option>
+              <option value="live" selected>Live games</option>
               <option value="waiting">Waiting / starting</option>
+              <option value="all">All available rooms</option>
             </select>
           </label>
           <span id="directoryStatus" class="statusline" role="status" aria-live="polite">Loading rooms…</span>
