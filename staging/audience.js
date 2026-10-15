@@ -10,7 +10,7 @@ const SHAPE_FILES = {
 const $ = (id) => document.getElementById(id);
 const els = {
   directory: $('directoryView'), watch: $('watchView'), rooms: $('roomCards'), directoryStatus: $('directoryStatus'),
-  modeFilter: $('modeFilter'), statusFilter: $('statusFilter'), refreshRooms: $('refreshRooms'),
+  modeChips: $('modeChips'), statusFilter: $('statusFilter'), refreshRooms: $('refreshRooms'),
   watchTitle: $('watchTitle'), watchStatus: $('watchStatus'), turnStatus: $('turnStatus'), turnClock: $('turnClock'),
   scoreCards: $('scoreCards'), board: $('board'), boardFootnote: $('boardFootnote'), roomSummary: $('roomSummary'),
   playersList: $('playersList'), pollIntro: $('pollIntro'), pollOptions: $('pollOptions'), chatMessages: $('chatMessages'),
@@ -32,6 +32,7 @@ let tileNodes = new Map();
 let explicitLeave = false;
 let refreshTimer = null;
 let turnTimer = null;
+let modeFilterValue = 'all';
 
 function api(path) { return MULTIPLAYER_API + path; }
 function directoryUrl() { return new URL('staging/audience.html', document.baseURI); }
@@ -104,7 +105,13 @@ function makeRoomCard(room) {
   heading.className = 'card-heading';
   const title = document.createElement('h3');
   text(title, modeName(room.mode));
-  heading.append(title, makePill(room.status));
+  const badges = document.createElement('div');
+  badges.className = 'badges';
+  const badge = document.createElement('span');
+  badge.className = 'mode-badge ' + (room.mode === 'tag' ? 'tag' : 'pvp');
+  text(badge, room.mode === 'tag' ? 'Tag' : '1 vs 1');
+  badges.append(badge, makePill(room.status));
+  heading.append(title, badges);
   article.append(heading);
 
   const meta = document.createElement('div');
@@ -121,6 +128,18 @@ function makeRoomCard(room) {
   text(score, (room.mode === 'tag' ? 'Team A ' : 'P1 ') + (Number(scores[0]) || 0) + '  —  ' +
     (room.mode === 'tag' ? 'Team B ' : 'P2 ') + (Number(scores[1]) || 0));
   meta.append(score);
+  const target = document.createElement('div');
+  const targetScore = Number(room.targetScore) || (room.mode === 'tag' ? 200 : 100);
+  const sideNames = room.mode === 'tag' ? ['Team A', 'Team B'] : ['Player 1', 'Player 2'];
+  const turnSide = room.activePlayerNumber ? (room.mode === 'tag' ? (room.activePlayerNumber <= 2 ? 0 : 1) : room.activePlayerNumber - 1) : -1;
+  const details = ['First to ' + targetScore];
+  if (room.status === 'live' && turnSide >= 0) details.push(sideNames[turnSide] + ' to play');
+  if (Number.isFinite(room.createdAt)) {
+    const minutes = Math.max(0, Math.floor((Date.now() - room.createdAt) / 60000));
+    details.push(minutes < 1 ? 'just started' : 'open ' + minutes + ' min');
+  }
+  text(target, details.join(' · '));
+  meta.append(target);
   article.append(meta);
 
   const bottom = document.createElement('div');
@@ -136,6 +155,18 @@ function makeRoomCard(room) {
   article.append(bottom);
   return article;
 }
+function updateModeChips(rooms) {
+  const counts = { all: rooms.length, tag: 0, pvp: 0 };
+  rooms.forEach((room) => { if (counts[room.mode] != null) counts[room.mode]++; });
+  const names = { all: 'All', tag: 'Tag · 2 vs 2', pvp: '1 vs 1' };
+  els.modeChips.querySelectorAll('.chip').forEach((chip) => {
+    const mode = chip.dataset.mode;
+    const active = mode === modeFilterValue;
+    chip.classList.toggle('is-active', active);
+    chip.setAttribute('aria-pressed', String(active));
+    text(chip, names[mode] + ' (' + counts[mode] + ')');
+  });
+}
 async function loadRooms() {
   setDirectoryStatus('Refreshing the public room list…', false);
   els.refreshRooms.disabled = true;
@@ -145,19 +176,22 @@ async function loadRooms() {
     try { data = await response.json(); } catch (_) {}
     if (!response.ok) throw new Error(data.error || ('Room directory returned HTTP ' + response.status));
     const rooms = Array.isArray(data.rooms) ? data.rooms : [];
-    const modeFilter = els.modeFilter.value;
     const statusFilter = els.statusFilter.value;
-    const filtered = rooms.filter((room) => {
-      if (modeFilter !== 'all' && room.mode !== modeFilter) return false;
+    const byStatus = rooms.filter((room) => {
       if (statusFilter === 'live' && room.status !== 'live') return false;
       if (statusFilter === 'waiting' && !['waiting', 'ready', 'starting'].includes(room.status)) return false;
       return true;
     });
+    updateModeChips(byStatus);
+    const rank = { live: 0, starting: 1, ready: 2, waiting: 3 };
+    const filtered = byStatus
+      .filter((room) => modeFilterValue === 'all' || room.mode === modeFilterValue)
+      .sort((a, b) => (rank[a.status] ?? 4) - (rank[b.status] ?? 4) || (Number(b.spectatorCount) || 0) - (Number(a.spectatorCount) || 0));
     els.rooms.replaceChildren();
     if (!filtered.length) {
       const empty = document.createElement('div');
       empty.className = 'notice';
-      text(empty, rooms.length ? 'No rooms match those filters.' : 'No public rooms are active right now. Refresh in a little while, or create a room from the Shapey game page.');
+      text(empty, rooms.length ? 'No rooms match those filters. Try "All available rooms" to include games that have not started.' : 'No public rooms are active right now. Refresh in a little while, or create a room from the Shapey game page.');
       els.rooms.append(empty);
     } else {
       filtered.forEach((room) => els.rooms.append(makeRoomCard(room)));
@@ -486,7 +520,12 @@ async function shareWatchLink() {
   }
 }
 els.refreshRooms.addEventListener('click', loadRooms);
-els.modeFilter.addEventListener('change', loadRooms);
+els.modeChips.addEventListener('click', (event) => {
+  const chip = event.target.closest('.chip');
+  if (!chip) return;
+  modeFilterValue = chip.dataset.mode;
+  loadRooms();
+});
 els.statusFilter.addEventListener('change', loadRooms);
 $('navBrowse').addEventListener('click', () => showDirectory(true));
 $('backToDirectory').addEventListener('click', () => showDirectory(true));
