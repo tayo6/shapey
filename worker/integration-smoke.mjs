@@ -95,7 +95,7 @@ async function joinSpectator(room, mode) {
   const client = createClient(room.websocketUrl + "?mode=" + encodeURIComponent(mode) + "&role=spectator");
   await waitForOpen(client);
   client.send({ type: "spectate" });
-  await client.waitFor((message) => message.type === "spectator_welcome");
+  // The caller reads spectator_welcome to assert board privacy and current poll state.
   return client;
 }
 
