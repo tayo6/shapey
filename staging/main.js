@@ -484,7 +484,10 @@ class MenuScene extends Phaser.Scene {
     this.onlineJoinUI = woodButton(this, GAME_WIDTH / 2, 810, 530, 88, 'JOIN ROOM', 36,
       () => this.promptJoinRoom(), 82, 'Enter a friend’s room code');
     this.onlineJoinUI.forEach(add);
-    this.onlineBackUI = woodButton(this, GAME_WIDTH / 2, 935, 530, 78, 'BACK', 33,
+    this.onlineBrowseUI = woodButton(this, GAME_WIDTH / 2, 900, 530, 72, 'BROWSE LIVE GAMES', 30,
+      () => this.openAudienceDirectory(), 82, 'Watch public Shapey rooms as a spectator');
+    this.onlineBrowseUI.forEach(add);
+    this.onlineBackUI = woodButton(this, GAME_WIDTH / 2, 1000, 530, 72, 'BACK', 32,
       () => this.closeOnlineLobby(), 82);
     this.onlineBackUI.forEach(add);
   }
@@ -496,7 +499,7 @@ class MenuScene extends Phaser.Scene {
   showOnlineRoomCode(code) {
     this.currentRoomCode = code;
     if (this.onlineRoomCodeText && this.onlineRoomCodeText.active) this.onlineRoomCodeText.setText(code);
-    for (const object of [...(this.onlineCreateUI || []), ...(this.onlineJoinUI || [])]) {
+    for (const object of [...(this.onlineCreateUI || []), ...(this.onlineJoinUI || []), ...(this.onlineBrowseUI || [])]) {
       object.setVisible(false);
       if (object.disableInteractive) object.disableInteractive();
     }
@@ -514,6 +517,12 @@ class MenuScene extends Phaser.Scene {
         () => this.copyAudienceWatchLink(), 84);
       this.onlineCopyWatchUI.forEach((object) => this.onlineUI.push(object));
     }
+  }
+
+  openAudienceDirectory() {
+    const url = new URL('/shapey/staging/audience.html', window.location.origin);
+    const opened = window.open(url.href, '_blank', 'noopener,noreferrer');
+    if (!opened) this.setOnlineStatus('Open the Live Games directory here: ' + url.href);
   }
 
   audienceWatchUrl() {
