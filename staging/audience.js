@@ -1,0 +1,518 @@
+'use strict';
+
+const MULTIPLAYER_API = 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
+const SHAPE_FILES = {
+  mystery: 'Mystery.webp', dummy: 'dummy.webp', hazard: 'hazard.webp', cancel: 'cancel.webp',
+  capsule: 'capsule.webp', circle: 'circle.webp', cross: 'cross.webp', divide: 'divide.webp',
+  corner: 'four corner.webp', marked: 'marked.webp', pointer: 'shield.webp', shield: 'pointer.webp',
+  sphere: 'sphere.webp', square: 'square.webp', star: 'star .webp', x: 'x.webp'
+};
+const $ = (id) => document.getElementById(id);
+const els = {
+  directory: $('directoryView'), watch: $('watchView'), rooms: $('roomCards'), directoryStatus: $('directoryStatus'),
+  modeFilter: $('modeFilter'), statusFilter: $('statusFilter'), refreshRooms: $('refreshRooms'),
+  watchTitle: $('watchTitle'), watchStatus: $('watchStatus'), turnStatus: $('turnStatus'), turnClock: $('turnClock'),
+  scoreCards: $('scoreCards'), board: $('board'), boardFootnote: $('boardFootnote'), roomSummary: $('roomSummary'),
+  playersList: $('playersList'), pollIntro: $('pollIntro'), pollOptions: $('pollOptions'), chatMessages: $('chatMessages'),
+  chatStatus: $('chatStatus'), chatForm: $('chatForm'), chatInput: $('chatInput'), sendChat: $('sendChat'),
+  connectionActions: $('connectionActions'), retryConnection: $('retryConnection'), shareRoom: $('shareRoom')
+};
+
+let roomSocket = null;
+let activeRoomCode = '';
+let activeMode = '';
+let currentState = null;
+let roomStatus = 'waiting';
+let roomPlayers = [];
+let roomSpectators = 0;
+let currentPoll = null;
+let currentVote = null;
+let chatIds = new Set();
+let tileNodes = new Map();
+let explicitLeave = false;
+let refreshTimer = null;
+let turnTimer = null;
+
+function api(path) { return MULTIPLAYER_API + path; }
+function directoryUrl() { return new URL('staging/audience.html', document.baseURI); }
+function shapeUrl(shape) {
+  const file = SHAPE_FILES[shape] || SHAPE_FILES.mystery;
+  return new URL('assets/shapes/' + encodeURIComponent(file), document.baseURI).href;
+}
+function text(el, value) { el.textContent = value == null ? '' : String(value); }
+function modeName(mode) { return mode === 'tag' ? 'Tag · 2 vs 2' : 'Player 1 vs Player 2'; }
+function statusName(status) {
+  return ({ live: 'Live', starting: 'Starting', ready: 'Ready', waiting: 'Waiting' })[status] || status || 'Unknown';
+}
+function setDirectoryStatus(message, isError) {
+  text(els.directoryStatus, message);
+  els.directoryStatus.classList.toggle('error', Boolean(isError));
+}
+function setWatchStatus(message, isError) {
+  text(els.watchStatus, message);
+  els.watchStatus.classList.toggle('error', Boolean(isError));
+}
+function closeSocket() {
+  if (roomSocket) {
+    const old = roomSocket;
+    roomSocket = null;
+    try { old.close(1000, 'Audience left room'); } catch (_) {}
+  }
+}
+function showDirectory(updateUrl) {
+  explicitLeave = true;
+  closeSocket();
+  activeRoomCode = '';
+  activeMode = '';
+  currentState = null;
+  currentPoll = null;
+  currentVote = null;
+  tileNodes.forEach((node) => node.remove());
+  tileNodes.clear();
+  els.board.replaceChildren();
+  els.pollOptions.replaceChildren();
+  els.chatMessages.replaceChildren();
+  chatIds = new Set();
+  els.directory.hidden = false;
+  els.watch.hidden = true;
+  els.connectionActions.hidden = true;
+  if (updateUrl) {
+    const url = directoryUrl();
+    window.history.pushState({}, '', url.pathname);
+  }
+  loadRooms();
+}
+function enterWatchView(code) {
+  els.directory.hidden = true;
+  els.watch.hidden = false;
+  els.connectionActions.hidden = true;
+  const url = directoryUrl();
+  url.searchParams.set('room', code);
+  if (activeMode) url.searchParams.set('mode', activeMode);
+  window.history.pushState({}, '', url.pathname + url.search);
+}
+function makePill(status) {
+  const span = document.createElement('span');
+  span.className = 'pill' + (status === 'live' ? ' live' : '');
+  text(span, statusName(status));
+  return span;
+}
+function makeRoomCard(room) {
+  const article = document.createElement('article');
+  article.className = 'panel room-card';
+  const heading = document.createElement('div');
+  heading.className = 'card-heading';
+  const title = document.createElement('h3');
+  text(title, modeName(room.mode));
+  heading.append(title, makePill(room.status));
+  article.append(heading);
+
+  const meta = document.createElement('div');
+  meta.className = 'room-meta';
+  const players = document.createElement('div');
+  text(players, 'Players connected: ' + (Number(room.playerCount) || 0) + ' / ' + (Number(room.maxPlayers) || (room.mode === 'tag' ? 4 : 2)));
+  meta.append(players);
+  const spectators = document.createElement('div');
+  text(spectators, 'Watching: ' + (Number(room.spectatorCount) || 0));
+  meta.append(spectators);
+  const score = document.createElement('div');
+  score.className = 'room-score';
+  const scores = Array.isArray(room.scores) ? room.scores : [0, 0];
+  text(score, (room.mode === 'tag' ? 'Team A ' : 'P1 ') + (Number(scores[0]) || 0) + '  —  ' +
+    (room.mode === 'tag' ? 'Team B ' : 'P2 ') + (Number(scores[1]) || 0));
+  meta.append(score);
+  article.append(meta);
+
+  const bottom = document.createElement('div');
+  bottom.className = 'card-bottom';
+  const code = document.createElement('span');
+  code.className = 'pill';
+  text(code, 'Room ' + room.roomCode);
+  const watch = document.createElement('button');
+  watch.type = 'button';
+  text(watch, 'Watch game');
+  watch.addEventListener('click', () => startWatching(room.roomCode, room.mode, true));
+  bottom.append(code, watch);
+  article.append(bottom);
+  return article;
+}
+async function loadRooms() {
+  setDirectoryStatus('Refreshing the public room list…', false);
+  els.refreshRooms.disabled = true;
+  try {
+    const response = await fetch(api('/api/rooms'), { cache: 'no-store', headers: { Accept: 'application/json' } });
+    let data = {};
+    try { data = await response.json(); } catch (_) {}
+    if (!response.ok) throw new Error(data.error || ('Room directory returned HTTP ' + response.status));
+    const rooms = Array.isArray(data.rooms) ? data.rooms : [];
+    const modeFilter = els.modeFilter.value;
+    const statusFilter = els.statusFilter.value;
+    const filtered = rooms.filter((room) => {
+      if (modeFilter !== 'all' && room.mode !== modeFilter) return false;
+      if (statusFilter === 'live' && room.status !== 'live') return false;
+      if (statusFilter === 'waiting' && !['waiting', 'ready', 'starting'].includes(room.status)) return false;
+      return true;
+    });
+    els.rooms.replaceChildren();
+    if (!filtered.length) {
+      const empty = document.createElement('div');
+      empty.className = 'notice';
+      text(empty, rooms.length ? 'No rooms match those filters.' : 'No public rooms are active right now. Refresh in a little while, or create a room from the Shapey game page.');
+      els.rooms.append(empty);
+    } else {
+      filtered.forEach((room) => els.rooms.append(makeRoomCard(room)));
+    }
+    const noun = filtered.length === 1 ? 'room' : 'rooms';
+    setDirectoryStatus(filtered.length + ' ' + noun + ' available · updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), false);
+  } catch (error) {
+    els.rooms.replaceChildren();
+    const message = document.createElement('p');
+    message.className = 'notice danger';
+    text(message, error.message || 'The live directory is unavailable. Please retry.');
+    els.rooms.append(message);
+    setDirectoryStatus('Could not load live games. The staging Worker may need its latest update.', true);
+  } finally {
+    els.refreshRooms.disabled = false;
+  }
+}
+function sendSocketMessage(message) {
+  if (!roomSocket || roomSocket.readyState !== WebSocket.OPEN) {
+    setWatchStatus('Not connected to the room. Reconnect to continue watching.', true);
+    return false;
+  }
+  roomSocket.send(JSON.stringify(message));
+  return true;
+}
+function renderScores(state) {
+  els.scoreCards.replaceChildren();
+  const labels = state.mode === 'tag' ? ['Team A · Players 1 + 2', 'Team B · Players 3 + 4'] : ['Player 1', 'Player 2'];
+  const scores = Array.isArray(state.scores) ? state.scores : [0, 0];
+  for (let i = 0; i < 2; i++) {
+    const card = document.createElement('div');
+    card.className = 'score-card';
+    const label = document.createElement('span');
+    label.className = 'label';
+    text(label, labels[i]);
+    const value = document.createElement('strong');
+    text(value, Number(scores[i]) || 0);
+    card.append(label, value);
+    els.scoreCards.append(card);
+  }
+}
+function renderPlayers() {
+  els.playersList.replaceChildren();
+  const max = activeMode === 'tag' ? 4 : 2;
+  const connected = new Set((roomPlayers || []).filter((p) => p && p.connected).map((p) => p.playerNumber));
+  for (let number = 1; number <= max; number++) {
+    const row = document.createElement('div');
+    row.className = 'player-row';
+    const name = document.createElement('span');
+    text(name, 'Player ' + number + (activeMode === 'tag' ? (number === 1 || number === 2 ? ' · Team A' : ' · Team B') : ''));
+    const status = document.createElement('span');
+    status.className = 'notice';
+    const dot = document.createElement('i');
+    dot.className = connected.has(number) ? 'online-dot' : 'online-dot offline-dot';
+    status.append(dot, document.createTextNode(connected.has(number) ? 'Connected' : 'Waiting'));
+    row.append(name, status);
+    els.playersList.append(row);
+  }
+  text(els.roomSummary, modeName(activeMode) + ' · Room ' + activeRoomCode + ' · ' + statusName(roomStatus) + ' · ' + roomSpectators + ' watching');
+}
+function renderBoard(state) {
+  if (!state || !Array.isArray(state.tiles)) {
+    els.board.replaceChildren();
+    tileNodes.clear();
+    return;
+  }
+  const keep = new Set();
+  for (const tileData of state.tiles) {
+    if (!Number.isInteger(tileData.row) || !Number.isInteger(tileData.col)) continue;
+    keep.add(tileData.id);
+    let tile = tileNodes.get(tileData.id);
+    if (!tile) {
+      tile = document.createElement('div');
+      tile.className = 'tile';
+      const image = document.createElement('img');
+      image.draggable = false;
+      tile.append(image);
+      els.board.append(tile);
+      tileNodes.set(tileData.id, tile);
+    }
+    tile.style.left = (tileData.col * 100 / 7) + '%';
+    tile.style.top = (tileData.row * 100 / 7) + '%';
+    tile.classList.toggle('is-moving', Boolean(tileData.moving));
+    tile.classList.toggle('is-selected', Boolean(tileData.selected));
+    const image = tile.firstElementChild;
+    const visibleShape = tileData.faceUp && tileData.shape ? tileData.shape : 'mystery';
+    const url = shapeUrl(visibleShape);
+    if (image.src !== url) image.src = url;
+    image.alt = tileData.faceUp && tileData.shape ? tileData.shape : 'Hidden tile';
+    tile.setAttribute('aria-label', image.alt + (tileData.moving ? ', shuffling' : ''));
+    tile.style.zIndex = tileData.moving ? '4' : (tileData.selected ? '3' : '1');
+  }
+  for (const [id, node] of tileNodes.entries()) {
+    if (!keep.has(id)) {
+      node.remove();
+      tileNodes.delete(id);
+    }
+  }
+}
+function updateTurnClock() {
+  if (!currentState || currentState.status !== 'playing' || !Number.isFinite(currentState.turnEndsAt)) {
+    text(els.turnClock, currentState && currentState.status === 'study' ? 'Opening board' : 'Turn clock —');
+    return;
+  }
+  const seconds = Math.max(0, Math.ceil((currentState.turnEndsAt - Date.now()) / 1000));
+  text(els.turnClock, 'Turn ' + String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0'));
+}
+function renderGameState(state) {
+  if (!state) return;
+  currentState = state;
+  activeMode = state.mode || activeMode;
+  renderBoard(state);
+  renderScores(state);
+  const status = state.status;
+  if (status === 'study') {
+    text(els.turnStatus, 'Opening board · memorise the shapes');
+    text(els.boardFootnote, 'The opening board is intentionally revealed for study. After it closes, hidden shapes stay hidden. Blue square outlines mark tiles currently shuffling.');
+  } else if (status === 'playing') {
+    text(els.turnStatus, 'Player ' + state.activePlayerNumber + (state.isBonusTurn ? ' · Double Play' : '') + ' has the turn');
+    text(els.boardFootnote, 'Read-only audience board. Hidden shapes stay hidden. Blue square outlines mark tiles currently shuffling.');
+  } else if (status === 'finished') {
+    text(els.turnStatus, 'Game finished' + (Number.isInteger(state.winnerPlayerNumber) ? ' · Player ' + state.winnerPlayerNumber + ' won' :
+      (Number.isInteger(state.winnerSide) ? ' · Team ' + (state.winnerSide === 0 ? 'A' : 'B') + ' won' : '')));
+    text(els.boardFootnote, 'Final board and scores. The room is no longer listed as live.');
+  } else {
+    text(els.turnStatus, 'Waiting for players');
+  }
+  updateTurnClock();
+}
+function appendChat(message) {
+  if (!message || typeof message.text !== 'string') return;
+  if (message.id && chatIds.has(message.id)) return;
+  if (message.id) chatIds.add(message.id);
+  const item = document.createElement('div');
+  item.className = 'chat-message';
+  const sender = document.createElement('strong');
+  text(sender, message.sender || 'Audience');
+  const time = document.createElement('span');
+  time.className = 'chat-time';
+  if (message.createdAt) {
+    const date = new Date(message.createdAt);
+    text(time, date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+  }
+  const body = document.createElement('span');
+  text(body, message.text);
+  item.append(sender, time, document.createElement('br'), body);
+  els.chatMessages.append(item);
+  while (els.chatMessages.children.length > 100) els.chatMessages.firstElementChild.remove();
+  els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+}
+function renderPoll(poll) {
+  if (poll && currentPoll && currentPoll.id !== poll.id) currentVote = null;
+  currentPoll = poll || null;
+  els.pollOptions.replaceChildren();
+  if (!poll) {
+    text(els.pollIntro, activeMode === 'tag'
+      ? 'No poll is open. Tag players can open a poll during their turn; spectators can then vote.'
+      : 'Audience polls are available in Tag games only.');
+    return;
+  }
+  const votes = Number(poll.totalVotes) || 0;
+  text(els.pollIntro, (poll.closed ? 'Poll closed' : 'Vote for the audience pick') +
+    ' · ' + votes + ' vote' + (votes === 1 ? '' : 's') +
+    (poll.endsAt ? (poll.closed ? '' : ' · closes soon') : ''));
+  for (const option of (poll.options || [])) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'poll-option' + (currentVote === option ? ' chosen' : '');
+    button.disabled = Boolean(poll.closed) || !roomSocket || roomSocket.readyState !== WebSocket.OPEN;
+    const img = document.createElement('img');
+    img.src = shapeUrl(option);
+    img.alt = '';
+    const copy = document.createElement('span');
+    copy.className = 'option-copy';
+    text(copy, option.replace(/-/g, ' '));
+    const count = document.createElement('span');
+    count.className = 'vote-count';
+    text(count, (poll.counts && Number(poll.counts[option])) || 0);
+    button.append(img, copy, count);
+    button.addEventListener('click', () => {
+      if (sendSocketMessage({ type: 'poll_vote', shape: option })) {
+        currentVote = option;
+        renderPoll(currentPoll);
+      }
+    });
+    els.pollOptions.append(button);
+  }
+}
+function processMessage(message) {
+  if (!message || typeof message.type !== 'string') return;
+  if (message.type === 'spectator_welcome') {
+    roomStatus = message.status || 'waiting';
+    roomPlayers = message.players || [];
+    roomSpectators = Number(message.spectatorCount) || 0;
+    renderPlayers();
+    if (message.state) renderGameState(message.state);
+    else {
+      text(els.turnStatus, 'Waiting for all players to join…');
+      text(els.boardFootnote, 'The board will appear when the match starts. You are watching as an audience member.');
+    }
+    (message.chatHistory || []).forEach(appendChat);
+    renderPoll(message.poll);
+    setWatchStatus('Connected as spectator. You can watch, chat and vote in an open poll.', false);
+    els.chatStatus.textContent = 'Connected to room chat.';
+    return;
+  }
+  if ((message.type === 'game_state' || message.type === 'game_started') && message.state) {
+    roomStatus = message.state.status === 'playing' ? 'live' : message.state.status === 'finished' ? 'finished' : 'starting';
+    renderGameState(message.state);
+    renderPlayers();
+    return;
+  }
+  if (message.type === 'room_state') {
+    roomPlayers = message.players || [];
+    roomStatus = message.status || roomStatus;
+    renderPlayers();
+    return;
+  }
+  if (message.type === 'spectator_count') {
+    roomSpectators = Number(message.count) || 0;
+    renderPlayers();
+    return;
+  }
+  if (message.type === 'chat_message' && message.message) {
+    appendChat(message.message);
+    return;
+  }
+  if (message.type === 'audience_poll_state') {
+    renderPoll(message.poll || null);
+    return;
+  }
+  if (message.type === 'error') {
+    setWatchStatus(message.message || 'The room rejected that request.', true);
+    text(els.chatStatus, message.message || 'The room rejected that request.');
+  }
+}
+async function startWatching(roomCode, hintedMode, pushUrl) {
+  const code = String(roomCode || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!/^[A-Z0-9]{6}$/.test(code)) {
+    setDirectoryStatus('That room code is not valid.', true);
+    showDirectory(false);
+    return;
+  }
+  explicitLeave = false;
+  closeSocket();
+  activeRoomCode = code;
+  activeMode = hintedMode || '';
+  currentState = null;
+  currentPoll = null;
+  currentVote = null;
+  chatIds = new Set();
+  tileNodes.forEach((node) => node.remove());
+  tileNodes.clear();
+  els.board.replaceChildren();
+  els.chatMessages.replaceChildren();
+  els.pollOptions.replaceChildren();
+  els.chatStatus.textContent = '';
+  els.boardFootnote.textContent = 'Connecting to the room. The board is read-only and hidden shapes are not sent to spectators.';
+  els.watchTitle.textContent = 'Room ' + code;
+  els.turnStatus.textContent = 'Connecting to the room…';
+  els.roomSummary.textContent = 'Loading room details…';
+  setWatchStatus('Connecting as spectator…', false);
+  els.directory.hidden = true;
+  els.watch.hidden = false;
+  els.connectionActions.hidden = true;
+  if (pushUrl) enterWatchView(code);
+  try {
+    const roomResponse = await fetch(api('/api/rooms/' + code), { cache: 'no-store' });
+    const details = await roomResponse.json();
+    if (!roomResponse.ok) throw new Error(details.error || 'Room not found.');
+    if (!activeMode) activeMode = details.mode;
+    if (details.mode !== activeMode) throw new Error('The shared link has a different game mode. Please open the room again from the directory.');
+    els.watchTitle.textContent = modeName(activeMode) + ' · Room ' + code;
+    roomStatus = details.status || 'waiting';
+    roomPlayers = details.players || [];
+    renderPlayers();
+    const wsBase = MULTIPLAYER_API.replace(/^http/, 'ws');
+    const socket = new WebSocket(wsBase + '/ws/' + code + '?mode=' + encodeURIComponent(activeMode) + '&role=spectator');
+    roomSocket = socket;
+    socket.addEventListener('open', () => {
+      if (roomSocket === socket) sendSocketMessage({ type: 'spectate' });
+    });
+    socket.addEventListener('message', (event) => {
+      if (roomSocket !== socket) return;
+      let message;
+      try { message = JSON.parse(event.data); } catch (_) { return; }
+      processMessage(message);
+    });
+    socket.addEventListener('error', () => {
+      if (roomSocket === socket) setWatchStatus('Could not connect. The room may have expired or the audience limit may have been reached.', true);
+    });
+    socket.addEventListener('close', () => {
+      if (roomSocket !== socket) return;
+      roomSocket = null;
+      els.connectionActions.hidden = false;
+      els.retryConnection.disabled = false;
+      if (!explicitLeave) setWatchStatus('Disconnected from the room. Reconnect to continue watching.', true);
+      if (currentPoll && !currentPoll.closed) renderPoll(currentPoll);
+    });
+  } catch (error) {
+    setWatchStatus(error.message || 'Could not open this room.', true);
+    els.connectionActions.hidden = false;
+    els.retryConnection.disabled = false;
+    text(els.roomSummary, 'This room is no longer available in the staging service.');
+  }
+}
+async function shareWatchLink() {
+  if (!activeRoomCode) return;
+  const url = directoryUrl();
+  url.searchParams.set('room', activeRoomCode);
+  url.searchParams.set('mode', activeMode);
+  try {
+    await navigator.clipboard.writeText(url.href);
+    setWatchStatus('Watch link copied to clipboard.', false);
+  } catch (_) {
+    const field = document.createElement('input');
+    field.value = url.href;
+    field.readOnly = true;
+    document.body.append(field);
+    field.select();
+    let copied = false;
+    try { copied = document.execCommand('copy'); } catch (_) {}
+    field.remove();
+    setWatchStatus(copied ? 'Watch link copied to clipboard.' : url.href, !copied);
+  }
+}
+els.refreshRooms.addEventListener('click', loadRooms);
+els.modeFilter.addEventListener('change', loadRooms);
+els.statusFilter.addEventListener('change', loadRooms);
+$('navBrowse').addEventListener('click', () => showDirectory(true));
+$('backToDirectory').addEventListener('click', () => showDirectory(true));
+els.shareRoom.addEventListener('click', shareWatchLink);
+els.retryConnection.addEventListener('click', () => {
+  els.retryConnection.disabled = true;
+  startWatching(activeRoomCode, activeMode, false);
+});
+els.chatForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const value = els.chatInput.value.trim();
+  if (!value) return;
+  if (sendSocketMessage({ type: 'chat', text: value })) {
+    els.chatInput.value = '';
+    text(els.chatStatus, 'Message sent.');
+  }
+});
+window.addEventListener('popstate', () => {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('room');
+  if (code) startWatching(code, params.get('mode') || '', false);
+  else showDirectory(false);
+});
+refreshTimer = window.setInterval(() => {
+  if (!els.directory.hidden) loadRooms();
+}, 20_000);
+turnTimer = window.setInterval(updateTurnClock, 250);
+const initialParams = new URLSearchParams(window.location.search);
+if (initialParams.get('room')) startWatching(initialParams.get('room'), initialParams.get('mode') || '', false);
+else loadRooms();
