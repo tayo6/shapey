@@ -32,7 +32,7 @@ function createClient(url) {
     }
   });
 
-  function waitFor(predicate, timeout = WAIT_MS) {
+  function waitFor(predicate, timeout = WAIT_MS, label = "") {
     const index = queue.findIndex(predicate);
     if (index >= 0) return Promise.resolve(queue.splice(index, 1)[0]);
     return new Promise((resolve, reject) => {
@@ -40,7 +40,9 @@ function createClient(url) {
       waiter.timer = setTimeout(() => {
         const i = waiters.indexOf(waiter);
         if (i >= 0) waiters.splice(i, 1);
-        reject(new Error("Timed out waiting for a Worker message."));
+        const queued = queue.slice(-8).map((item) => item.type + (item.type === "error" ? ": " + item.message : "")).join(", ");
+        reject(new Error("Timed out waiting for " + (label || "a Worker message") + "." +
+          (queued ? " Unmatched messages: " + queued : " No unmatched messages were received.")));
       }, timeout);
       waiters.push(waiter);
     });
@@ -207,7 +209,7 @@ async function run() {
     // A spectator can watch a live Tag room without receiving player-only inventory data.
     const audience = await joinSpectator(tagRoom, "tag");
     allClients.push(audience);
-    const watched = await audience.waitFor((message) => message.type === "spectator_welcome");
+    const watched = await audience.waitFor((message) => message.type === "spectator_welcome", WAIT_MS, "spectator welcome");
     assert.equal(watched.mode, "tag");
     assert.equal(watched.state.status, "playing");
     assert.equal("me" in watched.state, false);
@@ -217,20 +219,20 @@ async function run() {
     // Player 1 starts a real poll; a spectator vote is validated and counts are broadcast live.
     tagClients[0].send({ type: "audience_poll_start" });
     const poll = await audience.waitFor((message) =>
-      message.type === "audience_poll_state" && message.poll && !message.poll.closed);
+      message.type === "audience_poll_state" && message.poll && !message.poll.closed, WAIT_MS, "audience poll broadcast");
     assert.equal(poll.poll.options.length, 4);
     audience.send({ type: "poll_vote", shape: poll.poll.options[0] });
     const voted = await tagClients[0].waitFor((message) =>
       message.type === "audience_poll_state" && message.poll?.id === poll.poll.id &&
-      message.poll.totalVotes === 1);
+      message.poll.totalVotes === 1, WAIT_MS, "player receives spectator vote");
     assert.equal(voted.poll.counts[poll.poll.options[0]], 1);
 
     // Live chat is relayed to players and spectators with bounded, plain-text messages.
     audience.send({ type: "chat", text: "Hello <audience> viewer" });
     const playerChat = await tagClients[0].waitFor((message) =>
-      message.type === "chat_message" && message.message?.text === "Hello <audience> viewer");
+      message.type === "chat_message" && message.message?.text === "Hello <audience> viewer", WAIT_MS, "player receives audience chat");
     const audienceChat = await audience.waitFor((message) =>
-      message.type === "chat_message" && message.message?.text === "Hello <audience> viewer");
+      message.type === "chat_message" && message.message?.text === "Hello <audience> viewer", WAIT_MS, "audience receives chat echo");
     assert.equal(playerChat.message.role, "spectator");
     assert.match(playerChat.message.sender, /^Spectator /);
     assert.equal(audienceChat.message.id, playerChat.message.id);
