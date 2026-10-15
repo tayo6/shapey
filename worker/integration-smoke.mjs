@@ -291,7 +291,32 @@ async function run() {
       tagRevision = updates[0].state.revision;
     }
 
-    console.log("Local Worker integration passed: origin guard, 2-client PvP match/scoring, stable reconnect seat and state recovery, hidden shapes, out-of-turn rejection, and 4-client Tag turn sequence.");
+    // AI vs AI demo rooms start without player seats, let the audience watch automated turns,
+    // and can be ended by the person who created the demo.
+    const demoRoom = await createRoom("demo");
+    assert.match(demoRoom.demoControlToken, /^[a-f0-9]{64}$/);
+    assert.equal(demoRoom.maxPlayers, 0);
+    const demoAudience = await joinSpectator(demoRoom, "demo");
+    allClients.push(demoAudience);
+    const demoWelcome = await demoAudience.waitFor((message) => message.type === "spectator_welcome", WAIT_MS, "AI demo spectator welcome");
+    assert.equal(demoWelcome.mode, "demo");
+    assert.equal(demoWelcome.state.mode, "demo");
+    assert.equal(demoWelcome.state.status, "study");
+    demoAudience.send({ type: "demo_control", token: demoRoom.demoControlToken });
+    await demoAudience.waitFor((message) => message.type === "demo_control_ready", WAIT_MS, "AI demo control permission");
+    const aiMove = await demoAudience.waitFor((message) =>
+      message.type === "game_state" && message.state?.mode === "demo" &&
+      message.state?.status === "playing" && message.state.selectedTileIds?.length >= 1,
+      WAIT_MS, "automatic AI tile pick");
+    assert.ok(aiMove.state.activePlayerNumber === 1 || aiMove.state.activePlayerNumber === 2);
+    demoAudience.send({ type: "end_demo" });
+    await demoAudience.waitFor((message) => message.type === "demo_ended", WAIT_MS, "AI demo end");
+    const deletedDemo = await fetch(BASE_URL + "/api/rooms/" + demoRoom.roomCode, {
+      headers: { Origin: ALLOWED_ORIGIN }
+    });
+    assert.equal(deletedDemo.status, 404, "Ending the demo should delete its room data.");
+
+    console.log("Local Worker integration passed: origin guard, PvP scoring/reconnect, Tag turn sequence, audience chat/polls, and AI demo auto-play/cleanup.");
   } finally {
     await Promise.all(allClients.map((client) => client.close()));
   }
