@@ -977,8 +977,7 @@ export class Room extends DurableObject {
         ws.send(JSON.stringify({ type: "error", message: "Only the person who opened this AI demo can end it." }));
         return;
       }
-      this.broadcast({ type: "demo_ended", message: "The AI vs AI demo has ended." });
-      await this.deleteRoomData(room.roomCode, "Demo ended by its host");
+      await this.deleteRoomData(room.roomCode, "AI vs AI demo ended by its host");
       return;
     }
     if (data?.type === "chat") {
