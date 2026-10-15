@@ -90,6 +90,20 @@
     .chat-form input { min-width:0; flex:1; }
     .notice { color:var(--muted); font:13px/1.45 system-ui,sans-serif; }
     .danger { color:#ffb4a8; }
+    .hero-actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .mode-badge.demo { color:#d7f7ff; border-color:#66e0ff; background:#12303b; }
+    .audience-bottom-nav { position:fixed; z-index:120; left:0; right:0; bottom:0; display:flex; justify-content:center; gap:clamp(18px,8vw,70px); padding:9px 16px calc(9px + env(safe-area-inset-bottom)); border-top:2px solid #7b512e; background:#1b100af5; box-shadow:0 -8px 25px #0006; }
+    .audience-bottom-nav button { width:54px; height:48px; padding:0; display:grid; place-items:center; font:24px/1 system-ui,sans-serif; border-radius:12px; background:#2b1a0f; }
+    .audience-bottom-nav button[aria-pressed="true"] { border-color:var(--cyan); background:#12303b; }
+    .audience-panel { position:fixed; z-index:110; left:50%; bottom:calc(78px + env(safe-area-inset-bottom)); transform:translateX(-50%); width:min(620px,calc(100vw - 20px)); max-height:min(68vh,680px); overflow:auto; box-shadow:0 12px 40px #000b; }
+    .audience-panel-heading { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+    .audience-panel-heading h2 { margin-bottom:10px; }
+    .audience-panel-heading button { padding:5px 10px; min-width:40px; }
+    .settings-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:14px; }
+    .settings-actions .end-demo { border-color:#ff9e8f; color:#ffe2dc; }
+    .sound-setting { display:flex; gap:10px; align-items:center; font:14px/1.4 system-ui,sans-serif; }
+    .sound-setting input { min-height:auto; width:20px; height:20px; }
+    body { padding-bottom:78px; }
     @media (max-width:850px) { .watch-layout { grid-template-columns:1fr; } .board-panel { order:0; } .side-column { order:1; } .board { max-width:620px; } }
     @media (max-width:520px) { .topbar { align-items:flex-start; } .brand { font-size:1.2rem; } .brand img { width:32px;height:32px; } .top-actions a { padding:8px; } .hero { align-items:flex-start; flex-direction:column; } main { padding:12px; } .panel { padding:12px; } .score-card { min-width:95px; } .poll-options { grid-template-columns:1fr; } .chat-form { flex-direction:column; } }
   </style>
@@ -113,7 +127,7 @@
           <h1>Live Games</h1>
           <p class="subcopy">Browse public Shapey rooms and watch matches as they happen. You join as an audience member, so you cannot take a player seat or make game moves.</p>
         </div>
-        <button id="refreshRooms" type="button">Refresh list</button>
+        <div class="hero-actions"><button id="startDemo" type="button">▶ Start AI vs AI demo</button><button id="refreshRooms" type="button">Refresh list</button></div>
       </div>
       <div class="panel">
         <div class="filters">
@@ -122,6 +136,7 @@
               <button type="button" class="chip is-active" data-mode="all" aria-pressed="true">All</button>
               <button type="button" class="chip" data-mode="tag" aria-pressed="false">Tag · 2 vs 2</button>
               <button type="button" class="chip" data-mode="pvp" aria-pressed="false">1 vs 1</button>
+              <button type="button" class="chip" data-mode="demo" aria-pressed="false">AI vs AI</button>
             </div>
           </div>
           <label class="field">Status
@@ -166,14 +181,14 @@
             <div id="playersList" class="player-list" style="margin-top:10px"></div>
           </section>
 
-          <section class="panel">
-            <h2>Audience poll</h2>
+          <section id="audiencePollPanel" class="panel audience-panel" hidden>
+            <div class="audience-panel-heading"><h2>Audience polls</h2><button type="button" data-close-panel aria-label="Close polls">×</button></div>
             <p id="pollIntro" class="poll-intro">Poll information will appear when a player opens an audience poll.</p>
             <div id="pollOptions" class="poll-options"></div>
           </section>
 
-          <section class="panel chat-box">
-            <h2>Audience chat</h2>
+          <section id="audienceChatPanel" class="panel chat-box audience-panel" hidden>
+            <div class="audience-panel-heading"><h2>Audience chat</h2><button type="button" data-close-panel aria-label="Close chat">×</button></div>
             <p class="notice">Keep it friendly. Messages are shared with other viewers in this room.</p>
             <div id="chatStatus" class="statusline" role="status" aria-live="polite"></div>
             <div id="chatMessages" class="chat-messages" aria-live="polite"></div>
@@ -182,12 +197,23 @@
               <button id="sendChat" type="submit">Send</button>
             </form>
           </section>
-          <p class="notice">Audience connections are read-only. Only the Tag game's players can open a poll; anyone watching may vote while it is open.</p>
+          <p class="notice">Audience connections are read-only. Only Tag players can open a poll; anyone watching may vote while it is open.</p>
           <div id="connectionActions" hidden><button id="retryConnection" type="button">Reconnect to room</button></div>
         </aside>
       </div>
+      <section id="audienceSettingsPanel" class="panel audience-panel" hidden>
+        <div class="audience-panel-heading"><h2>Audience settings</h2><button type="button" data-close-panel aria-label="Close settings">×</button></div>
+        <label class="sound-setting"><input id="muteAudienceSound" type="checkbox"> Mute audience sounds</label>
+        <p id="settingsStatus" class="notice">You are watching only. You cannot make game moves or take a player seat.</p>
+        <div class="settings-actions"><button id="leaveRoom" type="button">Leave room</button></div>
+      </section>
     </section>
   </main>
+  <nav id="audienceBottomNav" class="audience-bottom-nav" aria-label="Audience navigation" hidden>
+    <button id="navPolls" type="button" title="Polls" aria-label="Polls" aria-pressed="false"><span aria-hidden="true">📊</span></button>
+    <button id="navChat" type="button" title="Chat" aria-label="Chat" aria-pressed="false"><span aria-hidden="true">💬</span></button>
+    <button id="navSettings" type="button" title="Settings" aria-label="Settings" aria-pressed="false"><span aria-hidden="true">⚙️</span></button>
+  </nav>
   <script src="staging/audience.js"></script>
 </body>
 </html>
