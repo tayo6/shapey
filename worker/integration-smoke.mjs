@@ -127,6 +127,10 @@ async function run() {
     body: JSON.stringify({ mode: "pvp" })
   });
   assert.equal(denied.status, 403, "Room creation must reject an unapproved origin.");
+  const deniedDirectory = await fetch(BASE_URL + "/api/rooms", {
+    headers: { Origin: "https://not-allowed.example" }
+  });
+  assert.equal(deniedDirectory.status, 403, "Public directory CORS must reject unapproved origins.");
 
   const [pvpRoom, tagRoom] = await Promise.all([createRoom("pvp"), createRoom("tag")]);
   const directoryResponse = await fetch(BASE_URL + "/api/rooms", {
