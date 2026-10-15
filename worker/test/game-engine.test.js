@@ -182,6 +182,24 @@ test("a score target ends the match and identifies the winning side", () => {
   assert.equal(result.state.scores[0], 100);
 });
 
+test("a pending effect is resolved before a nearly expired turn deadline", () => {
+  let state = startPlaying();
+  state.turnEndsAt = NOW + INITIAL_REVIEW_MS + 100;
+  state.tiles.find((tile) => tile.id === "t1").shape = "circle";
+  state.tiles.find((tile) => tile.id === "t2").shape = "square";
+
+  state = act(state, 1, { type: "pick", tileId: "t1" }).state;
+  state = act(state, 1, { type: "pick", tileId: "t2" }).state;
+  assert.equal(state.pendingEffect.type, "mismatch");
+  assert.ok(state.turnEndsAt < state.pendingEffect.endsAt);
+  assert.equal(nextGameDeadline(state), state.pendingEffect.endsAt);
+
+  advanceGameByTime(state, state.pendingEffect.endsAt, steadyRandom);
+  assert.equal(state.pendingEffect, null);
+  assert.equal(state.activePlayerNumber, 2);
+  assert.ok(state.turnEndsAt > state.pendingEffect?.endsAt || state.turnEndsAt > NOW);
+});
+
 test("a timeout with no valid match passes the turn and breaks the streak", () => {
   let state = startPlaying();
   state.playerData["1"].streak = 2;
