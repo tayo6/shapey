@@ -1,6 +1,15 @@
 name: Multiplayer Worker tests
 
 on:
+  push:
+    branches:
+      - feat/authoritative-online-gameplay
+    paths:
+      - "worker/**"
+      - "src/**"
+      - "tests/**"
+      - ".github/workflows/worker-tests.yml"
+      - "staging/audience.js"
   pull_request:
     paths:
       - "worker/**"
