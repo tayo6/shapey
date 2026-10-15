@@ -51,8 +51,8 @@ const ALONE_MISS_PENALTY = 1;   // a wrong shape costs this much (a too-small su
 const HAZARD_CHANCE = 0.1;
 // teams = Tag mode: two teams of two share the device, and each team's partners take turns (see turnLabel()).
 const MODES = {
-  alone: { label: 'PLAY ALONE', hint: 'No timer. Lose when your score reaches ' + ALONE_SCORE_FLOOR + '.',
-           targetScore: null, hazard: HAZARD_CHANCE, twoPlayers: false, turnClock: false, ai: false },
+  alone: { label: 'PLAY ALONG', hint: 'Reach 100 points to win. Lose when your score reaches ' + ALONE_SCORE_FLOOR + '.',
+           targetScore: 100, hazard: HAZARD_CHANCE, twoPlayers: false, turnClock: false, ai: false },
   ai:    { label: 'PLAYER VS AI', hint: 'First to ' + RULES.targetScoreForMode('ai') + ' points wins. Choose Easy or Professional.',
            targetScore: RULES.targetScoreForMode('ai'), hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: true },
   pvp:   { label: 'PLAYER 1 VS PLAYER 2', hint: 'Online 2-player match. First to ' + RULES.targetScoreForMode('pvp') + ' points wins.',
@@ -91,7 +91,7 @@ const AI_LEVELS = {
           recall: [0.45, 0.6], mistake: 0.1, forgetOnSwap: 0.5,
           thinkMs: 1400, tapMs: [700, 1200], gapMs: 700, submitMs: 700, maxAttempts: 3,
           bestGroupChance: 0.2, goBig: false, followHunch: false, preferUnknown: false },
-  pro:  { label: 'PROFESSIONAL', tag: 'Pro', hint: 'Remembers almost every tile and goes for the biggest match.',
+  pro:  { label: 'HARD', tag: 'Hard', hint: 'Remembers almost every tile and goes for the biggest match.',
           recall: [0.95, 1], mistake: 0.01, forgetOnSwap: 0.1,
           thinkMs: 900, tapMs: [450, 800], gapMs: 400, submitMs: 450, maxAttempts: 5,
           bestGroupChance: 1, goBig: true, followHunch: true, preferUnknown: true },
@@ -748,9 +748,12 @@ class GameScene extends Phaser.Scene {
     const level = (data && data.difficulty) || urlParams.get('level');
     this.difficulty = AI_LEVELS[level] ? level : 'easy';
     this.ai = AI_LEVELS[this.difficulty];
-    this.turnDurationMs = RULES.turnDurationForMode(
-      this.mode, this.difficulty, TURN_MS, urlParams.has('turn') ? TURN_MS : 30000
-    );
+    const tagTurnMs = urlParams.has('turn') ? TURN_MS : 30000;
+    this.turnDurationMs = this.mode === 'tag'
+      ? tagTurnMs
+      : RULES.turnDurationForMode(
+        this.mode, this.difficulty, TURN_MS, urlParams.has('turn') ? TURN_MS : 30000
+      );
   }
 
   create() {
@@ -920,7 +923,7 @@ class GameScene extends Phaser.Scene {
     if (this.modeCfg.twoPlayers) return;
     this.timerText.setFontSize(23); // "TRIES: 17" must fit the timer plank; half the previous 46px size.
     this.timerText.setText('TRIES: ' + this.totalAttempts);
-    this.goalText.setText('LOSE AT ' + ALONE_SCORE_FLOOR);
+    this.goalText.setText('WIN 100 · LOSE AT ' + ALONE_SCORE_FLOOR);
   }
 
   updateActivePlayerUI() {
@@ -996,7 +999,8 @@ class GameScene extends Phaser.Scene {
     this.timeoutHandling = false;
     this.turnId++;
     // Play Alone has no countdown. Professional AI matches use 30 seconds per turn; other versus turns use 45.
-    const duration = bonus ? TURN_MS : this.turnDurationMs;
+    // Double Play repeats this mode's normal turn duration; only Extra Time adds time.
+    const duration = this.turnDurationMs;
     this.currentTurnDurationMs = duration;
     if (this.modeCfg.turnClock) {
       this.turnClock.start(duration + (this.turnNumber === 0 && !bonus ? REVIEW_MS : 0));
@@ -1070,12 +1074,22 @@ class GameScene extends Phaser.Scene {
   createBottomButtons() {
     const BUTTON_HEIGHT = 146;
     const BOTTOM = 1214; // bottom edge of the label plank
-    const buttons = [
-      ['btnSettings', 136],
-      ['btnSubmit', 296],
-      ['btnPolls', 449],
-      ['btnInventory', 602],
-    ];
+    const iconByAction = {
+      settings: 'btnSettings',
+      submit: 'btnSubmit',
+      polls: 'btnPolls',
+      inventory: 'btnInventory',
+    };
+    const actions = this.mode === 'alone'
+      ? ['settings', 'submit']
+      : this.mode === 'tag'
+        ? ['settings', 'submit', 'polls', 'inventory']
+        : ['settings', 'submit', 'inventory'];
+    // Keep each mode's icons centred and remove controls that mode does not support.
+    const positions = actions.length === 2 ? [250, 470]
+      : actions.length === 3 ? [175, 360, 545]
+      : [136, 296, 449, 602];
+    const buttons = actions.map((action, index) => [iconByAction[action], positions[index]]);
     this.buttons = {};
     for (const [key, x] of buttons) {
       const btn = this.add.image(x, BOTTOM, key).setOrigin(0.5, 1).setDepth(10);
@@ -1097,10 +1111,21 @@ class GameScene extends Phaser.Scene {
     settings.setInteractive({ useHandCursor: true });
     settings.on('pointerdown', () => this.openPanel());
 
-    // Inventory opens the shop/inventory page.
+    // Only Tag has the poll icon. Current results are explicitly simulated practice votes.
+    const polls = this.buttons.btnPolls;
+    if (polls) {
+      polls.setInteractive({ useHandCursor: true });
+      polls.on('pointerdown', () => {
+        if (this.modeCfg.teams && !this.panelOpen && !this.inventoryOpen) this.showAudiencePoll();
+      });
+    }
+
+    // Inventory is not available in Play Along, so guard the optional icon.
     const inventory = this.buttons.btnInventory;
-    inventory.setInteractive({ useHandCursor: true });
-    inventory.on('pointerdown', () => this.openInventory());
+    if (inventory) {
+      inventory.setInteractive({ useHandCursor: true });
+      inventory.on('pointerdown', () => this.openInventory());
+    }
   }
 
   // ------------------------------------------------------- in-game menu panel
@@ -1284,9 +1309,9 @@ class GameScene extends Phaser.Scene {
     const offers = [
       { key: 'audiencePick', name: 'AUDIENCE PICK', price: 3, desc: 'Use your poll lifeline to get a practice audience recommendation.' },
       { key: 'extraTime', name: 'EXTRA TIME (+45s)', price: 3, desc: 'Add 45 seconds to the current turn each time you use one.' },
-      { key: 'doublePlay', name: 'DOUBLE PLAY', price: 4, desc: 'Take one extra 45-second turn.' },
+      { key: 'doublePlay', name: 'DOUBLE PLAY', price: 4, desc: 'Take one extra turn with your mode’s normal timer.' },
       { key: 'scoreStrike', name: 'SCORE STRIKE', price: 5, desc: 'Remove 10 points from your opponent.' },
-    ];
+    ].filter((offer) => offer.key !== 'audiencePick' || this.modeCfg.teams);
 
     offers.forEach((offer, index) => {
       const y = 238 + index * 205;
@@ -2160,8 +2185,10 @@ class GameScene extends Phaser.Scene {
     await this.destroyTiles(tiles);
     await this.cascade();
     this.busy = false;
-    if (this.modeCfg.twoPlayers && RULES.hasReachedTarget(this.scores[this.activePlayer], this.modeCfg.targetScore)) {
-      this.endGame('First to ' + this.modeCfg.targetScore + ' points wins.');
+    if (RULES.hasReachedTarget(this.scores[this.activePlayer], this.modeCfg.targetScore)) {
+      this.endGame(this.modeCfg.twoPlayers
+        ? 'First to ' + this.modeCfg.targetScore + ' points wins.'
+        : 'You reached ' + this.modeCfg.targetScore + ' points. You win!');
       return;
     }
     this.recordAttempt();
@@ -2225,13 +2252,15 @@ class GameScene extends Phaser.Scene {
     this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.85)
       .setDepth(300).setInteractive();
     const versus = this.modeCfg.twoPlayers;
-    text(330, versus ? this.names[this.activePlayer] + ' WINS!' : 'GAME OVER',
-      76, versus ? '#ffe36e' : '#ff8a7a');
+    const soloWin = !versus && RULES.hasReachedTarget(this.scores[0], this.modeCfg.targetScore);
+    text(330, soloWin ? 'YOU WIN!' : versus ? this.names[this.activePlayer] + ' WINS!' : 'GAME OVER',
+      76, versus || soloWin ? '#ffe36e' : '#ff8a7a');
     text(450, reason, 32, '#fff2c7');
     const summary = versus
       ? this.names[0] + ': ' + this.scores[0] + '\n' + this.names[1] + ': ' + this.scores[1] +
         '\nTarget: ' + this.modeCfg.targetScore
-      : 'Score: ' + this.scores[0] + '\nAttempts: ' + this.totalAttempts;
+      : 'Score: ' + this.scores[0] + '\nAttempts: ' + this.totalAttempts +
+        (this.modeCfg.targetScore ? '\nTarget: ' + this.modeCfg.targetScore : '');
     text(600, summary, 40, '#ffe36e');
     woodButton(this, GAME_WIDTH / 2, 810, 500, 110, this.online ? 'NEW ONLINE ROOM' : 'PLAY AGAIN', 44,
       () => this.online ? this.leaveOnlineMatch() : this.scene.restart({ mode: this.mode, difficulty: this.difficulty }), 301);
