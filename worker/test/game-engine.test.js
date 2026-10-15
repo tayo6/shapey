@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  INITIAL_REVIEW_MS, TURN_MS, GRID_ROWS, GRID_COLS,
+  INITIAL_REVIEW_MS, TURN_MS, TAG_TURN_MS, GRID_ROWS, GRID_COLS,
   createGameState, gameViewForPlayer, applyGameAction, advanceGameByTime,
-  nextGameDeadline, scoreForMatch
+  nextGameDeadline, scoreForMatch, turnDurationForMode
 } from "../src/game-engine.js";
 
 const NOW = 1_000_000;
@@ -30,8 +30,24 @@ test("creates correct room-sized game states, score targets, and Tag turn order"
 
   const tag = createGameState({ roomCode: "TAG234", mode: "tag", playerNumbers: [1, 2, 3, 4], now: NOW, rng: steadyRandom });
   assert.equal(tag.targetScore, 200);
+  assert.equal(tag.turnDurationMs, TAG_TURN_MS);
+  assert.equal(tag.turnEndsAt, NOW + INITIAL_REVIEW_MS + TAG_TURN_MS);
+  assert.equal(pvp.turnDurationMs, TURN_MS);
+  assert.equal(turnDurationForMode("tag"), TAG_TURN_MS);
+  assert.equal(turnDurationForMode("pvp"), TURN_MS);
   assert.deepEqual(tag.turnOrder, [1, 3, 2, 4]);
   assert.throws(() => createGameState({ roomCode: "BAD234", mode: "tag", playerNumbers: [1, 2], now: NOW }), /Invalid player set/);
+});
+
+test("Tag advances each player with a fresh 30-second pick deadline", () => {
+  let state = startPlaying("tag");
+  const actionAt = NOW + INITIAL_REVIEW_MS + 1;
+  const result = act(state, 1, { type: "submit" });
+  assert.equal(result.accepted, true, result.error);
+  state = result.state;
+  assert.equal(state.activePlayerNumber, 3);
+  assert.equal(state.turnEndsAt, actionAt + TAG_TURN_MS);
+  assert.equal(gameViewForPlayer(state, 3).turnDurationMs, TAG_TURN_MS);
 });
 
 test("hidden tile shapes are never sent to clients", () => {
