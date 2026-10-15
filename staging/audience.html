@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <base href="../">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#2b1a0f">
+  <title>Shapey — Live Games & Audience</title>
+  <link rel="icon" type="image/webp" href="assets/ui/shapey%20icon.webp">
+  <style>
+    @font-face { font-family: HappySchool; src: url("assets/fonts/HAPPY%20SCHOOL.TTF") format("truetype"); font-display: swap; }
+    :root { color-scheme: dark; --wood:#4c2d18; --wood-dark:#28170d; --gold:#f3d29a; --cream:#fff2c7; --cyan:#66e0ff; --muted:#cbb89c; --panel:#3b2416; }
+    * { box-sizing:border-box; }
+    html { min-height:100%; background:#24150d; }
+    body { margin:0; min-height:100vh; color:var(--cream); font-family:HappySchool,system-ui,sans-serif; background:radial-gradient(ellipse at top,#5a351b 0,#2b1a0f 58%,#1d1009 100%); }
+    button,input,select { font:inherit; }
+    button { border:2px solid var(--gold); border-radius:12px; background:linear-gradient(#754a27,#4a2b16); color:var(--cream); padding:10px 14px; cursor:pointer; box-shadow:0 3px 0 #1b1009; }
+    button:hover { filter:brightness(1.12); }
+    button:focus-visible,input:focus-visible,select:focus-visible { outline:3px solid var(--cyan); outline-offset:2px; }
+    button:disabled { cursor:not-allowed; opacity:.55; }
+    .topbar { display:flex; gap:14px; justify-content:space-between; align-items:center; padding:15px clamp(14px,4vw,38px); border-bottom:2px solid #7b512e; background:#1b100af0; }
+    .brand { display:flex; align-items:center; gap:10px; color:var(--cream); text-decoration:none; font-size:1.55rem; }
+    .brand img { width:40px;height:40px;object-fit:contain; }
+    .top-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .top-actions a { color:var(--cream); text-decoration:none; border:1px solid #8c6a45; border-radius:10px; padding:9px 12px; }
+    .stage-banner { text-align:center; font:11px/1.4 system-ui,sans-serif; letter-spacing:.08em; color:#fff; background:#8b2424; padding:4px 8px; }
+    main { width:min(1280px,100%); margin:0 auto; padding:clamp(14px,3vw,30px); }
+    .hero { display:flex; justify-content:space-between; gap:18px; align-items:end; margin-bottom:20px; }
+    h1,h2,h3,p { margin-top:0; }
+    h1 { font-size:clamp(1.8rem,4vw,3rem); margin-bottom:6px; }
+    h2 { font-size:1.4rem; }
+    .subcopy { color:var(--muted); font-family:system-ui,sans-serif; line-height:1.5; max-width:710px; }
+    .panel { background:linear-gradient(155deg,#4b2e1b,#2f1d12); border:2px solid #8b623a; border-radius:16px; padding:16px; box-shadow:0 8px 25px #0005; }
+    .filters { display:flex; align-items:end; flex-wrap:wrap; gap:12px; margin-bottom:18px; }
+    .field { display:flex; flex-direction:column; gap:6px; color:var(--muted); font:13px system-ui,sans-serif; }
+    select,input { background:#21140c; color:var(--cream); border:1px solid #99704a; border-radius:9px; padding:10px; min-height:42px; }
+    .room-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:14px; }
+    .room-card { display:flex; flex-direction:column; gap:11px; min-height:210px; }
+    .room-card h3 { font-size:1.3rem; margin:0; overflow-wrap:anywhere; }
+    .card-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .pill { border-radius:999px; padding:4px 9px; font:12px system-ui,sans-serif; text-transform:uppercase; letter-spacing:.04em; border:1px solid #9c754d; color:#f6d89b; white-space:nowrap; }
+    .pill.live { color:#9cf2ce; border-color:#358b66; background:#163c2e; }
+    .room-meta { color:var(--muted); font:14px/1.5 system-ui,sans-serif; }
+    .room-score { font-size:1.25rem; }
+    .card-bottom { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:auto; }
+    .statusline { min-height:24px; color:var(--muted); font:14px/1.5 system-ui,sans-serif; }
+    .statusline.error { color:#ffb4a8; }
+    [hidden] { display:none !important; }
+    .watch-heading { display:flex; gap:10px; justify-content:space-between; align-items:center; flex-wrap:wrap; margin-bottom:16px; }
+    .watch-heading h1 { font-size:clamp(1.55rem,3vw,2.4rem); }
+    .watch-layout { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(290px,.85fr); gap:16px; align-items:start; }
+    .board-panel { min-width:0; }
+    .board-toolbar { display:flex; gap:12px; justify-content:space-between; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+    .scores { display:flex; gap:10px; flex-wrap:wrap; }
+    .score-card { min-width:110px; padding:8px 11px; border-radius:10px; border:1px solid #986d44; background:#29180d; }
+    .score-card .label { color:var(--muted); font:12px system-ui,sans-serif; display:block; }
+    .score-card strong { font-size:1.35rem; }
+    .board { position:relative; width:100%; max-width:760px; aspect-ratio:1/1; margin:0 auto; border:3px solid #9c7046; border-radius:12px; background:linear-gradient(145deg,#1b100a,#332013); box-shadow:inset 0 0 24px #0008; overflow:hidden; }
+    .tile { position:absolute; width:14.285714%; height:14.285714%; left:0; top:0; padding:2px; transition:left .36s ease,top .36s ease; z-index:1; }
+    .tile img { display:block; width:100%; height:100%; object-fit:contain; border-radius:5px; background:#6b482b; border:1px solid #6d4d32; }
+    .tile.is-moving { z-index:4; outline:3px solid var(--cyan); outline-offset:-2px; filter:drop-shadow(0 0 7px #66e0ffb8); }
+    .tile.is-selected::after { content:""; position:absolute; inset:4px; border:2px solid #ffd55b; border-radius:5px; pointer-events:none; }
+    .side-column { display:flex; flex-direction:column; gap:14px; min-width:0; }
+    .player-list { display:grid; gap:8px; }
+    .player-row { display:flex; justify-content:space-between; gap:8px; align-items:center; border-radius:9px; padding:8px 10px; background:#29180d; font:14px system-ui,sans-serif; }
+    .online-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#68daa7; margin-right:6px; }
+    .offline-dot { background:#99836b; }
+    .poll-intro { color:var(--muted); font:14px/1.5 system-ui,sans-serif; margin-bottom:10px; }
+    .poll-options { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+    .poll-option { display:flex; align-items:center; gap:8px; text-align:left; min-width:0; padding:8px; }
+    .poll-option img { width:34px; height:34px; object-fit:contain; flex:0 0 auto; }
+    .poll-option .option-copy { min-width:0; flex:1; font-size:13px; overflow-wrap:anywhere; }
+    .poll-option .vote-count { font:12px system-ui,sans-serif; color:#ffdd8a; }
+    .poll-option.chosen { outline:3px solid var(--cyan); outline-offset:1px; }
+    .chat-box { display:flex; flex-direction:column; min-height:260px; }
+    .chat-messages { display:flex; flex-direction:column; gap:8px; max-height:330px; overflow:auto; padding:0 2px 8px; font:13px/1.4 system-ui,sans-serif; }
+    .chat-message { overflow-wrap:anywhere; border-bottom:1px solid #604127; padding-bottom:7px; }
+    .chat-message strong { color:#ffdd8a; margin-right:6px; }
+    .chat-time { color:#ad9679; font-size:11px; float:right; margin-left:8px; }
+    .chat-form { display:flex; gap:7px; margin-top:auto; }
+    .chat-form input { min-width:0; flex:1; }
+    .notice { color:var(--muted); font:13px/1.45 system-ui,sans-serif; }
+    .danger { color:#ffb4a8; }
+    @media (max-width:850px) { .watch-layout { grid-template-columns:1fr; } .board-panel { order:0; } .side-column { order:1; } .board { max-width:620px; } }
+    @media (max-width:520px) { .topbar { align-items:flex-start; } .brand { font-size:1.2rem; } .brand img { width:32px;height:32px; } .top-actions a { padding:8px; } .hero { align-items:flex-start; flex-direction:column; } main { padding:12px; } .panel { padding:12px; } .score-card { min-width:95px; } .poll-options { grid-template-columns:1fr; } .chat-form { flex-direction:column; } }
+  </style>
+</head>
+<body>
+  <div class="stage-banner">SHAPEY STAGING — AUDIENCE VIEW · SEPARATE FROM THE LIVE GAME</div>
+  <header class="topbar">
+    <a class="brand" href="staging/index.html">
+      <img src="assets/ui/shapey%20icon.webp" alt="">
+      <span>Shapey Audience</span>
+    </a>
+    <div class="top-actions">
+      <button id="navBrowse" type="button">Browse live games</button>
+      <a href="staging/index.html">Game home</a>
+    </div>
+  </header>
+  <main>
+    <section id="directoryView">
+      <div class="hero">
+        <div>
+          <h1>Live Games</h1>
+          <p class="subcopy">Browse public Shapey rooms and watch matches as they happen. You join as an audience member, so you cannot take a player seat or make game moves.</p>
+        </div>
+        <button id="refreshRooms" type="button">Refresh list</button>
+      </div>
+      <div class="panel">
+        <div class="filters">
+          <label class="field">Mode
+            <select id="modeFilter">
+              <option value="all">All modes</option>
+              <option value="pvp">Player 1 vs Player 2</option>
+              <option value="tag">Tag · 2 vs 2</option>
+            </select>
+          </label>
+          <label class="field">Status
+            <select id="statusFilter">
+              <option value="all">All available rooms</option>
+              <option value="live">Live games</option>
+              <option value="waiting">Waiting / starting</option>
+            </select>
+          </label>
+          <span id="directoryStatus" class="statusline" role="status" aria-live="polite">Loading rooms…</span>
+        </div>
+        <div id="roomCards" class="room-grid"></div>
+      </div>
+    </section>
+
+    <section id="watchView" hidden>
+      <div class="watch-heading">
+        <div>
+          <h1 id="watchTitle">Watch a game</h1>
+          <p id="watchStatus" class="statusline" role="status" aria-live="polite">Connecting to room…</p>
+        </div>
+        <div class="top-actions">
+          <button id="shareRoom" type="button">Copy watch link</button>
+          <button id="backToDirectory" type="button">← All live games</button>
+        </div>
+      </div>
+      <div class="watch-layout">
+        <section class="panel board-panel" aria-label="Live game board">
+          <div class="board-toolbar">
+            <div id="turnStatus">Waiting for the board…</div>
+            <div id="turnClock" class="pill">Turn clock —</div>
+          </div>
+          <div id="scoreCards" class="scores"></div>
+          <div id="board" class="board" aria-label="Read-only 7 by 7 game board"></div>
+          <p id="boardFootnote" class="notice" style="margin:12px 0 0">Face-down shapes remain hidden from spectators. Blue square outlines mark tiles currently shuffling.</p>
+        </section>
+
+        <aside class="side-column">
+          <section class="panel">
+            <h2>Players & room</h2>
+            <div id="roomSummary" class="room-meta">Connecting…</div>
+            <div id="playersList" class="player-list" style="margin-top:10px"></div>
+          </section>
+
+          <section class="panel">
+            <h2>Audience poll</h2>
+            <p id="pollIntro" class="poll-intro">Poll information will appear when a player opens an audience poll.</p>
+            <div id="pollOptions" class="poll-options"></div>
+          </section>
+
+          <section class="panel chat-box">
+            <h2>Audience chat</h2>
+            <p class="notice">Keep it friendly. Messages are visible to people in this room.</p>
+            <div id="chatStatus" class="statusline" role="status" aria-live="polite"></div>
+            <div id="chatMessages" class="chat-messages" aria-live="polite"></div>
+            <form id="chatForm" class="chat-form">
+              <input id="chatInput" type="text" maxlength="280" autocomplete="off" placeholder="Write a message…" aria-label="Chat message">
+              <button id="sendChat" type="submit">Send</button>
+            </form>
+          </section>
+          <p class="notice">Audience connections are read-only. Only the Tag game's players can open a poll; anyone watching may vote while it is open.</p>
+          <div id="connectionActions" hidden><button id="retryConnection" type="button">Reconnect to room</button></div>
+        </aside>
+      </div>
+    </section>
+  </main>
+  <script src="staging/audience.js"></script>
+</body>
+</html>
