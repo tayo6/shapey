@@ -5,8 +5,40 @@ import {
   nextMessageRateState, nextRoomCreationWindow
 } from "./protocol.js";
 import {
-  createGameState, gameViewForPlayer, applyGameAction, advanceGameByTime, nextGameDeadline
+  createGameState, gameViewForPlayer, gameViewForSpectator, applyGameAction,
+  advanceGameByTime, nextGameDeadline, SHAPE_KEYS
 } from "./game-engine.js";
+
+const MAX_SPECTATORS_PER_ROOM = 100;
+const MAX_CHAT_CHARS = 280;
+const CHAT_HISTORY_LIMIT = 50;
+const AUDIENCE_POLL_MS = 20_000;
+
+function shortRandomId() {
+  return newSeatToken().slice(0, 12).toUpperCase();
+}
+
+function cleanChatText(value) {
+  if (typeof value !== "string") return "";
+  return value.replace(/[\\u0000-\\u001f\\u007f]/g, " ").trim().slice(0, MAX_CHAT_CHARS);
+}
+
+function audiencePollSnapshot(poll) {
+  if (!poll) return null;
+  const counts = Object.fromEntries(poll.options.map(option => [option, 0]));
+  for (const vote of Object.values(poll.votes || {})) {
+    if (Object.prototype.hasOwnProperty.call(counts, vote)) counts[vote] += 1;
+  }
+  return {
+    id: poll.id,
+    startedByPlayer: poll.startedByPlayer,
+    options: poll.options.slice(),
+    counts,
+    totalVotes: Object.values(counts).reduce((sum, value) => sum + value, 0),
+    endsAt: poll.endsAt,
+    closed: Boolean(poll.closed)
+  };
+}
 
 // CORS and WebSocket origin policy share the tested protocol helper.
 
@@ -170,6 +202,8 @@ export class Room extends DurableObject {
       // Clear stale state if a random room code is ever reused after an earlier room expired.
       await this.ctx.storage.delete("game");
       await this.ctx.storage.delete("seatRegistry");
+      await this.ctx.storage.delete("audiencePoll");
+      await this.ctx.storage.delete("chatHistory");
       await this.ctx.storage.put("seatRegistry", { seats: [] });
       await this.ctx.storage.put("room", {
         roomCode: data.roomCode,
@@ -220,15 +254,23 @@ export class Room extends DurableObject {
       }, 409);
     }
 
-    // Limit open sockets before seat authentication, including connections that have not sent "join" yet.
+    // Player sockets are capped at room size; spectators have a separate, bounded capacity.
+    const role = url.searchParams.get("role") === "spectator" ? "spectator" : "player";
     const openSockets = this.ctx.getWebSockets().filter(ws => ws.readyState === WebSocket.OPEN);
-    if (openSockets.length >= room.maxPlayers) {
-      return json({ error: "Room is full." }, 409);
+    const roleOf = ws => (ws.deserializeAttachment() || {}).role || "player";
+    if (role === "spectator") {
+      const spectatorCount = openSockets.filter(ws => roleOf(ws) === "spectator").length;
+      if (spectatorCount >= MAX_SPECTATORS_PER_ROOM) {
+        return json({ error: "This room has reached its spectator limit." }, 429);
+      }
+    } else {
+      const playerSockets = openSockets.filter(ws => roleOf(ws) === "player");
+      if (playerSockets.length >= room.maxPlayers) return json({ error: "Room is full." }, 409);
     }
 
     const pair = new WebSocketPair();
     const client = pair[0], server = pair[1];
-    server.serializeAttachment({ playerNumber: null, mode: room.mode });
+    server.serializeAttachment({ playerNumber: null, mode: room.mode, role, spectatorReady: false });
     this.ctx.acceptWebSocket(server);
     await this.scheduleAlarm();
     return new Response(null, { status: 101, webSocket: client });
@@ -244,7 +286,9 @@ export class Room extends DurableObject {
     const roomDeadline = roomExpiryDeadline(room, now, this.connectedCount());
     const game = await this.ctx.storage.get("game");
     const gameDeadline = nextGameDeadline(game);
-    const deadlines = [roomDeadline, gameDeadline].filter(Number.isFinite);
+    const poll = await this.ctx.storage.get("audiencePoll");
+    const pollDeadline = poll && !poll.closed ? poll.endsAt : null;
+    const deadlines = [roomDeadline, gameDeadline, pollDeadline].filter(Number.isFinite);
     if (deadlines.length) await this.ctx.storage.setAlarm(Math.min(...deadlines));
     else await this.ctx.storage.deleteAlarm();
   }
@@ -256,11 +300,11 @@ export class Room extends DurableObject {
       try {
         if (ws.readyState !== WebSocket.OPEN) continue;
         const attachment = ws.deserializeAttachment() || {};
-        if (!Number.isInteger(attachment.playerNumber)) continue;
-        ws.send(JSON.stringify({
-          type,
-          state: gameViewForPlayer(game, attachment.playerNumber)
-        }));
+        if (Number.isInteger(attachment.playerNumber)) {
+          ws.send(JSON.stringify({ type, state: gameViewForPlayer(game, attachment.playerNumber) }));
+        } else if (attachment.role === "spectator" && attachment.spectatorReady) {
+          ws.send(JSON.stringify({ type, state: gameViewForSpectator(game) }));
+        }
       } catch {}
     }
   }
@@ -282,6 +326,14 @@ export class Room extends DurableObject {
       .sort((a, b) => a.playerNumber - b.playerNumber);
   }
 
+  spectatorCount() {
+    return this.ctx.getWebSockets().filter(ws => {
+      const attachment = ws.deserializeAttachment() || {};
+      return ws.readyState === WebSocket.OPEN &&
+        attachment.role === "spectator" && attachment.spectatorReady === true;
+    }).length;
+  }
+
   broadcast(message) {
     const payload = JSON.stringify(message);
     for (const ws of this.ctx.getWebSockets()) {
@@ -296,6 +348,20 @@ export class Room extends DurableObject {
     await this.ctx.storage.put("room", room);
     await this.scheduleAlarm();
     return room;
+  }
+
+  async closeExpiredAudiencePoll(game, now = Date.now()) {
+    const poll = await this.ctx.storage.get("audiencePoll");
+    if (!poll || poll.closed) return;
+    if (poll.endsAt > now && (!game || game.status !== "finished") &&
+        (!game || game.activePlayerNumber === poll.startedByPlayer)) return;
+    const closed = { ...poll, closed: true, endsAt: Math.min(poll.endsAt, now) };
+    await this.ctx.storage.delete("audiencePoll");
+    this.broadcastAudiencePollState(closed);
+  }
+
+  broadcastAudiencePollState(poll) {
+    this.broadcast({ type: "audience_poll_state", poll: audiencePollSnapshot(poll) });
   }
 
   async alarm() {
@@ -317,11 +383,13 @@ export class Room extends DurableObject {
       return;
     }
 
-    const game = await this.ctx.storage.get("game");
+    let game = await this.ctx.storage.get("game");
     if (game && advanceGameByTime(game, now)) {
       await this.ctx.storage.put("game", game);
       await this.broadcastGameState("game_state");
+      game = await this.ctx.storage.get("game");
     }
+    await this.closeExpiredAudiencePoll(game, now);
     await this.scheduleAlarm();
   }
 
@@ -443,6 +511,135 @@ export class Room extends DurableObject {
     }
   }
 
+  async joinSpectator(ws) {
+    const attachment = ws.deserializeAttachment() || {};
+    if (attachment.role !== "spectator") {
+      try { ws.send(JSON.stringify({ type: "error", message: "This connection is not a spectator connection." })); } catch {}
+      return;
+    }
+    if (attachment.spectatorReady) return;
+    const room = await this.ctx.storage.get("room");
+    if (!room) {
+      try { ws.send(JSON.stringify({ type: "error", message: "Room not found. Create a new room or check the code." })); } catch {}
+      return;
+    }
+    attachment.spectatorReady = true;
+    attachment.spectatorId = shortRandomId();
+    ws.serializeAttachment(attachment);
+    const game = await this.ctx.storage.get("game");
+    const history = (await this.ctx.storage.get("chatHistory") || []).slice(-CHAT_HISTORY_LIMIT);
+    const poll = await this.ctx.storage.get("audiencePoll");
+    ws.send(JSON.stringify({
+      type: "spectator_welcome",
+      roomCode: room.roomCode,
+      mode: room.mode,
+      status: game ? game.status : (this.connectedCount() >= room.maxPlayers ? "ready" : "waiting"),
+      players: this.playerList(),
+      spectatorCount: this.spectatorCount(),
+      state: game ? gameViewForSpectator(game) : null,
+      chatHistory: history,
+      poll: poll && !poll.closed && poll.endsAt > Date.now() ? audiencePollSnapshot(poll) : null
+    }));
+    this.broadcast({ type: "spectator_count", count: this.spectatorCount() });
+    await this.touchRoom();
+  }
+
+  async postChat(ws, data) {
+    const attachment = ws.deserializeAttachment() || {};
+    const isPlayer = Number.isInteger(attachment.playerNumber);
+    const isSpectator = attachment.role === "spectator" && attachment.spectatorReady;
+    if (!isPlayer && !isSpectator) {
+      ws.send(JSON.stringify({ type: "error", message: "Join the room before sending chat." }));
+      return;
+    }
+    const content = cleanChatText(data?.text);
+    if (!content) {
+      ws.send(JSON.stringify({ type: "error", message: "Chat messages cannot be empty." }));
+      return;
+    }
+    const entry = {
+      id: shortRandomId(),
+      sender: isPlayer ? "Player " + attachment.playerNumber : "Spectator " + attachment.spectatorId.slice(-4),
+      role: isPlayer ? "player" : "spectator",
+      text: content,
+      at: Date.now()
+    };
+    const history = await this.ctx.storage.get("chatHistory") || [];
+    history.push(entry);
+    await this.ctx.storage.put("chatHistory", history.slice(-CHAT_HISTORY_LIMIT));
+    this.broadcast({ type: "chat_message", message: entry });
+    await this.touchRoom();
+  }
+
+  async startAudiencePoll(ws) {
+    const attachment = ws.deserializeAttachment() || {};
+    if (!Number.isInteger(attachment.playerNumber)) {
+      ws.send(JSON.stringify({ type: "error", message: "Only players can start an audience poll." }));
+      return;
+    }
+    const room = await this.ctx.storage.get("room");
+    const game = await this.ctx.storage.get("game");
+    const now = Date.now();
+    if (!room || room.mode !== "tag") {
+      ws.send(JSON.stringify({ type: "error", message: "Audience polls are available in Tag only." }));
+      return;
+    }
+    if (!game || game.status !== "playing" || game.pendingEffect ||
+        game.activePlayerNumber !== attachment.playerNumber) {
+      ws.send(JSON.stringify({ type: "error", message: "Start a poll only during your active Tag turn." }));
+      return;
+    }
+    const existing = await this.ctx.storage.get("audiencePoll");
+    if (existing && !existing.closed && existing.endsAt > now) {
+      this.broadcastAudiencePollState(existing);
+      return;
+    }
+    const candidates = SHAPE_KEYS.filter(shape => shape !== "cancel");
+    const options = [];
+    while (options.length < 4 && candidates.length) {
+      const index = Math.floor(Math.random() * candidates.length);
+      options.push(candidates.splice(index, 1)[0]);
+    }
+    const poll = {
+      id: shortRandomId(),
+      startedByPlayer: attachment.playerNumber,
+      startedAt: now,
+      endsAt: Math.min(now + AUDIENCE_POLL_MS, Number(game.turnEndsAt) || now + AUDIENCE_POLL_MS),
+      options,
+      votes: {},
+      closed: false
+    };
+    if (poll.endsAt <= now) {
+      ws.send(JSON.stringify({ type: "error", message: "There is not enough time left to open a poll." }));
+      return;
+    }
+    await this.ctx.storage.put("audiencePoll", poll);
+    this.broadcastAudiencePollState(poll);
+    await this.scheduleAlarm();
+    await this.touchRoom();
+  }
+
+  async handlePollVote(ws, data) {
+    const attachment = ws.deserializeAttachment() || {};
+    if (attachment.role !== "spectator" || !attachment.spectatorReady || !attachment.spectatorId) {
+      ws.send(JSON.stringify({ type: "error", message: "Only joined spectators can vote in the audience poll." }));
+      return;
+    }
+    const poll = await this.ctx.storage.get("audiencePoll");
+    if (!poll || poll.closed || poll.endsAt <= Date.now()) {
+      ws.send(JSON.stringify({ type: "error", message: "There is no active audience poll." }));
+      return;
+    }
+    if (typeof data?.shape !== "string" || !poll.options.includes(data.shape)) {
+      ws.send(JSON.stringify({ type: "error", message: "Choose one of the poll's listed options." }));
+      return;
+    }
+    poll.votes[attachment.spectatorId] = data.shape;
+    await this.ctx.storage.put("audiencePoll", poll);
+    this.broadcastAudiencePollState(poll);
+    await this.touchRoom();
+  }
+
   async webSocketMessage(ws, message) {
     const byteLength = messageByteLength(message);
     if (byteLength > MAX_MESSAGE_BYTES) {
@@ -471,13 +668,40 @@ export class Room extends DurableObject {
       return;
     }
     if (data?.type === "join") {
+      const attachment = ws.deserializeAttachment() || {};
+      if (attachment.role === "spectator") {
+        ws.send(JSON.stringify({ type: "error", message: "Spectators cannot claim a player seat." }));
+        return;
+      }
       await this.joinSeat(ws, data);
+      return;
+    }
+    if (data?.type === "spectate") {
+      await this.joinSpectator(ws);
       return;
     }
 
     const joinedAttachment = ws.deserializeAttachment() || {};
-    if (!Number.isInteger(joinedAttachment.playerNumber)) {
-      ws.send(JSON.stringify({ type: "error", message: "Join your player seat before sending game actions." }));
+    const isSpectator = joinedAttachment.role === "spectator" && joinedAttachment.spectatorReady === true;
+    if (!Number.isInteger(joinedAttachment.playerNumber) && !isSpectator) {
+      ws.send(JSON.stringify({ type: "error", message: "Join a player seat or spectator room first." }));
+      return;
+    }
+
+    if (data?.type === "chat") {
+      await this.postChat(ws, data);
+      return;
+    }
+    if (data?.type === "poll_vote") {
+      await this.handlePollVote(ws, data);
+      return;
+    }
+    if (data?.type === "audience_poll_start") {
+      await this.startAudiencePoll(ws);
+      return;
+    }
+    if (isSpectator && data?.type !== "ping") {
+      ws.send(JSON.stringify({ type: "error", message: "Spectators can only chat, vote, or ping." }));
       return;
     }
 
@@ -509,6 +733,8 @@ export class Room extends DurableObject {
       }
       if (result.accepted || result.changed) {
         await this.broadcastGameState("game_state");
+        const updatedGame = await this.ctx.storage.get("game");
+        await this.closeExpiredAudiencePoll(updatedGame, Date.now());
         await this.touchRoom();
       } else {
         await this.scheduleAlarm();
@@ -522,6 +748,10 @@ export class Room extends DurableObject {
   async webSocketClose(ws) {
     const attachment = ws.deserializeAttachment() || {};
     await this.touchRoom();
+    if (attachment.role === "spectator") {
+      this.broadcast({ type: "spectator_count", count: this.spectatorCount() });
+      return;
+    }
     if (!Number.isInteger(attachment.playerNumber)) return;
     const room = await this.ctx.storage.get("room");
     this.broadcast({
