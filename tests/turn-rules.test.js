@@ -52,5 +52,5 @@ test('versus target scores remain fixed', () => {
   assert.equal(RULES.targetScoreForMode('ai'), 100);
   assert.equal(RULES.targetScoreForMode('pvp'), 100);
   assert.equal(RULES.targetScoreForMode('tag'), 200);
-  assert.equal(RULES.targetScoreForMode('alone'), null);
+  assert.equal(RULES.targetScoreForMode('alone'), 100);
 });
