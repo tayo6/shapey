@@ -15,7 +15,10 @@ const els = {
   scoreCards: $('scoreCards'), board: $('board'), boardFootnote: $('boardFootnote'), roomSummary: $('roomSummary'),
   playersList: $('playersList'), pollIntro: $('pollIntro'), pollOptions: $('pollOptions'), chatMessages: $('chatMessages'),
   chatStatus: $('chatStatus'), chatForm: $('chatForm'), chatInput: $('chatInput'), sendChat: $('sendChat'),
-  connectionActions: $('connectionActions'), retryConnection: $('retryConnection'), shareRoom: $('shareRoom')
+  connectionActions: $('connectionActions'), retryConnection: $('retryConnection'), shareRoom: $('shareRoom'),
+  startDemo: $('startDemo'), bottomNav: $('audienceBottomNav'), pollPanel: $('audiencePollPanel'), chatPanel: $('audienceChatPanel'),
+  settingsPanel: $('audienceSettingsPanel'), muteSound: $('muteAudienceSound'), settingsStatus: $('settingsStatus'), leaveRoom: $('leaveRoom'),
+  navPolls: $('navPolls'), navChat: $('navChat'), navSettings: $('navSettings')
 };
 
 let roomSocket = null;
@@ -38,15 +41,91 @@ let roomsCache = [];
 let roomsLoadedAt = null;
 let roomsLoadSeq = 0;    // only the newest room-list request may update the screen
 let pollLockedId = null;
+let demoControlToken = '';
+let demoControlRoomCode = '';
+let demoControlReady = false;
+let openAudiencePanel = '';
+let audienceAudio = null;
+let soundMuted = localStorage.getItem('shapey-audience-muted') === 'true';
 
 function api(path) { return MULTIPLAYER_API + path; }
+function playAudienceTone(frequency = 620) {
+  if (soundMuted) return;
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    if (!audienceAudio) audienceAudio = new AudioContextClass();
+    if (audienceAudio.state === 'suspended') audienceAudio.resume();
+    const oscillator = audienceAudio.createOscillator();
+    const gain = audienceAudio.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.value = frequency;
+    gain.gain.setValueAtTime(0.035, audienceAudio.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audienceAudio.currentTime + 0.12);
+    oscillator.connect(gain);
+    gain.connect(audienceAudio.destination);
+    oscillator.start();
+    oscillator.stop(audienceAudio.currentTime + 0.12);
+  } catch (_) {}
+}
+function closeAudiencePanel() {
+  openAudiencePanel = '';
+  [els.pollPanel, els.chatPanel, els.settingsPanel].forEach((panel) => { panel.hidden = true; });
+  [els.navPolls, els.navChat, els.navSettings].forEach((button) => button.setAttribute('aria-pressed', 'false'));
+}
+function toggleAudiencePanel(name) {
+  if (openAudiencePanel === name) { closeAudiencePanel(); return; }
+  closeAudiencePanel();
+  openAudiencePanel = name;
+  const panel = name === 'polls' ? els.pollPanel : name === 'chat' ? els.chatPanel : els.settingsPanel;
+  const button = name === 'polls' ? els.navPolls : name === 'chat' ? els.navChat : els.navSettings;
+  panel.hidden = false;
+  button.setAttribute('aria-pressed', 'true');
+  if (name === 'chat') els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+  if (name === 'settings') updateSettingsPanel();
+}
+function updateSettingsPanel() {
+  if (!els.leaveRoom) return;
+  const ownsDemo = activeMode === 'demo' && demoControlRoomCode === activeRoomCode && Boolean(demoControlToken);
+  text(els.leaveRoom, ownsDemo ? 'End AI demo' : 'Leave room');
+  els.leaveRoom.classList.toggle('end-demo', ownsDemo);
+  els.leaveRoom.disabled = ownsDemo && !demoControlReady;
+  if (ownsDemo) text(els.settingsStatus, demoControlReady
+    ? 'You opened this demo. End it here when you have finished watching.'
+    : 'Connecting your demo controls…');
+  else if (activeMode === 'demo') text(els.settingsStatus, 'You are watching this demo. Only its creator can end the shared room.');
+  else text(els.settingsStatus, 'Mute audience sounds or leave this room. You cannot make game moves.');
+}
+async function startAiDemo() {
+  els.startDemo.disabled = true;
+  setDirectoryStatus('Opening an AI vs AI demo room…', false);
+  try {
+    const response = await fetch(api('/api/rooms'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ mode: 'demo' })
+    });
+    let data = {};
+    try { data = await response.json(); } catch (_) {}
+    if (!response.ok) throw new Error(data.error || 'Could not create the AI demo. The staging Worker may need its update.');
+    demoControlToken = data.demoControlToken || '';
+    demoControlRoomCode = data.roomCode || '';
+    demoControlReady = false;
+    if (!demoControlToken || !demoControlRoomCode) throw new Error('The Worker did not return the demo control details.');
+    await startWatching(data.roomCode, 'demo', true);
+  } catch (error) {
+    setDirectoryStatus(error.message || 'Could not open the AI demo.', true);
+  } finally {
+    if (!els.directory.hidden) els.startDemo.disabled = false;
+  }
+}
 function directoryUrl() { return new URL('staging/audience.html', document.baseURI); }
 function shapeUrl(shape) {
   const file = SHAPE_FILES[shape] || SHAPE_FILES.mystery;
   return new URL('assets/shapes/' + encodeURIComponent(file), document.baseURI).href;
 }
 function text(el, value) { el.textContent = value == null ? '' : String(value); }
-function modeName(mode) { return mode === 'tag' ? 'Tag · 2 vs 2' : 'Player 1 vs Player 2'; }
+function modeName(mode) { return mode === 'demo' ? 'AI vs AI Demo' : mode === 'tag' ? 'Tag · 2 vs 2' : 'Player 1 vs Player 2'; }
 function statusName(status) {
   return ({ live: 'Live', starting: 'Starting', ready: 'Ready', waiting: 'Waiting' })[status] || status || 'Unknown';
 }
@@ -82,6 +161,8 @@ function showDirectory(updateUrl) {
   chatIds = new Set();
   els.directory.hidden = false;
   els.watch.hidden = true;
+  els.bottomNav.hidden = true;
+  closeAudiencePanel();
   els.connectionActions.hidden = true;
   if (updateUrl) {
     const url = directoryUrl();
@@ -114,8 +195,8 @@ function makeRoomCard(room) {
   const badges = document.createElement('div');
   badges.className = 'badges';
   const badge = document.createElement('span');
-  badge.className = 'mode-badge ' + (room.mode === 'tag' ? 'tag' : 'pvp');
-  text(badge, room.mode === 'tag' ? 'Tag' : '1 vs 1');
+  badge.className = 'mode-badge ' + (room.mode === 'tag' ? 'tag' : room.mode === 'demo' ? 'demo' : 'pvp');
+  text(badge, room.mode === 'tag' ? 'Tag' : room.mode === 'demo' ? 'AI vs AI' : '1 vs 1');
   badges.append(badge, makePill(room.status));
   heading.append(title, badges);
   article.append(heading);
@@ -123,7 +204,7 @@ function makeRoomCard(room) {
   const meta = document.createElement('div');
   meta.className = 'room-meta';
   const players = document.createElement('div');
-  text(players, 'Players connected: ' + (Number(room.playerCount) || 0) + ' / ' + (Number(room.maxPlayers) || (room.mode === 'tag' ? 4 : 2)));
+  text(players, room.mode === 'demo' ? 'Automated players: AI 1 vs AI 2' : 'Players connected: ' + (Number(room.playerCount) || 0) + ' / ' + (Number(room.maxPlayers) || (room.mode === 'tag' ? 4 : 2)));
   meta.append(players);
   const spectators = document.createElement('div');
   text(spectators, 'Watching: ' + (Number(room.spectatorCount) || 0));
@@ -131,12 +212,12 @@ function makeRoomCard(room) {
   const score = document.createElement('div');
   score.className = 'room-score';
   const scores = Array.isArray(room.scores) ? room.scores : [0, 0];
-  text(score, (room.mode === 'tag' ? 'Team A ' : 'P1 ') + (Number(scores[0]) || 0) + '  —  ' +
-    (room.mode === 'tag' ? 'Team B ' : 'P2 ') + (Number(scores[1]) || 0));
+  text(score, (room.mode === 'tag' ? 'Team A ' : room.mode === 'demo' ? 'AI 1 ' : 'P1 ') + (Number(scores[0]) || 0) + '  —  ' +
+    (room.mode === 'tag' ? 'Team B ' : room.mode === 'demo' ? 'AI 2 ' : 'P2 ') + (Number(scores[1]) || 0));
   meta.append(score);
   const target = document.createElement('div');
   const targetScore = Number(room.targetScore) || (room.mode === 'tag' ? 200 : 100);
-  const sideNames = room.mode === 'tag' ? ['Team A', 'Team B'] : ['Player 1', 'Player 2'];
+  const sideNames = room.mode === 'tag' ? ['Team A', 'Team B'] : room.mode === 'demo' ? ['AI 1', 'AI 2'] : ['Player 1', 'Player 2'];
   const turnSide = room.activePlayerNumber ? (room.mode === 'tag' ? (room.activePlayerNumber <= 2 ? 0 : 1) : room.activePlayerNumber - 1) : -1;
   const details = ['First to ' + targetScore];
   if (room.status === 'live' && turnSide >= 0) details.push(sideNames[turnSide] + ' to play');
@@ -162,9 +243,9 @@ function makeRoomCard(room) {
   return article;
 }
 function updateModeChips(rooms) {
-  const counts = { all: rooms.length, tag: 0, pvp: 0 };
+  const counts = { all: rooms.length, tag: 0, pvp: 0, demo: 0 };
   rooms.forEach((room) => { if (counts[room.mode] != null) counts[room.mode]++; });
-  const names = { all: 'All', tag: 'Tag · 2 vs 2', pvp: '1 vs 1' };
+  const names = { all: 'All', tag: 'Tag · 2 vs 2', pvp: '1 vs 1', demo: 'AI vs AI' };
   els.modeChips.querySelectorAll('.chip').forEach((chip) => {
     const mode = chip.dataset.mode;
     const active = mode === modeFilterValue;
@@ -233,7 +314,7 @@ function sendSocketMessage(message) {
 }
 function renderScores(state) {
   els.scoreCards.replaceChildren();
-  const labels = state.mode === 'tag' ? ['Team A · Players 1 + 2', 'Team B · Players 3 + 4'] : ['Player 1', 'Player 2'];
+  const labels = state.mode === 'tag' ? ['Team A · Players 1 + 2', 'Team B · Players 3 + 4'] : state.mode === 'demo' ? ['AI 1', 'AI 2'] : ['Player 1', 'Player 2'];
   const scores = Array.isArray(state.scores) ? state.scores : [0, 0];
   for (let i = 0; i < 2; i++) {
     const card = document.createElement('div');
@@ -255,12 +336,14 @@ function renderPlayers() {
     const row = document.createElement('div');
     row.className = 'player-row';
     const name = document.createElement('span');
-    text(name, 'Player ' + number + (activeMode === 'tag' ? (number === 1 || number === 2 ? ' · Team A' : ' · Team B') : ''));
+    text(name, activeMode === 'demo' ? 'AI ' + number : 'Player ' + number + (activeMode === 'tag' ? (number === 1 || number === 2 ? ' · Team A' : ' · Team B') : ''));
     const status = document.createElement('span');
     status.className = 'notice';
     const dot = document.createElement('i');
-    dot.className = connected.has(number) ? 'online-dot' : 'online-dot offline-dot';
-    status.append(dot, document.createTextNode(connected.has(number) ? 'Connected' : 'Waiting'));
+    dot.className = activeMode === 'demo'
+      ? (currentState && currentState.activePlayerNumber === number ? 'online-dot' : 'online-dot offline-dot')
+      : connected.has(number) ? 'online-dot' : 'online-dot offline-dot';
+    status.append(dot, document.createTextNode(activeMode === 'demo' ? (currentState && currentState.activePlayerNumber === number ? 'Taking turn' : 'Ready') : connected.has(number) ? 'Connected' : 'Waiting'));
     row.append(name, status);
     els.playersList.append(row);
   }
@@ -315,19 +398,23 @@ function updateTurnClock() {
 }
 function renderGameState(state) {
   if (!state) return;
+  const previousState = currentState;
   currentState = state;
+  if (previousState && Array.isArray(previousState.scores) && Array.isArray(state.scores) &&
+      state.scores.some((score, index) => score !== previousState.scores[index])) playAudienceTone(760);
+  else if (previousState && previousState.activePlayerNumber !== state.activePlayerNumber) playAudienceTone(480);
   activeMode = state.mode || activeMode;
   renderBoard(state);
   renderScores(state);
   const status = state.status;
   if (status === 'study') {
-    text(els.turnStatus, 'Opening board · memorise the shapes');
+    text(els.turnStatus, activeMode === 'demo' ? 'AI 1 and AI 2 are studying the board' : 'Opening board · memorise the shapes');
     text(els.boardFootnote, 'The opening board is intentionally revealed for study. After it closes, hidden shapes stay hidden. Blue square outlines mark tiles currently shuffling.');
   } else if (status === 'playing') {
-    text(els.turnStatus, 'Player ' + state.activePlayerNumber + (state.isBonusTurn ? ' · Double Play' : '') + ' has the turn');
+    text(els.turnStatus, activeMode === 'demo' ? 'AI ' + state.activePlayerNumber + ' is choosing shapes' : 'Player ' + state.activePlayerNumber + (state.isBonusTurn ? ' · Double Play' : '') + ' has the turn');
     text(els.boardFootnote, 'Read-only audience board. Hidden shapes stay hidden. Blue square outlines mark tiles currently shuffling.');
   } else if (status === 'finished') {
-    text(els.turnStatus, 'Game finished' + (Number.isInteger(state.winnerPlayerNumber) ? ' · Player ' + state.winnerPlayerNumber + ' won' :
+    text(els.turnStatus, 'Game finished' + (activeMode === 'demo' && Number.isInteger(state.winnerPlayerNumber) ? ' · AI ' + state.winnerPlayerNumber + ' won' : Number.isInteger(state.winnerPlayerNumber) ? ' · Player ' + state.winnerPlayerNumber + ' won' :
       (Number.isInteger(state.winnerSide) ? ' · Team ' + (state.winnerSide === 0 ? 'A' : 'B') + ' won' : '')));
     text(els.boardFootnote, 'Final board and scores. The room is no longer listed as live.');
   } else {
@@ -390,6 +477,7 @@ function renderPoll(poll) {
   if (!poll) {
     text(els.pollIntro, activeMode === 'tag'
       ? 'No poll is open. Tag players can open a poll during their turn; spectators can then vote.'
+      : activeMode === 'demo' ? 'AI vs AI demos do not open audience polls. Watch a real Tag room to vote when a player asks the audience.'
       : 'Audience polls are available in Tag games only.');
     return;
   }
@@ -430,6 +518,9 @@ function processMessage(message) {
   if (message.type === 'spectator_welcome') {
     roomStatus = message.status || 'waiting';
     roomPlayers = message.players || [];
+    els.bottomNav.hidden = false;
+    if (demoControlToken && activeRoomCode === demoControlRoomCode) sendSocketMessage({ type: 'demo_control', token: demoControlToken });
+    updateSettingsPanel();
     roomSpectators = Number(message.spectatorCount) || 0;
     renderPlayers();
     if (message.state) renderGameState(message.state);
@@ -468,6 +559,17 @@ function processMessage(message) {
     renderPoll(message.poll || null);
     return;
   }
+  if (message.type === 'demo_control_ready') {
+    demoControlReady = true;
+    updateSettingsPanel();
+    return;
+  }
+  if (message.type === 'demo_ended') {
+    demoControlReady = false;
+    setWatchStatus(message.message || 'The AI demo has ended.', false);
+    window.setTimeout(() => showDirectory(true), 900);
+    return;
+  }
   if (message.type === 'error') {
     setWatchStatus(message.message || 'The room rejected that request.', true);
     text(els.chatStatus, message.message || 'The room rejected that request.');
@@ -481,6 +583,7 @@ async function startWatching(roomCode, hintedMode, pushUrl) {
     return;
   }
   explicitLeave = false;
+  if (demoControlRoomCode !== code) { demoControlToken = ''; demoControlReady = false; demoControlRoomCode = ''; }
   const token = ++watchToken;
   closeSocket();
   activeRoomCode = code;
@@ -502,7 +605,9 @@ async function startWatching(roomCode, hintedMode, pushUrl) {
   setWatchStatus('Connecting as spectator…', false);
   els.directory.hidden = true;
   els.watch.hidden = false;
+  els.bottomNav.hidden = false;
   els.connectionActions.hidden = true;
+  closeAudiencePanel();
   if (pushUrl) enterWatchView(code);
   try {
     const roomResponse = await fetch(api('/api/rooms/' + code), { cache: 'no-store' });
@@ -512,6 +617,7 @@ async function startWatching(roomCode, hintedMode, pushUrl) {
     if (!activeMode) activeMode = details.mode;
     if (details.mode !== activeMode) throw new Error('The shared link has a different game mode. Please open the room again from the directory.');
     els.watchTitle.textContent = modeName(activeMode) + ' · Room ' + code;
+    updateSettingsPanel();
     roomStatus = details.status || 'waiting';
     roomPlayers = details.players || [];
     renderPlayers();
@@ -567,6 +673,27 @@ async function shareWatchLink() {
   }
 }
 els.refreshRooms.addEventListener('click', loadRooms);
+els.startDemo.addEventListener('click', startAiDemo);
+els.navPolls.addEventListener('click', () => toggleAudiencePanel('polls'));
+els.navChat.addEventListener('click', () => toggleAudiencePanel('chat'));
+els.navSettings.addEventListener('click', () => toggleAudiencePanel('settings'));
+document.querySelectorAll('[data-close-panel]').forEach((button) => button.addEventListener('click', closeAudiencePanel));
+els.muteSound.checked = soundMuted;
+els.muteSound.addEventListener('change', () => {
+  soundMuted = els.muteSound.checked;
+  try { localStorage.setItem('shapey-audience-muted', String(soundMuted)); } catch (_) {}
+  if (!soundMuted) playAudienceTone(520);
+});
+els.leaveRoom.addEventListener('click', () => {
+  if (activeMode === 'demo' && demoControlRoomCode === activeRoomCode && demoControlToken) {
+    if (!demoControlReady) { text(els.settingsStatus, 'Connecting demo controls… please try again in a moment.'); return; }
+    sendSocketMessage({ type: 'end_demo' });
+    text(els.settingsStatus, 'Ending the AI demo…');
+    els.leaveRoom.disabled = true;
+    return;
+  }
+  showDirectory(true);
+});
 els.modeChips.addEventListener('click', (event) => {
   const chip = event.target.closest('.chip');
   if (!chip) return;
