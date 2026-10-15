@@ -103,4 +103,6 @@ jobs:
 
       - name: Check frontend JavaScript syntax
         working-directory: .
-        run: node --check src/main.js
+        run: |
+          node --check src/main.js
+          node --check staging/audience.js
