@@ -49,6 +49,76 @@ let audienceAudio = null;
 let soundMuted = localStorage.getItem('shapey-audience-muted') === 'true';
 
 function api(path) { return MULTIPLAYER_API + path; }
+function playAudienceTone(frequency = 620) {
+  if (soundMuted) return;
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    if (!audienceAudio) audienceAudio = new AudioContextClass();
+    if (audienceAudio.state === 'suspended') audienceAudio.resume();
+    const oscillator = audienceAudio.createOscillator();
+    const gain = audienceAudio.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.value = frequency;
+    gain.gain.setValueAtTime(0.035, audienceAudio.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audienceAudio.currentTime + 0.12);
+    oscillator.connect(gain);
+    gain.connect(audienceAudio.destination);
+    oscillator.start();
+    oscillator.stop(audienceAudio.currentTime + 0.12);
+  } catch (_) {}
+}
+function closeAudiencePanel() {
+  openAudiencePanel = '';
+  [els.pollPanel, els.chatPanel, els.settingsPanel].forEach((panel) => { panel.hidden = true; });
+  [els.navPolls, els.navChat, els.navSettings].forEach((button) => button.setAttribute('aria-pressed', 'false'));
+}
+function toggleAudiencePanel(name) {
+  if (openAudiencePanel === name) { closeAudiencePanel(); return; }
+  closeAudiencePanel();
+  openAudiencePanel = name;
+  const panel = name === 'polls' ? els.pollPanel : name === 'chat' ? els.chatPanel : els.settingsPanel;
+  const button = name === 'polls' ? els.navPolls : name === 'chat' ? els.navChat : els.navSettings;
+  panel.hidden = false;
+  button.setAttribute('aria-pressed', 'true');
+  if (name === 'chat') els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+  if (name === 'settings') updateSettingsPanel();
+}
+function updateSettingsPanel() {
+  if (!els.leaveRoom) return;
+  const ownsDemo = activeMode === 'demo' && demoControlRoomCode === activeRoomCode && Boolean(demoControlToken);
+  text(els.leaveRoom, ownsDemo ? 'End AI demo' : 'Leave room');
+  els.leaveRoom.classList.toggle('end-demo', ownsDemo);
+  els.leaveRoom.disabled = ownsDemo && !demoControlReady;
+  if (ownsDemo) text(els.settingsStatus, demoControlReady
+    ? 'You opened this demo. End it here when you have finished watching.'
+    : 'Connecting your demo controls…');
+  else if (activeMode === 'demo') text(els.settingsStatus, 'You are watching this demo. Only its creator can end the shared room.');
+  else text(els.settingsStatus, 'Mute audience sounds or leave this room. You cannot make game moves.');
+}
+async function startAiDemo() {
+  els.startDemo.disabled = true;
+  setDirectoryStatus('Opening an AI vs AI demo room…', false);
+  try {
+    const response = await fetch(api('/api/rooms'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ mode: 'demo' })
+    });
+    let data = {};
+    try { data = await response.json(); } catch (_) {}
+    if (!response.ok) throw new Error(data.error || 'Could not create the AI demo. The staging Worker may need its update.');
+    demoControlToken = data.demoControlToken || '';
+    demoControlRoomCode = data.roomCode || '';
+    demoControlReady = false;
+    if (!demoControlToken || !demoControlRoomCode) throw new Error('The Worker did not return the demo control details.');
+    await startWatching(data.roomCode, 'demo', true);
+  } catch (error) {
+    setDirectoryStatus(error.message || 'Could not open the AI demo.', true);
+  } finally {
+    if (!els.directory.hidden) els.startDemo.disabled = false;
+  }
+}
 function directoryUrl() { return new URL('staging/audience.html', document.baseURI); }
 function shapeUrl(shape) {
   const file = SHAPE_FILES[shape] || SHAPE_FILES.mystery;
@@ -91,6 +161,8 @@ function showDirectory(updateUrl) {
   chatIds = new Set();
   els.directory.hidden = false;
   els.watch.hidden = true;
+  els.bottomNav.hidden = true;
+  closeAudiencePanel();
   els.connectionActions.hidden = true;
   if (updateUrl) {
     const url = directoryUrl();
@@ -140,8 +212,8 @@ function makeRoomCard(room) {
   const score = document.createElement('div');
   score.className = 'room-score';
   const scores = Array.isArray(room.scores) ? room.scores : [0, 0];
-  text(score, (room.mode === 'tag' ? 'Team A ' : 'P1 ') + (Number(scores[0]) || 0) + '  —  ' +
-    (room.mode === 'tag' ? 'Team B ' : 'P2 ') + (Number(scores[1]) || 0));
+  text(score, (room.mode === 'tag' ? 'Team A ' : room.mode === 'demo' ? 'AI 1 ' : 'P1 ') + (Number(scores[0]) || 0) + '  —  ' +
+    (room.mode === 'tag' ? 'Team B ' : room.mode === 'demo' ? 'AI 2 ' : 'P2 ') + (Number(scores[1]) || 0));
   meta.append(score);
   const target = document.createElement('div');
   const targetScore = Number(room.targetScore) || (room.mode === 'tag' ? 200 : 100);
@@ -324,7 +396,11 @@ function updateTurnClock() {
 }
 function renderGameState(state) {
   if (!state) return;
+  const previousState = currentState;
   currentState = state;
+  if (previousState && Array.isArray(previousState.scores) && Array.isArray(state.scores) &&
+      state.scores.some((score, index) => score !== previousState.scores[index])) playAudienceTone(760);
+  else if (previousState && previousState.activePlayerNumber !== state.activePlayerNumber) playAudienceTone(480);
   activeMode = state.mode || activeMode;
   renderBoard(state);
   renderScores(state);
