@@ -194,10 +194,11 @@ test("a pending effect is resolved before a nearly expired turn deadline", () =>
   assert.ok(state.turnEndsAt < state.pendingEffect.endsAt);
   assert.equal(nextGameDeadline(state), state.pendingEffect.endsAt);
 
-  advanceGameByTime(state, state.pendingEffect.endsAt, steadyRandom);
+  const resolvedAt = state.pendingEffect.endsAt;
+  advanceGameByTime(state, resolvedAt, steadyRandom);
   assert.equal(state.pendingEffect, null);
   assert.equal(state.activePlayerNumber, 2);
-  assert.ok(state.turnEndsAt > state.pendingEffect?.endsAt || state.turnEndsAt > NOW);
+  assert.equal(state.turnEndsAt, resolvedAt + TURN_MS);
 });
 
 test("a timeout with no valid match passes the turn and breaks the streak", () => {
