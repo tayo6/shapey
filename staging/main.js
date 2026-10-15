@@ -260,6 +260,8 @@ class Countdown {
     this.endsAt = 0;
   }
   start(ms) { this.endsAt = this.clock() + ms; }
+  // Freeze the outgoing turn clock while the submitted move is being resolved.
+  stop() { this.endsAt = this.clock(); }
   remaining() { return Math.max(0, this.endsAt - this.clock()); }
   expired() { return this.clock() >= this.endsAt; }
 }
@@ -1758,12 +1760,24 @@ class GameScene extends Phaser.Scene {
       } else if (message.type === 'spectator_count') {
         this.onlineSpectatorCount = Number(message.count) || 0;
       } else if (message.type === 'error') {
+        if (this.onlineSubmitPending) {
+          this.onlineSubmitPending = false;
+          if (this.onlineState && Number.isFinite(this.onlineState.turnEndsAt)) {
+            this.turnClock.endsAt = this.onlineState.turnEndsAt;
+          }
+        }
         this.showToast(message.message || 'The server rejected that action.', 3000);
       } else if (message.type === 'player_disconnected') {
         this.showToast('A player disconnected. Waiting for them to reconnect.', 3500);
       }
     });
     socket.addEventListener('close', () => {
+      if (this.onlineSubmitPending) {
+        this.onlineSubmitPending = false;
+        if (this.onlineState && Number.isFinite(this.onlineState.turnEndsAt)) {
+          this.turnClock.endsAt = this.onlineState.turnEndsAt;
+        }
+      }
       if (this.online && !this.gameOver) this.showToast('Connection lost. Return to the main menu and reconnect.', 4500);
     });
   }
@@ -1771,6 +1785,10 @@ class GameScene extends Phaser.Scene {
   sendOnlineAction(action) {
     if (!this.online || !this.onlineSocket || this.onlineSocket.readyState !== WebSocket.OPEN) {
       this.showToast('You are disconnected. Please reconnect to the room.', 3000);
+      return false;
+    }
+    if (this.onlineSubmitPending) {
+      this.showToast('Submitting turn…', 1000);
       return false;
     }
     const state = this.onlineState;
@@ -1797,6 +1815,8 @@ class GameScene extends Phaser.Scene {
 
   applyOnlineState(state, initial = false) {
     if (!this.online || !state) return;
+    // The server snapshot contains the canonical owner and deadline for the new turn.
+    this.onlineSubmitPending = false;
     const oldInventorySignature = this.onlineInventorySignature || '';
     const previousOnlineStars = this.onlineState && this.onlineState.me &&
       Number.isFinite(Number(this.onlineState.me.stars))
@@ -2281,12 +2301,21 @@ class GameScene extends Phaser.Scene {
   // -------------------------------------------------------------- submit
   async submit(fromAI = false, forced = false) {
     if (this.online) {
-      this.sendOnlineAction({ type: 'submit' });
+      const sent = this.sendOnlineAction({ type: 'submit' });
+      if (sent) {
+        // Freeze the submitting player's display until the authoritative next-turn state arrives.
+        this.onlineSubmitPending = true;
+        this.turnClock.stop();
+      }
       return;
     }
     // A late submit is normally ignored. Forced is used only by the turn deadline to resolve a pick.
     if (this.busy || this.turnEnding || this.gameOver || (this.turnClock.expired() && !forced)) return;
     if (!forced && !fromAI && (this.panelOpen || this.isAITurn())) return;
+
+    // The outgoing player's clock must not consume time spent resolving a submitted move.
+    // startTurn() starts a fresh deadline for the next player after board resolution.
+    if (this.modeCfg.turnClock) this.turnClock.stop();
 
     // Even a Dummy-only or empty manual submit ends a versus turn; it never changes the score.
     if (this.selection.length === 0) {
