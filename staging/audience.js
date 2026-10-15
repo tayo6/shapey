@@ -297,8 +297,9 @@ function appendChat(message) {
   text(sender, message.sender || 'Audience');
   const time = document.createElement('span');
   time.className = 'chat-time';
-  if (message.createdAt) {
-    const date = new Date(message.createdAt);
+  const timestamp = message.createdAt || message.at;
+  if (timestamp) {
+    const date = new Date(timestamp);
     text(time, date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
   }
   const body = document.createElement('span');
