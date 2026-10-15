@@ -376,6 +376,9 @@ export class Room extends DurableObject {
     const poll = await this.ctx.storage.get("audiencePoll");
     const pollDeadline = poll && !poll.closed ? poll.endsAt : null;
     const deadlines = [roomDeadline, gameDeadline, pollDeadline].filter(Number.isFinite);
+    // Keep a room with a connected player but no game on the directory too. Without this
+    // heartbeat, a long lobby wait could outlive its directory listing lease.
+    if (this.connectedCount() > 0 && !game) deadlines.push(now + LIVE_DIRECTORY_REFRESH_MS);
     if (deadlines.length) await this.ctx.storage.setAlarm(Math.min(...deadlines));
     else await this.ctx.storage.deleteAlarm();
     await this.publishRoomSummary();
