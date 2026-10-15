@@ -524,12 +524,12 @@ class MenuScene extends Phaser.Scene {
 
   // Opens the public room directory in this tab; the directory has its own way back to the game.
   openAudienceDirectory() {
-    window.location.assign(new URL('/shapey/staging/audience.html', window.location.origin).href);
+    window.location.assign(new URL('staging/audience.html', document.baseURI).href);
   }
 
   audienceWatchUrl() {
     if (!this.currentRoomCode) return null;
-    const url = new URL('/shapey/staging/audience.html', window.location.origin);
+    const url = new URL('staging/audience.html', document.baseURI);
     url.searchParams.set('room', this.currentRoomCode);
     url.searchParams.set('mode', this.onlineMode || this.mode || 'tag');
     return url.href;
@@ -1577,16 +1577,17 @@ class GameScene extends Phaser.Scene {
     const totalWeight = weights.reduce((sum, n) => sum + n, 0);
     const votes = weights.map((weight) => Math.round((weight / totalWeight) * 100));
     votes[0] += 100 - votes.reduce((sum, n) => sum + n, 0);
-    const ranked = candidates.map((shape, i) => ({ shape, votes: votes[i] }))
-      .sort((a, b) => b.votes - a.votes);
-    add(this.add.text(GAME_WIDTH / 2, 470, 'TOP CHOICE: ' + ranked[0].shape.toUpperCase(), {
+    // Like the TV lifeline, the options keep their A-D order and the top choice is called out above them.
+    const ranked = candidates.map((shape, i) => ({ shape, votes: votes[i] }));
+    const top = ranked.reduce((best, item) => (item.votes > best.votes ? item : best), ranked[0]);
+    add(this.add.text(GAME_WIDTH / 2, 470, 'TOP CHOICE: ' + top.shape.toUpperCase(), {
       fontFamily: FONT, fontSize: '28px', color: '#ffe36e',
       stroke: '#3a2112', strokeThickness: 5, align: 'center',
     }).setOrigin(0.5));
 
     ranked.forEach((item, i) => {
       const y = 545 + i * 75;
-      add(this.add.text(86, y, item.shape.toUpperCase(), {
+      add(this.add.text(86, y, String.fromCharCode(65 + i) + '  ' + item.shape.toUpperCase(), {
         fontFamily: FONT, fontSize: '20px', color: '#fff2c7',
         stroke: '#3a2112', strokeThickness: 4,
       }).setOrigin(0, 0.5));
@@ -1601,9 +1602,19 @@ class GameScene extends Phaser.Scene {
       () => this.closeAudiencePoll(), 252).forEach(add);
   }
 
+  // Online poll, modelled on "Ask the Audience": while the audience votes the contestant sees the
+  // lettered options and a countdown only; the percentages are revealed when voting closes.
+  // Only the team that opened the poll sees it, so the other team never sees the audience's advice.
   renderOnlineAudiencePoll(poll) {
+    if (!poll || this.gameOver) { this.closeAudiencePoll(); return; }
+    const mySide = this.onlinePlayerNumber ? (this.onlinePlayerNumber <= 2 ? 0 : 1) : null;
+    const pollSide = Number(poll.startedByPlayer) <= 2 ? 0 : 1;
+    if (mySide === null || mySide !== pollSide) { this.closeAudiencePoll(); return; }
+    const key = poll.id + ':' + (poll.closed ? 'closed' : 'open');
+    if (this.dismissedPollKey === key) return; // the player closed this view; do not pop it up again
+    if (this.pollShownKey === key && this.pollUI && this.pollUI.length) return; // nothing new to draw
     this.closeAudiencePoll();
-    if (!poll || this.gameOver) return;
+    this.pollShownKey = key;
     this.pollUI = [];
     const add = (object) => {
       object.setDepth(250);
@@ -1614,40 +1625,66 @@ class GameScene extends Phaser.Scene {
       .setInteractive());
     add(this.add.rectangle(GAME_WIDTH / 2, 650, 640, 690, 0x4b2d17, 1)
       .setStrokeStyle(5, 0xd5ad72));
-    add(this.add.text(GAME_WIDTH / 2, 365, poll.closed ? 'AUDIENCE POLL RESULTS' : 'LIVE AUDIENCE PICK', {
-      fontFamily: FONT, fontSize: poll.closed ? '38px' : '44px', color: '#fff2c7',
+    add(this.add.text(GAME_WIDTH / 2, 365, poll.closed ? 'AUDIENCE RESULTS' : 'ASK THE AUDIENCE', {
+      fontFamily: FONT, fontSize: '42px', color: '#fff2c7',
       stroke: '#3a2112', strokeThickness: 8, align: 'center', wordWrap: { width: 590 },
     }).setOrigin(0.5));
-    const totalVotes = Number(poll.totalVotes) || 0;
-    add(this.add.text(GAME_WIDTH / 2, 420,
-      poll.closed ? 'POLL CLOSED · ' + totalVotes + ' VOTES'
-        : 'LIVE SPECTATOR VOTES · ' + totalVotes + ' VOTES', {
-        fontFamily: FONT, fontSize: '21px', color: '#ffe36e', align: 'center',
-        stroke: '#3a2112', strokeThickness: 4,
+
+    const options = poll.options || [];
+    const counts = options.map((shape) => Number((poll.counts || {})[shape]) || 0);
+    const totalVotes = counts.reduce((sum, n) => sum + n, 0);
+    const percents = percentSplit(counts);
+    const best = Math.max(0, ...counts);
+    const secondsLeft = () => Math.max(0, Math.ceil(((Number(poll.endsAt) || 0) - Date.now()) / 1000));
+    const subtitle = () => {
+      if (poll.closed) return totalVotes > 0 ? 'POLL CLOSED · ' + totalVotes + (totalVotes === 1 ? ' VOTE' : ' VOTES') : 'NO VOTES WERE CAST';
+      const left = secondsLeft();
+      return left > 0 ? 'THE AUDIENCE IS VOTING · ' + left + 's' : 'COUNTING THE VOTES…';
+    };
+    const subtitleText = add(this.add.text(GAME_WIDTH / 2, 420, subtitle(), {
+      fontFamily: FONT, fontSize: '21px', color: '#ffe36e', align: 'center',
+      stroke: '#3a2112', strokeThickness: 4,
+    }).setOrigin(0.5));
+    if (!poll.closed) {
+      this.pollTimer = this.time.addEvent({
+        delay: 250, loop: true,
+        callback: () => { if (subtitleText.active) subtitleText.setText(subtitle()); },
+      });
+    } else if (totalVotes > 0) {
+      const leaders = counts.filter((n) => n === best).length;
+      add(this.add.text(GAME_WIDTH / 2, 462, leaders > 1 ? 'THE AUDIENCE IS SPLIT'
+        : 'TOP CHOICE: ' + String(options[counts.indexOf(best)]).toUpperCase(), {
+        fontFamily: FONT, fontSize: '26px', color: '#ffe36e', align: 'center',
+        stroke: '#3a2112', strokeThickness: 5,
       }).setOrigin(0.5));
-    (poll.options || []).forEach((shape, index) => {
-      const y = 520 + index * 80;
-      const count = Number((poll.counts || {})[shape]) || 0;
-      const percent = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
-      add(this.add.text(78, y, String(shape).toUpperCase(), {
+    }
+    options.forEach((shape, index) => {
+      const y = 540 + index * 80;
+      add(this.add.text(78, y, String.fromCharCode(65 + index) + '  ' + String(shape).toUpperCase(), {
         fontFamily: FONT, fontSize: '20px', color: '#fff2c7',
         stroke: '#3a2112', strokeThickness: 4,
       }).setOrigin(0, 0.5));
       add(this.add.rectangle(270, y, 288, 24, 0x25180f, 1).setOrigin(0, 0.5));
-      add(this.add.rectangle(270, y, Math.max(3, 2.88 * percent), 18, 0xd7a849, 1).setOrigin(0, 0.5));
-      add(this.add.text(625, y, count + ' · ' + percent + '%', {
-        fontFamily: FONT, fontSize: '21px', color: '#ffffff',
-        stroke: '#3a2112', strokeThickness: 4, align: 'right',
-      }).setOrigin(1, 0.5));
+      if (poll.closed) {
+        const leader = totalVotes > 0 && counts[index] === best;
+        add(this.add.rectangle(270, y, Math.max(3, 2.88 * percents[index]), 18, leader ? 0xffd45e : 0xb98a3c, 1)
+          .setOrigin(0, 0.5));
+        add(this.add.text(625, y, percents[index] + '%', {
+          fontFamily: FONT, fontSize: '22px', color: leader ? '#ffe36e' : '#ffffff',
+          stroke: '#3a2112', strokeThickness: 4, align: 'right',
+        }).setOrigin(1, 0.5));
+      }
     });
     woodButton(this, GAME_WIDTH / 2, 885, 420, 82,
-      poll.closed ? 'CLOSE RESULTS' : 'CLOSE PANEL', 30,
-      () => this.closeAudiencePoll(), 252).forEach(add);
+      poll.closed ? 'CLOSE RESULTS' : 'HIDE', 30,
+      () => { this.dismissedPollKey = key; this.closeAudiencePoll(); }, 252).forEach(add);
   }
 
   closeAudiencePoll() {
+    if (this.pollTimer) { this.pollTimer.remove(false); this.pollTimer = null; }
     if (this.pollUI) this.pollUI.forEach((object) => object.destroy());
     this.pollUI = [];
+    this.pollShownKey = null;
   }
 
   // ------------------------------------------------------------------ fx
@@ -1749,9 +1786,9 @@ class GameScene extends Phaser.Scene {
       try { message = JSON.parse(event.data); } catch { return; }
       if (message.type === 'game_state' && message.state) {
         this.applyOnlineState(message.state);
-      } else if (message.type === 'audience_poll_state' && message.poll) {
-        this.onlineAudiencePoll = message.poll;
-        this.renderOnlineAudiencePoll(message.poll);
+      } else if (message.type === 'audience_poll_state') {
+        this.onlineAudiencePoll = message.poll || null;
+        this.renderOnlineAudiencePoll(message.poll || null);
       } else if (message.type === 'spectator_count') {
         this.onlineSpectatorCount = Number(message.count) || 0;
       } else if (message.type === 'error') {
