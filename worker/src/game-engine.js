@@ -4,7 +4,12 @@ export const GRID_ROWS = 7;
 export const GRID_COLS = 7;
 export const INITIAL_REVIEW_MS = 15_000;
 export const TURN_MS = 45_000;
+export const TAG_TURN_MS = 30_000;
 export const NEW_TILE_REVEAL_MS = 5_000;
+
+export function turnDurationForMode(mode) {
+  return mode === "tag" ? TAG_TURN_MS : TURN_MS;
+}
 export const SHUFFLE_STEP_MS = 2_000;
 export const MIN_MATCH = 3;
 
@@ -93,6 +98,7 @@ export function createGameState({ roomCode, mode, playerNumbers, now = Date.now(
 
   const playerData = {};
   for (const playerNumber of order) playerData[String(playerNumber)] = newPlayerData();
+  const turnDurationMs = turnDurationForMode(mode);
 
   return {
     protocolVersion: 1,
@@ -106,7 +112,8 @@ export function createGameState({ roomCode, mode, playerNumbers, now = Date.now(
     activePlayerNumber: order[0],
     isBonusTurn: false,
     doublePlayPendingPlayer: null,
-    turnEndsAt: now + INITIAL_REVIEW_MS + TURN_MS,
+    turnDurationMs,
+    turnEndsAt: now + INITIAL_REVIEW_MS + turnDurationMs,
     targetScore: mode === "tag" ? 200 : 100,
     scores: [0, 0],
     winnerSide: null,
@@ -166,20 +173,22 @@ function breakStreak(state, playerNumber) {
 
 function endTurn(state, now, { matched = false } = {}) {
   const currentPlayer = state.activePlayerNumber;
+  const durationMs = Number.isFinite(state.turnDurationMs) && state.turnDurationMs > 0
+    ? state.turnDurationMs : turnDurationForMode(state.mode);
   if (!matched) breakStreak(state, currentPlayer);
 
-  // Double Play adds exactly one 45-second turn for its owner. A bonus turn cannot chain.
+  // Double Play adds exactly one normal-length turn for its owner. A bonus turn cannot chain.
   if (!state.isBonusTurn && state.doublePlayPendingPlayer === currentPlayer) {
     state.doublePlayPendingPlayer = null;
     state.isBonusTurn = true;
-    state.turnEndsAt = now + TURN_MS;
+    state.turnEndsAt = now + durationMs;
     return;
   }
 
   state.isBonusTurn = false;
   state.turnIndex += 1;
   state.activePlayerNumber = state.turnOrder[state.turnIndex % state.turnOrder.length];
-  state.turnEndsAt = now + TURN_MS;
+  state.turnEndsAt = now + durationMs;
 }
 
 function nextShape(state, rng) {
@@ -431,7 +440,7 @@ export function advanceGameByTime(inputState, now = Date.now(), rng = Math.rando
         if (state.status !== "finished" && state.activePlayerNumber === player &&
             state.isBonusTurn && state.turnEndsAt <= now) {
           // A very late wake-up cannot create a stale bonus turn deadline.
-          state.turnEndsAt = now + TURN_MS;
+          state.turnEndsAt = now + (state.turnDurationMs || turnDurationForMode(state.mode));
         }
       } else {
         clearSelection(state, true);
@@ -599,6 +608,7 @@ export function gameViewForPlayer(state, playerNumber) {
     activeSide: sideForPlayer(state.mode, state.activePlayerNumber),
     isBonusTurn: state.isBonusTurn,
     doublePlayPendingPlayer: state.doublePlayPendingPlayer,
+    turnDurationMs: state.turnDurationMs || turnDurationForMode(state.mode),
     turnEndsAt: state.turnEndsAt,
     targetScore: state.targetScore,
     scores: state.scores.slice(),
