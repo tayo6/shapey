@@ -304,6 +304,8 @@ export class Room extends DurableObject {
       if (details.mode === "demo") {
         // A demo is an automatically running PvP game whose two player seats are controlled by the Worker.
         const game = createGameState({ roomCode: data.roomCode, mode: "pvp", playerNumbers: [1, 2], now });
+        // Keep the sample short enough to watch on one device; regular PvP still targets 100.
+        game.targetScore = 10;
         game.demoNextActionAt = Number(game.reviewEndsAt) + 500;
         game.demoPickPlan = null;
         game.demoSubmitAt = null;
@@ -574,6 +576,11 @@ export class Room extends DurableObject {
         if (game.status === "finished") game.demoCleanupAt = now + 8_000;
         await this.ctx.storage.put("game", game);
         await this.broadcastGameState("game_state");
+      } else {
+        game.demoPickPlan = null;
+        game.demoSubmitAt = null;
+        game.demoNextActionAt = now + 1_000;
+        await this.ctx.storage.put("game", game);
       }
       return game;
     }
@@ -599,6 +606,11 @@ export class Room extends DurableObject {
         }
         await this.ctx.storage.put("game", game);
         await this.broadcastGameState("game_state");
+      } else {
+        game.demoPickPlan = null;
+        game.demoSubmitAt = null;
+        game.demoNextActionAt = now + 1_000;
+        await this.ctx.storage.put("game", game);
       }
       return game;
     }
