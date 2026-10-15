@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   INITIAL_REVIEW_MS, TURN_MS, TAG_TURN_MS, GRID_ROWS, GRID_COLS,
-  createGameState, gameViewForPlayer, applyGameAction, advanceGameByTime,
+  createGameState, gameViewForPlayer, gameViewForSpectator, applyGameAction, advanceGameByTime,
   nextGameDeadline, scoreForMatch, turnDurationForMode
 } from "../src/game-engine.js";
 
@@ -60,6 +60,20 @@ test("hidden tile shapes are never sent to clients", () => {
   const revealed = gameViewForPlayer(state, 2).tiles.find((tile) => tile.id === state.tiles[0].id);
   assert.equal(revealed.shape, hiddenShape);
   assert.equal(state.tiles[0].shape, hiddenShape);
+});
+
+test("spectator snapshots hide unrevealed shapes and player-only inventory data", () => {
+  const state = startPlaying("tag");
+  const view = gameViewForSpectator(state);
+  assert.equal(view.mode, "tag");
+  assert.equal(view.activePlayerNumber, 1);
+  assert.equal("me" in view, false);
+  assert.equal(view.tiles.length, GRID_ROWS * GRID_COLS);
+  assert.ok(view.tiles.every((tile) => tile.shape === null && tile.faceUp === false));
+  state.tiles[0].faceUp = true;
+  const revealed = gameViewForSpectator(state).tiles.find((tile) => tile.id === state.tiles[0].id);
+  assert.equal(revealed.shape, state.tiles[0].shape);
+  assert.equal(gameViewForSpectator(null), null);
 });
 
 test("the server rejects out-of-turn moves", () => {
