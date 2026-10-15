@@ -100,6 +100,8 @@ test("a valid 3-tile match awards one point and moves PvP to Player 2", () => {
   assert.equal(submitted.accepted, true, submitted.error);
   assert.deepEqual(submitted.state.scores, [1, 0]);
   assert.equal(submitted.state.activePlayerNumber, 2);
+  assert.equal(submitted.state.turnEndsAt, NOW + INITIAL_REVIEW_MS + 1 + TURN_MS,
+    "the outgoing player's deadline is replaced immediately by Player 2's fresh turn");
   assert.equal(submitted.state.tiles.length, GRID_ROWS * GRID_COLS);
   assert.equal(submitted.state.selectedTileIds.length, 0);
   assert.equal(submitted.state.reveals.length, 1);
@@ -112,6 +114,8 @@ test("Tag alternates sides and rotates all four player seats in the required ord
     const result = act(state, player, { type: "submit" });
     assert.equal(result.accepted, true, result.error);
     state = result.state;
+    assert.equal(state.turnEndsAt, NOW + INITIAL_REVIEW_MS + 1 + TAG_TURN_MS,
+      "each Tag handoff receives a fresh 30-second turn deadline");
     seen.push(state.activePlayerNumber);
   }
   assert.deepEqual(seen, [1, 3, 2, 4, 1, 3, 2, 4]);
