@@ -133,7 +133,8 @@ export default {
       try { body = await request.json(); }
       catch { return json({ error: "Send a JSON body with mode set to pvp or tag." }, 400, cors); }
       const details = modeDetails(body?.mode);
-      if (!details) return json({ error: "Choose Player 1 vs Player 2 (pvp) or Tag (tag)." }, 400, cors);
+      if (!details) return json({ error: "Choose Player 1 vs Player 2 (pvp), Tag (tag), or AI vs AI demo (demo)." }, 400, cors);
+      const demoControlToken = details.mode === "demo" ? newSeatToken() : null;
 
       const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
       for (let attempt = 0; attempt < 5; attempt++) {
@@ -144,15 +145,16 @@ export default {
         const created = await stub.fetch("https://room.internal/create", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ roomCode: code, ...details })
+          body: JSON.stringify({ roomCode: code, ...details, demoControlToken })
         });
         if (created.status === 409) continue;
         if (!created.ok) return json({ error: "Could not reserve a room. Please try again." }, 503, cors);
         return json({
           roomCode: code,
           websocketUrl: url.origin.replace(/^http/, "ws") + "/ws/" + code,
-          status: "waiting",
-          ...details
+          status: details.mode === "demo" ? "starting" : "waiting",
+          ...details,
+          ...(demoControlToken ? { demoControlToken } : {})
         }, 201, cors);
       }
       return json({ error: "Could not create a unique room code. Please try again." }, 503, cors);
@@ -278,7 +280,8 @@ export class Room extends DurableObject {
       try { data = await request.json(); }
       catch { return json({ error: "Invalid room setup." }, 400); }
       const details = modeDetails(data?.mode);
-      if (!details || data.maxPlayers !== details.maxPlayers || !isRoomCode(data.roomCode)) {
+      if (!details || data.maxPlayers !== details.maxPlayers || !isRoomCode(data.roomCode) ||
+          (details.mode === "demo" && typeof data.demoControlToken !== "string")) {
         return json({ error: "Invalid room setup." }, 400);
       }
       const existing = await this.ctx.storage.get("room");
@@ -294,9 +297,19 @@ export class Room extends DurableObject {
         roomCode: data.roomCode,
         mode: details.mode,
         maxPlayers: details.maxPlayers,
+        demoControlTokenHash: data.demoControlToken ? await hashSeatToken(data.demoControlToken) : null,
         createdAt: now,
         lastActivityAt: now
       });
+      if (details.mode === "demo") {
+        // A demo is an automatically running PvP game whose two player seats are controlled by the Worker.
+        const game = createGameState({ roomCode: data.roomCode, mode: "pvp", playerNumbers: [1, 2], now });
+        game.demoNextActionAt = Number(game.reviewEndsAt) + 500;
+        game.demoPickPlan = null;
+        game.demoSubmitAt = null;
+        game.demoCleanupAt = null;
+        await this.ctx.storage.put("game", game);
+      }
       // Empty/waiting rooms expire; activity refreshes the alarm, with a hard maximum lifetime.
       await this.ctx.storage.setAlarm(now + ROOM_IDLE_TTL_MS);
       await this.publishRoomSummary(true);
@@ -321,13 +334,10 @@ export class Room extends DurableObject {
     if (url.pathname === "/info" && request.method === "GET") {
       const players = this.playerList();
       const connected = players.filter(player => player.connected).length;
-      return json({
-        roomCode: room.roomCode,
-        mode: room.mode,
-        maxPlayers: room.maxPlayers,
-        status: connected >= room.maxPlayers ? "ready" : "waiting",
-        players
-      });
+      const game = await this.ctx.storage.get("game");
+      const status = game?.status === "finished" ? "finished" : game?.status === "playing" ? "live" :
+        game?.status === "study" ? "starting" : room.mode === "demo" ? "starting" : connected >= room.maxPlayers ? "ready" : "waiting";
+      return json({ roomCode: room.roomCode, mode: room.mode, maxPlayers: room.maxPlayers, status, players });
     }
 
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
@@ -337,7 +347,7 @@ export class Room extends DurableObject {
     const requestedMode = url.searchParams.get("mode");
     if (requestedMode !== room.mode) {
       return json({
-        error: "This room is for " + (room.mode === "tag" ? "Tag (2 vs 2)" : "Player 1 vs Player 2") + "."
+        error: "This room is for " + (room.mode === "tag" ? "Tag (2 vs 2)" : room.mode === "demo" ? "AI vs AI demo" : "Player 1 vs Player 2") + "."
       }, 409);
     }
 
@@ -375,7 +385,8 @@ export class Room extends DurableObject {
     const gameDeadline = nextGameDeadline(game);
     const poll = await this.ctx.storage.get("audiencePoll");
     const pollDeadline = poll && !poll.closed ? poll.endsAt : null;
-    const deadlines = [roomDeadline, gameDeadline, pollDeadline].filter(Number.isFinite);
+    const deadlines = [roomDeadline, gameDeadline, pollDeadline,
+      game?.demoNextActionAt, game?.demoSubmitAt, game?.demoCleanupAt].filter(Number.isFinite);
     // Keep a room with a connected player but no game on the directory too. Without this
     // heartbeat, a long lobby wait could outlive its directory listing lease.
     if (this.connectedCount() > 0 && !game) deadlines.push(now + LIVE_DIRECTORY_REFRESH_MS);
@@ -401,6 +412,7 @@ export class Room extends DurableObject {
     const status = game?.status === "finished" ? "finished" :
       game?.status === "playing" ? "live" :
       game?.status === "study" ? "starting" :
+      room.mode === "demo" ? "starting" :
       this.connectedCount() >= room.maxPlayers ? "ready" : "waiting";
     if (status === "finished") {
       await this.removeRoomFromDirectory(room.roomCode);
@@ -450,7 +462,10 @@ export class Room extends DurableObject {
         if (Number.isInteger(attachment.playerNumber)) {
           ws.send(JSON.stringify({ type, state: gameViewForPlayer(game, attachment.playerNumber) }));
         } else if (attachment.role === "spectator" && attachment.spectatorReady) {
-          ws.send(JSON.stringify({ type, state: gameViewForSpectator(game) }));
+          const state = gameViewForSpectator(game);
+          const room = await this.ctx.storage.get("room");
+          if (state && room?.mode === "demo") state.mode = "demo";
+          ws.send(JSON.stringify({ type, state }));
         }
       } catch {}
     }
@@ -684,7 +699,7 @@ export class Room extends DurableObject {
       status: game ? game.status : (this.connectedCount() >= room.maxPlayers ? "ready" : "waiting"),
       players: this.playerList(),
       spectatorCount: this.spectatorCount(),
-      state: game ? gameViewForSpectator(game) : null,
+      state: game ? { ...gameViewForSpectator(game), ...(room.mode === "demo" ? { mode: "demo" } : {}) } : null,
       chatHistory: history,
       poll: poll && !poll.closed && poll.endsAt > Date.now() ? audiencePollSnapshot(poll) : null
     }));
@@ -836,6 +851,28 @@ export class Room extends DurableObject {
       return;
     }
 
+    if (data?.type === "demo_control") {
+      const room = await this.ctx.storage.get("room");
+      const suppliedHash = typeof data.token === "string" ? await hashSeatToken(data.token) : "";
+      if (room?.mode !== "demo" || !room.demoControlTokenHash || suppliedHash !== room.demoControlTokenHash || attachment.role !== "spectator" || !attachment.spectatorReady) {
+        ws.send(JSON.stringify({ type: "error", message: "This demo-control link is not valid." }));
+        return;
+      }
+      attachment.demoController = true;
+      ws.serializeAttachment(attachment);
+      ws.send(JSON.stringify({ type: "demo_control_ready" }));
+      return;
+    }
+    if (data?.type === "end_demo") {
+      const room = await this.ctx.storage.get("room");
+      if (room?.mode !== "demo" || attachment.demoController !== true) {
+        ws.send(JSON.stringify({ type: "error", message: "Only the person who opened this AI demo can end it." }));
+        return;
+      }
+      this.broadcast({ type: "demo_ended", message: "The AI vs AI demo has ended." });
+      await this.deleteRoomData(room.roomCode, "Demo ended by its host");
+      return;
+    }
     if (data?.type === "chat") {
       await this.postChat(ws, data);
       return;
@@ -848,7 +885,7 @@ export class Room extends DurableObject {
       await this.startAudiencePoll(ws);
       return;
     }
-    if (isSpectator && data?.type !== "ping") {
+    if (isSpectator && !["ping", "demo_control", "end_demo"].includes(data?.type)) {
       ws.send(JSON.stringify({ type: "error", message: "Spectators can only chat, vote, or ping." }));
       return;
     }
