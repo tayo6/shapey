@@ -558,6 +558,12 @@ export class Room extends DurableObject {
       return game;
     }
 
+    if (Number.isFinite(game.demoSubmitAt) && game.demoSubmitAt > now) {
+      game.demoNextActionAt = game.demoSubmitAt;
+      await this.ctx.storage.put("game", game);
+      return game;
+    }
+
     if (Number.isFinite(game.demoSubmitAt) && game.demoSubmitAt <= now) {
       const result = applyGameAction(game, game.activePlayerNumber, { type: "submit" }, now);
       if (result.accepted) {
@@ -589,6 +595,7 @@ export class Room extends DurableObject {
         if (!game.demoPickPlan.length) {
           game.demoPickPlan = null;
           game.demoSubmitAt = now + 700;
+          game.demoNextActionAt = game.demoSubmitAt;
         }
         await this.ctx.storage.put("game", game);
         await this.broadcastGameState("game_state");
