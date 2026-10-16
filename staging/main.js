@@ -430,44 +430,99 @@ class LoadScene extends Phaser.Scene {
         stroke: '#3a2412', strokeThickness: 5, wordWrap: { width: 540 }
       }).setOrigin(0.5).setDepth(201);
     };
+    const roomModeFor = (message) => message.mode || message.state?.mode || urlParams.get('mode') || 'pvp';
+    const gameModeFor = (roomMode) => roomMode === 'tag' ? 'tag' : 'pvp';
+
+    // Embedded audience page owns the single real WebSocket. The iframe receives the same
+    // authorised spectator snapshots through postMessage, so each watcher counts only once.
+    if (urlParams.get('embed') === '1') {
+      class EmbeddedAudienceSocket extends EventTarget {
+        constructor() { super(); this.readyState = WebSocket.OPEN; }
+        send(data) {
+          try { window.parent.postMessage({ type: 'shapey-audience-socket-send', data }, window.location.origin); } catch {}
+        }
+        close() {
+          this.readyState = WebSocket.CLOSED;
+          try { this.dispatchEvent(new CloseEvent('close')); } catch {}
+        }
+        deliver(message) {
+          try { this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) })); } catch {}
+        }
+      }
+      const socket = new EmbeddedAudienceSocket();
+      let started = false;
+      const handleParentMessage = (event) => {
+        if (event.source !== window.parent || event.origin !== window.location.origin ||
+            event.data?.type !== 'shapey-audience-message') return;
+        const message = event.data.message;
+        if (!message || typeof message.type !== 'string') return;
+        const hasState = Boolean(message.state);
+        const isStartMessage = (message.type === 'spectator_welcome' || message.type === 'game_started' ||
+          message.type === 'game_state') && hasState;
+        if (!started && isStartMessage) {
+          const roomMode = roomModeFor(message);
+          started = true;
+          this.scene.start('GameScene', {
+            mode: gameModeFor(roomMode),
+            online: true,
+            spectator: true,
+            audienceMode: roomMode,
+            onlineSocket: socket,
+            onlineRoomCode: code,
+            onlineState: message.state
+          });
+          return;
+        }
+        if (started) socket.deliver(message);
+        else if (message.type === 'error' || message.type === 'demo_ended') {
+          showError(message.message || 'This room is no longer available.');
+        }
+      };
+      window.addEventListener('message', handleParentMessage);
+      this.events.once('shutdown', () => window.removeEventListener('message', handleParentMessage));
+      return;
+    }
+
+    // Direct watch links remain supported outside the embedded audience layout.
     try {
       const response = await fetch(MULTIPLAYER_API + '/api/rooms/' + code, { cache: 'no-store' });
       const details = await response.json();
       if (!response.ok) throw new Error(details.error || 'This room is no longer available.');
       const roomMode = details.mode || urlParams.get('mode') || 'pvp';
-      const gameMode = roomMode === 'tag' ? 'tag' : 'pvp';
+      const gameMode = gameModeFor(roomMode);
       const wsBase = MULTIPLAYER_API.replace(/^http/, 'ws');
       const socket = new WebSocket(wsBase + '/ws/' + code + '?mode=' + encodeURIComponent(roomMode) + '&role=spectator');
       let started = false;
-      socket.addEventListener('open', () => {
-        socket.send(JSON.stringify({ type: 'spectate' }));
-      });
-      socket.addEventListener('message', (event) => {
+      const handleMessage = (event) => {
         let message;
         try { message = JSON.parse(event.data); } catch { return; }
+        const isStartMessage = (message.type === 'spectator_welcome' || message.type === 'game_started' ||
+          message.type === 'game_state') && message.state;
         if (message.type === 'error' && !started) {
           showError(message.message || 'Could not connect to this room.');
           try { socket.close(); } catch {}
           return;
         }
-        if (message.type !== 'spectator_welcome' || !message.state || started) return;
-        started = true;
-        this.scene.start('GameScene', {
-          mode: gameMode,
-          online: true,
-          spectator: true,
-          audienceMode: roomMode,
-          onlineSocket: socket,
-          onlineRoomCode: code,
-          onlineState: message.state
-        });
-      });
-      socket.addEventListener('error', () => {
-        if (!started) showError('Could not connect to the room. Return to Live Games and try again.');
-      });
-      socket.addEventListener('close', () => {
-        if (!started) showError('The room connection closed. Return to Live Games and try again.');
-      });
+        if (!started && isStartMessage) {
+          started = true;
+          this.scene.start('GameScene', {
+            mode: gameMode,
+            online: true,
+            spectator: true,
+            audienceMode: roomMode,
+            onlineSocket: socket,
+            onlineRoomCode: code,
+            onlineState: message.state
+          });
+        } else if (started) {
+          // GameScene registered its message handler after this callback; future messages are
+          // handled there once the transition has completed.
+        }
+      };
+      socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'spectate' })));
+      socket.addEventListener('message', handleMessage);
+      socket.addEventListener('error', () => { if (!started) showError('Could not connect to the room. Return to Live Games and try again.'); });
+      socket.addEventListener('close', () => { if (!started) showError('The room connection closed. Return to Live Games and try again.'); });
     } catch (error) {
       showError(error.message || 'Could not open this room.');
     }
@@ -1891,7 +1946,7 @@ class GameScene extends Phaser.Scene {
         this.applyOnlineState(message.state);
       } else if (message.type === 'audience_poll_state') {
         this.onlineAudiencePoll = message.poll || null;
-        this.renderOnlineAudiencePoll(message.poll || null);
+        if (!this.spectator) this.renderOnlineAudiencePoll(message.poll || null);
       } else if (message.type === 'spectator_count') {
         this.onlineSpectatorCount = Number(message.count) || 0;
       } else if (message.type === 'error') {
