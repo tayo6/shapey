@@ -3,19 +3,26 @@ name: Multiplayer Worker tests
 on:
   push:
     branches:
-      - feat/authoritative-online-gameplay
+      - staging/audience-room-ui-0003
     paths:
       - "worker/**"
       - "src/**"
       - "tests/**"
       - ".github/workflows/worker-tests.yml"
       - "staging/audience.js"
+      - "staging/main.js"
+      - "staging/index.html"
   pull_request:
     paths:
       - "worker/**"
       - "src/**"
       - "tests/**"
       - ".github/workflows/worker-tests.yml"
+      - "staging/audience.html"
+      - "staging/audience.js"
+      - "staging/main.js"
+      - "staging/index.html"
+      - ".github/workflows/staging-preview.yml"
 jobs:
   worker-unit-tests:
     runs-on: ubuntu-latest
@@ -36,7 +43,9 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Validate Worker bundle and Wrangler config without deploying
-        run: npx --yes wrangler@4.151.0 deploy --dry-run --outdir /tmp/shapey-worker-dry-run
+        run: |
+          if [ "${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}" = "staging/audience-room-ui-0003" ]; then CONFIG=wrangler.staging.jsonc; else CONFIG=wrangler.jsonc; fi
+          npx --yes wrangler@4.151.0 deploy --config "$CONFIG" --dry-run --outdir /tmp/shapey-worker-dry-run
       - name: Run protocol and game-engine tests
         run: npm test
 
@@ -44,7 +53,8 @@ jobs:
       # Wrangler process on the same port left a child process behind on GitHub's Linux runner.
       - name: Run local Worker integration and browser tests (no deployment)
         run: |
-          setsid npx --yes wrangler@4.151.0 dev --local --ip 127.0.0.1 --port 8787 > /tmp/shapey-local-worker.log 2>&1 &
+          if [ "${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}" = "staging/audience-room-ui-0003" ]; then CONFIG=wrangler.staging.jsonc; else CONFIG=wrangler.jsonc; fi
+          setsid npx --yes wrangler@4.151.0 dev --config "$CONFIG" --local --ip 127.0.0.1 --port 8787 > /tmp/shapey-local-worker.log 2>&1 &
           WORKER_PID=$!
           setsid python3 -m http.server 8080 --bind 127.0.0.1 --directory .. > /tmp/shapey-local-pages.log 2>&1 &
           PAGES_PID=$!
@@ -92,7 +102,7 @@ jobs:
           }
 
       - name: Validate Wrangler JSON syntax
-        run: node -e 'JSON.parse(require("node:fs").readFileSync("wrangler.jsonc", "utf8")); console.log("wrangler.jsonc is valid JSON")'
+        run: node -e 'for (const f of ["wrangler.jsonc", "wrangler.staging.jsonc"]) { JSON.parse(require("node:fs").readFileSync(f, "utf8")); console.log(f + " is valid JSON"); }'
       - name: Run local turn-rule regression tests
         working-directory: .
         run: node --test tests/turn-rules.test.js
@@ -105,4 +115,5 @@ jobs:
         working-directory: .
         run: |
           node --check src/main.js
+          node --check staging/main.js
           node --check staging/audience.js

@@ -1,0 +1,17 @@
+{
+  "name": "shapey-multiplayer-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "test:integration": "node integration-smoke.mjs",
+    "test:browser": "node browser-smoke.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "ws": "8.18.3",
+    "playwright": "1.64.0"
+  }
+}

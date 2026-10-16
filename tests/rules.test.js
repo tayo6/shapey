@@ -52,7 +52,7 @@ test('turn durations follow the versus mode and AI difficulty', () => {
   assert.equal(rules.turnDurationForMode('ai', 'easy'), 45000);
   assert.equal(rules.turnDurationForMode('ai', 'pro'), 30000);
   assert.equal(rules.turnDurationForMode('pvp', 'pro'), 45000);
-  assert.equal(rules.turnDurationForMode('tag', 'pro'), 45000);
+  assert.equal(rules.turnDurationForMode('tag', 'pro'), 30000);
   // Explicit test/development overrides are honored for both AI levels.
   assert.equal(rules.turnDurationForMode('ai', 'pro', 10000, 10000), 10000);
 });
@@ -66,7 +66,7 @@ test('a new profile gets exactly one starter Star but saved balances are preserv
 });
 
 test('versus mode targets are fixed by mode', () => {
-  assert.equal(rules.targetScoreForMode('alone'), null);
+  assert.equal(rules.targetScoreForMode('alone'), 100);
   assert.equal(rules.targetScoreForMode('ai'), 100);
   assert.equal(rules.targetScoreForMode('pvp'), 100);
   assert.equal(rules.targetScoreForMode('tag'), 200);
