@@ -1,0 +1,48 @@
+name: Deploy staging audience preview
+
+on:
+  push:
+    branches:
+      - staging/audience-room-ui-0003
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout candidate branch
+        uses: actions/checkout@v4
+
+      - name: Test extracted game rules
+        run: node --test tests/rules.test.js
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check src/main.js
+          node --check src/rules.js
+          node --check staging/main.js
+          node --check staging/audience.js
+          node --check staging/demo-room.js
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload candidate site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - name: Deploy staging preview
+        id: deployment
+        uses: actions/deploy-pages@v4
