@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  INITIAL_REVIEW_MS, TURN_MS, TAG_TURN_MS, GRID_ROWS, GRID_COLS,
+  INITIAL_REVIEW_MS, TURN_MS, TAG_TURN_MS, GRID_ROWS, GRID_COLS, BOARD_SIZES, SHAPE_KEYS,
   createGameState, gameViewForPlayer, gameViewForSpectator, applyGameAction, advanceGameByTime,
   nextGameDeadline, scoreForMatch, turnDurationForMode
 } from "../src/game-engine.js";
@@ -37,6 +37,39 @@ test("creates correct room-sized game states, score targets, and Tag turn order"
   assert.equal(turnDurationForMode("pvp"), TURN_MS);
   assert.deepEqual(tag.turnOrder, [1, 3, 2, 4]);
   assert.throws(() => createGameState({ roomCode: "BAD234", mode: "tag", playerNumbers: [1, 2], now: NOW }), /Invalid player set/);
+});
+
+test("creates exact 5x5, 6x6 and 7x7 boards with playable matching groups", () => {
+  for (const boardSize of BOARD_SIZES) {
+    const state = createGameState({
+      roomCode: "SZ" + boardSize + "23",
+      mode: "pvp",
+      playerNumbers: [1, 2],
+      boardSize,
+      now: NOW,
+      rng: steadyRandom
+    });
+    const total = boardSize * boardSize;
+    assert.equal(state.boardSize, boardSize);
+    assert.equal(state.tiles.length, total);
+    assert.equal(state.nextTileNumber, total + 1);
+    assert.equal(gameViewForPlayer(state, 1).boardSize, boardSize);
+    assert.equal(gameViewForPlayer(state, 1).tiles.length, total);
+    assert.ok(state.tiles.every((tile) =>
+      Number.isInteger(tile.row) && tile.row >= 0 && tile.row < boardSize &&
+      Number.isInteger(tile.col) && tile.col >= 0 && tile.col < boardSize));
+    assert.equal(new Set(state.tiles.map((tile) => tile.row + ":" + tile.col)).size, total);
+
+    const counts = {};
+    for (const tile of state.tiles) {
+      if (SHAPE_KEYS.includes(tile.shape)) counts[tile.shape] = (counts[tile.shape] || 0) + 1;
+    }
+    const guaranteedCount = Math.min(SHAPE_KEYS.length, Math.floor((total - Math.round(total * 0.1)) / 3));
+    assert.ok(Object.values(counts).filter((count) => count >= 3).length >= guaranteedCount);
+  }
+  assert.throws(() => createGameState({
+    roomCode: "BAD234", mode: "pvp", playerNumbers: [1, 2], boardSize: 8, now: NOW
+  }), /Invalid board size/);
 });
 
 test("Tag advances each player with a fresh 30-second pick deadline", () => {
