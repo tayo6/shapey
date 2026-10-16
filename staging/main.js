@@ -7,6 +7,7 @@ const GAME_WIDTH = 720;
 const GAME_HEIGHT = 1280;
 
 const urlParams = new URLSearchParams(window.location.search);
+if (urlParams.get('embed') === '1') document.body.classList.add('audience-embed');
 // This file is published only under /staging/ and is pinned to the isolated test Worker.
 // Keep the live site's src/main.js pointed at the production service until staging is approved.
 const MULTIPLAYER_API = location.hostname === 'shapey-audience-preview.hellohuman100.workers.dev' ? location.origin : 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
@@ -437,12 +438,23 @@ class LoadScene extends Phaser.Scene {
     // authorised spectator snapshots through postMessage, so each watcher counts only once.
     if (urlParams.get('embed') === '1') {
       class EmbeddedAudienceSocket extends EventTarget {
-        constructor() { super(); this.readyState = WebSocket.OPEN; }
+        constructor() {
+          super();
+          this.readyState = WebSocket.OPEN;
+          this.parentMessageHandler = (event) => {
+            if (event.source !== window.parent || event.origin !== window.location.origin ||
+                event.data?.type !== 'shapey-audience-message') return;
+            const message = event.data.message;
+            if (message && typeof message.type === 'string') this.deliver(message);
+          };
+          window.addEventListener('message', this.parentMessageHandler);
+        }
         send(data) {
           try { window.parent.postMessage({ type: 'shapey-audience-socket-send', data }, window.location.origin); } catch {}
         }
         close() {
           this.readyState = WebSocket.CLOSED;
+          window.removeEventListener('message', this.parentMessageHandler);
           try { this.dispatchEvent(new CloseEvent('close')); } catch {}
         }
         deliver(message) {
@@ -451,14 +463,11 @@ class LoadScene extends Phaser.Scene {
       }
       const socket = new EmbeddedAudienceSocket();
       let started = false;
-      const handleParentMessage = (event) => {
-        if (event.source !== window.parent || event.origin !== window.location.origin ||
-            event.data?.type !== 'shapey-audience-message') return;
-        const message = event.data.message;
-        if (!message || typeof message.type !== 'string') return;
-        const hasState = Boolean(message.state);
+      socket.addEventListener('message', (event) => {
+        let message;
+        try { message = JSON.parse(event.data); } catch { return; }
         const isStartMessage = (message.type === 'spectator_welcome' || message.type === 'game_started' ||
-          message.type === 'game_state') && hasState;
+          message.type === 'game_state') && Boolean(message.state);
         if (!started && isStartMessage) {
           const roomMode = roomModeFor(message);
           started = true;
@@ -471,15 +480,10 @@ class LoadScene extends Phaser.Scene {
             onlineRoomCode: code,
             onlineState: message.state
           });
-          return;
-        }
-        if (started) socket.deliver(message);
-        else if (message.type === 'error' || message.type === 'demo_ended') {
+        } else if (!started && (message.type === 'error' || message.type === 'demo_ended')) {
           showError(message.message || 'This room is no longer available.');
         }
-      };
-      window.addEventListener('message', handleParentMessage);
-      this.events.once('shutdown', () => window.removeEventListener('message', handleParentMessage));
+      });
       return;
     }
 
