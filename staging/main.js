@@ -1010,7 +1010,8 @@ class GameScene extends Phaser.Scene {
     GRID_ROWS = this.boardSize;
     const boardScale = BASE_BOARD_SIZE / this.boardSize;
     TILE_PITCH = BASE_TILE_PITCH * boardScale;
-    TILE_SIZE = BASE_TILE_SIZE * boardScale;
+    // Keep the original 1px gap: all board sizes then occupy the same 636px visual footprint.
+    TILE_SIZE = TILE_PITCH - (BASE_TILE_PITCH - BASE_TILE_SIZE);
     this.modeCfg = MODES[this.mode];
     // Player vs AI difficulty comes from the picker (or ?level=pro for testing); Easy is the default.
     const level = (data && data.difficulty) || urlParams.get('level');
