@@ -1,30 +1,31 @@
-name: Deploy staging audience preview
+name: Validate staging audience preview
 
 on:
   push:
     branches:
       - staging/audience-room-ui-0003
+  pull_request:
+    branches:
+      - main
+    paths:
+      - staging/audience.html
+      - staging/audience.js
+      - staging/demo-room.js
+      - src/rules.js
+      - .github/workflows/staging-preview.yml
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: github-pages
-  cancel-in-progress: true
 
 jobs:
-  deploy:
-    environment:
-      name: staging-preview
-      url: ${{ steps.deployment.outputs.page_url }}
+  check:
+    name: Test candidate without publishing to main
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout candidate branch
+      - name: Check out candidate
         uses: actions/checkout@v4
 
-      - name: Test extracted game rules
+      - name: Run game-rule tests
         run: node --test tests/rules.test.js
 
       - name: Check JavaScript syntax
@@ -34,15 +35,3 @@ jobs:
           node --check staging/main.js
           node --check staging/audience.js
           node --check staging/demo-room.js
-
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload candidate site
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: .
-
-      - name: Deploy staging preview
-        id: deployment
-        uses: actions/deploy-pages@v4
