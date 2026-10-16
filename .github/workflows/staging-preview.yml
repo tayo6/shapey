@@ -35,3 +35,17 @@ jobs:
           node --check staging/main.js
           node --check staging/audience.js
           node --check staging/demo-room.js
+
+      - name: Smoke-test the deployed preview
+        env:
+          PREVIEW_URL: https://shapey-audience-preview.hellohuman100.workers.dev/staging/audience.html
+        run: |
+          set -euo pipefail
+          base="${PREVIEW_URL%/staging/audience.html}"
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 -D /tmp/preview-headers "$PREVIEW_URL" -o /tmp/audience.html
+          grep -Fqi 'x-shapey-preview: 0003+0004' /tmp/preview-headers
+          grep -q 'src="/staging/demo-room.js"' /tmp/audience.html
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/audience.js" | grep -q 'function withDemo(rooms)'
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/demo-room.js" | grep -q 'window.ShapeyDemo'
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/src/rules.js" | grep -q 'ShapeyRules'
+          echo "Preview page, audience script, AI demo, and rule script are reachable."
