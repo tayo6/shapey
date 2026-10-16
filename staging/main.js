@@ -1709,15 +1709,18 @@ class GameScene extends Phaser.Scene {
     }).setOrigin(0.5));
 
     const options = poll.options || [];
-    const counts = options.map((shape) => Number((poll.counts || {})[shape]) || 0);
+    const counts = options.map((option) => Number((poll.counts || {})[typeof option === 'string' ? option : option.tileId]) || 0);
     const totalVotes = counts.reduce((sum, n) => sum + n, 0);
     const percents = percentSplit(counts);
     const best = Math.max(0, ...counts);
     const secondsLeft = () => Math.max(0, Math.ceil(((Number(poll.endsAt) || 0) - Date.now()) / 1000));
+    const targetShape = String(poll.initialShape || 'the first shape').replace(/-/g, ' ').toUpperCase();
     const subtitle = () => {
-      if (poll.closed) return totalVotes > 0 ? 'POLL CLOSED · ' + totalVotes + (totalVotes === 1 ? ' VOTE' : ' VOTES') : 'NO VOTES WERE CAST';
+      if (poll.closed) return totalVotes > 0
+        ? 'POLL CLOSED · ' + totalVotes + (totalVotes === 1 ? ' VOTE' : ' VOTES') + ' · MATCH ' + targetShape
+        : 'NO VOTES WERE CAST · MATCH ' + targetShape;
       const left = secondsLeft();
-      return left > 0 ? 'THE AUDIENCE IS VOTING · ' + left + 's' : 'COUNTING THE VOTES…';
+      return left > 0 ? 'HELP FIND A TILE TO MATCH ' + targetShape + ' · ' + left + 's' : 'COUNTING THE VOTES…';
     };
     const subtitleText = add(this.add.text(GAME_WIDTH / 2, 420, subtitle(), {
       fontFamily: FONT, fontSize: '21px', color: '#ffe36e', align: 'center',
@@ -1730,39 +1733,51 @@ class GameScene extends Phaser.Scene {
       });
     } else if (totalVotes > 0) {
       const leaders = counts.filter((n) => n === best).length;
+      const winner = options[counts.indexOf(best)];
+      const winnerLabel = typeof winner === 'string' ? winner.toUpperCase()
+        : 'TILE R' + (Number(winner.row) + 1) + ' C' + (Number(winner.col) + 1);
       add(this.add.text(GAME_WIDTH / 2, 462, leaders > 1 ? 'THE AUDIENCE IS SPLIT'
-        : 'TOP CHOICE: ' + String(options[counts.indexOf(best)]).toUpperCase(), {
+        : 'TOP CHOICE: ' + winnerLabel, {
         fontFamily: FONT, fontSize: '26px', color: '#ffe36e', align: 'center',
         stroke: '#3a2112', strokeThickness: 5,
       }).setOrigin(0.5));
     }
-    options.forEach((shape, index) => {
+    const tileLabel = (option) => typeof option === 'string' ? option.toUpperCase()
+      : 'TILE R' + (Number(option.row) + 1) + ' C' + (Number(option.col) + 1);
+    options.forEach((option, index) => {
+      const tileId = typeof option === 'string' ? option : option.tileId;
       const y = 540 + index * 80;
       const leader = poll.closed && totalVotes > 0 && counts[index] === best;
-      if (poll.closed && requestedByMe) {
+      if (poll.closed && requestedByMe && typeof option === 'object' && option.tileId) {
         const choice = this.add.rectangle(GAME_WIDTH / 2, y, 610, 66, 0x000000, 0.001)
           .setInteractive({ useHandCursor: true }).setDepth(252);
         this.pollUI.push(choice);
         choice.on('pointerdown', () => {
-          this.audienceSuggestedShape = shape;
           this.dismissedPollKey = key;
+          this.sendOnlineAction({ type: 'pick', tileId });
           this.closeAudiencePoll();
-          this.showToast('Audience suggestion: ' + String(shape).toUpperCase() + '. Choose a matching tile, or continue without the suggestion.', 4200);
+          this.showToast('Audience tile selected. The match will continue.', 2500);
         });
       }
-      add(this.add.text(78, y, String.fromCharCode(65 + index) + '  ' + String(shape).toUpperCase(), {
+      add(this.add.text(78, y, String.fromCharCode(65 + index) + '  ' + tileLabel(option), {
         fontFamily: FONT, fontSize: '20px', color: '#fff2c7',
         stroke: '#3a2112', strokeThickness: 4,
       }).setOrigin(0, 0.5));
-      add(this.add.rectangle(270, y, 288, 24, 0x25180f, 1));
+      add(this.add.rectangle(270, y, 288, 24, 0x25180f, 1).setOrigin(0, 0.5));
       if (poll.closed) {
-        add(this.add.rectangle(270, y, Math.max(3, 2.88 * percents[index]), 18, leader ? 0xffd45e : 0xb98a3c, 1));
+        add(this.add.rectangle(270, y, Math.max(3, 2.88 * percents[index]), 18, leader ? 0xffd45e : 0xb98a3c, 1)
+          .setOrigin(0, 0.5));
         add(this.add.text(625, y, percents[index] + '%', {
           fontFamily: FONT, fontSize: '22px', color: leader ? '#ffe36e' : '#ffffff',
           stroke: '#3a2112', strokeThickness: 4, align: 'right',
         }).setOrigin(1, 0.5));
       }
     });
+    if (poll.closed) add(this.add.text(GAME_WIDTH / 2, 820,
+      requestedByMe ? 'TAP A RESULT TO PICK THAT HIDDEN TILE' : 'THE REQUESTING PLAYER CHOOSES · YOU CAN WATCH', {
+        fontFamily: FONT, fontSize: '17px', color: '#ffe9b8', align: 'center',
+        stroke: '#3a2112', strokeThickness: 3, wordWrap: { width: 590 },
+      }).setOrigin(0.5));
     woodButton(this, GAME_WIDTH / 2, 885, 420, 82,
       poll.closed ? (requestedByMe ? 'IGNORE RESULTS' : 'CLOSE RESULTS') : 'HIDE', 30,
       () => { this.dismissedPollKey = key; this.closeAudiencePoll(); }, 253).forEach(add);
