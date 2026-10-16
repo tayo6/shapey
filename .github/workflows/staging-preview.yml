@@ -45,9 +45,12 @@ jobs:
           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 -D /tmp/preview-headers "$PREVIEW_URL" -o /tmp/audience.html
           grep -Fqi 'x-shapey-preview: 0003+0004' /tmp/preview-headers
           grep -q 'src="/staging/demo-room.js"' /tmp/audience.html
-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/audience.js" | grep -q 'function withDemo(rooms)'
-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/demo-room.js" | grep -q 'window.ShapeyDemo'
-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/src/rules.js" | grep -q 'ShapeyRules'
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/audience.js" -o /tmp/audience.js
+          grep -q 'function withDemo(rooms)' /tmp/audience.js
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/demo-room.js" -o /tmp/demo-room.js
+          grep -q 'window.ShapeyDemo' /tmp/demo-room.js
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/src/rules.js" -o /tmp/rules.js
+          grep -q 'ShapeyRules' /tmp/rules.js
           assets_base="https://tayo6.github.io/shapey"
           for asset in \
             "assets/backgrounds/BG.webp" \
