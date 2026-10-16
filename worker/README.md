@@ -7,6 +7,7 @@ This directory contains the source retrieved from the deployed `shapey-multiplay
 The `feat/authoritative-online-gameplay` branch now contains an early authoritative game-state engine, Worker WebSocket wiring, and a Phaser client integration for the existing online-only modes:
 - PvP: 2 devices, target 100.
 - Tag: 4 devices; Team 1 = Players 1 and 2, Team 2 = Players 3 and 4; turn order P1 → P3 → P2 → P4; target 200.
+- Both online modes support 5×5, 6×6, or 7×7 boards; 7×7 remains the default for existing rooms and older clients.
 - The server owns the canonical board, active turn, score, hazards, timeout resolution, and the currently supported Extra Time and Double Play actions.
 - Hidden tile shapes are omitted from player snapshots while tiles are face-down.
 - Room creation requires an allowed origin and is limited to 5 requests per client IP per rolling 10 minutes. This is a basic abuse barrier, not full DDoS protection.
