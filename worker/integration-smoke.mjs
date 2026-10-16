@@ -122,6 +122,8 @@ async function run() {
     await delay(250);
   }
   assert.equal(health?.protocolVersion, 1, "Local Worker did not start with protocol v1.");
+  assert.equal(health?.audiencePollSeconds, 30, "Audience polling must last 30 seconds.");
+  assert.equal(health?.pollResultsHiddenUntilClose, true, "Audience vote totals must stay hidden until polling closes.");
 
   const denied = await fetch(BASE_URL + "/api/rooms", {
     method: "POST",
