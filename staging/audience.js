@@ -318,7 +318,8 @@ function makeRoomCard(room) {
   card.append(el('div', 'sub', 'Room ' + room.roomCode + ' · ' + (Number(room.playerCount) || 0) + '/' + max + ' players · ' +
     (Number(room.spectatorCount) || 0) + ' watching'));
 
-  const details = ['First to ' + (Number(room.targetScore) || (tag ? 200 : 100))];
+  const boardSize = [5, 6, 7].includes(Number(room.boardSize)) ? Number(room.boardSize) : 7;
+  const details = ['Board ' + boardSize + '×' + boardSize, 'First to ' + (Number(room.targetScore) || (tag ? 200 : 100))];
   if (room.status === 'live' && room.activePlayerNumber) details.push(turnLabel(room.mode, room.activePlayerNumber) + ' to play');
   if (Number.isFinite(room.createdAt)) {
     const minutes = Math.max(0, Math.floor((Date.now() - room.createdAt) / 60000));
@@ -430,7 +431,10 @@ function renderBoard(state, previousState = null, animate = false) {
     tileNodes.clear();
     return;
   }
-  const cell = 100 / 7;
+  const boardSize = [5, 6, 7].includes(Number(state.boardSize)) ? Number(state.boardSize) : 7;
+  const cell = 100 / boardSize;
+  // The audience board keeps the same 7×7 display area; smaller boards are centred within it.
+  els.board.style.setProperty('--board-offset', String((7 - boardSize) * 91 / 2));
   const canAnimate = Boolean(animate && previousState && Array.isArray(previousState.tiles) && previousState.status === 'playing');
   const previousTiles = canAnimate ? new Map(previousState.tiles.map((tile) => [String(tile.id), tile])) : new Map();
   const newCountByColumn = new Map();
