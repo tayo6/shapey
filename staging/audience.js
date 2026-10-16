@@ -318,7 +318,8 @@ function makeRoomCard(room) {
   card.append(el('div', 'sub', 'Room ' + room.roomCode + ' · ' + (Number(room.playerCount) || 0) + '/' + max + ' players · ' +
     (Number(room.spectatorCount) || 0) + ' watching'));
 
-  const details = ['First to ' + (Number(room.targetScore) || (tag ? 200 : 100))];
+  const boardSize = [5, 6, 7].includes(Number(room.boardSize)) ? Number(room.boardSize) : 7;
+  const details = ['Board ' + boardSize + '×' + boardSize, 'First to ' + (Number(room.targetScore) || (tag ? 200 : 100))];
   if (room.status === 'live' && room.activePlayerNumber) details.push(turnLabel(room.mode, room.activePlayerNumber) + ' to play');
   if (Number.isFinite(room.createdAt)) {
     const minutes = Math.max(0, Math.floor((Date.now() - room.createdAt) / 60000));
@@ -430,7 +431,20 @@ function renderBoard(state, previousState = null, animate = false) {
     tileNodes.clear();
     return;
   }
-  const cell = 100 / 7;
+  const requestedSize = [5, 6, 7].includes(Number(state.boardSize)) ? Number(state.boardSize) : 7;
+  // Tag remains 7×7. Other modes scale tile size and spacing to fill the same fixed tray area.
+  const boardSize = state.mode === 'tag' ? 7 : requestedSize;
+  const boardScale = 7 / boardSize;
+  const tilePitch = 91 * boardScale;
+  const tileSize = tilePitch - 1; // preserve the original 1px gap and 636px tray footprint
+  const tileScale = tileSize / 90;
+  els.board.style.setProperty('--board-offset', '0');
+  els.board.style.setProperty('--tile-size', String(tileSize));
+  els.board.style.setProperty('--tile-pitch', String(tilePitch));
+  els.board.style.setProperty('--dust-offset-x', String(36 * tileScale));
+  els.board.style.setProperty('--dust-offset-y', String(9 * tileScale));
+  els.board.style.setProperty('--dust-width', String(162 * tileScale));
+  els.board.style.setProperty('--dust-height', String(81 * tileScale));
   const canAnimate = Boolean(animate && previousState && Array.isArray(previousState.tiles) && previousState.status === 'playing');
   const previousTiles = canAnimate ? new Map(previousState.tiles.map((tile) => [String(tile.id), tile])) : new Map();
   const newCountByColumn = new Map();
@@ -480,8 +494,6 @@ function renderBoard(state, previousState = null, animate = false) {
         if (event.propertyName === 'top') finishSpawnDust(tile);
       });
       animateSpawn = canAnimate && !previousTiles.has(id) && state.status !== 'study';
-      const left = (tileData.col * cell) + '%';
-      const top = (tileData.row * cell) + '%';
       if (animateSpawn) {
         const spawnCount = newCountByColumn.get(tileData.col) || 1;
         const startingRow = tileData.row - spawnCount;
