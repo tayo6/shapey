@@ -1,7 +1,9 @@
 // Authoritative, serializable game state for online Player 1 vs Player 2 and Tag.
 // This module deliberately has no Phaser, DOM, Worker, or Durable Object dependencies.
-export const GRID_ROWS = 7;
-export const GRID_COLS = 7;
+export const DEFAULT_BOARD_SIZE = 7;
+export const BOARD_SIZES = Object.freeze([5, 6, 7]);
+export const GRID_ROWS = DEFAULT_BOARD_SIZE; // Backwards-compatible constants for existing 7×7 tests.
+export const GRID_COLS = DEFAULT_BOARD_SIZE;
 export const INITIAL_REVIEW_MS = 15_000;
 export const TURN_MS = 45_000;
 export const TAG_TURN_MS = 30_000;
@@ -20,8 +22,6 @@ export const SHAPE_KEYS = Object.freeze([
 
 const MATCH_SCORES = Object.freeze({ 3: 1, 4: 2 });
 const ITEM_PRICES = Object.freeze({ extraTime: 3, doublePlay: 4 });
-const TOTAL_TILES = GRID_ROWS * GRID_COLS;
-
 function randomIndex(length, rng) {
   return Math.min(length - 1, Math.floor(rng() * length));
 }
@@ -58,20 +58,25 @@ export function scoreForMatch(count) {
   return MATCH_SCORES[count] || 0;
 }
 
-function makeStartingBoard(rng) {
-  // Preserve the existing game's fairness rule: each normal shape starts with at least 3 copies.
+function makeStartingBoard(rng, boardSize) {
+  // Choose as many complete three-of-a-kind groups as the selected square board can fit.
+  // 5×5 gets seven guaranteed groups, 6×6 gets ten, and 7×7 keeps all thirteen.
+  const totalTiles = boardSize * boardSize;
+  const wantedHazards = Math.round(totalTiles * 0.1);
+  const guaranteedShapeCount = Math.min(SHAPE_KEYS.length, Math.floor((totalTiles - wantedHazards) / 3));
+  const startingShapes = shuffled(SHAPE_KEYS, rng).slice(0, guaranteedShapeCount);
   const shapes = [];
-  for (const shape of SHAPE_KEYS) shapes.push(shape, shape, shape);
-  const hazardCount = Math.min(TOTAL_TILES - shapes.length, Math.round(TOTAL_TILES * 0.1));
+  for (const shape of startingShapes) shapes.push(shape, shape, shape);
+  const hazardCount = Math.min(totalTiles - shapes.length, wantedHazards);
   for (let i = 0; i < hazardCount; i++) shapes.push("hazard");
-  while (shapes.length < TOTAL_TILES) {
+  while (shapes.length < totalTiles) {
     shapes.push(rng() < 0.08 ? "dummy" : pick(SHAPE_KEYS, rng));
   }
   return shuffled(shapes, rng).map((shape, index) => ({
     id: "t" + (index + 1),
     shape,
-    row: Math.floor(index / GRID_COLS),
-    col: index % GRID_COLS,
+    row: Math.floor(index / boardSize),
+    col: index % boardSize,
     faceUp: true,
     selected: false,
     moving: false
@@ -88,9 +93,10 @@ function newPlayerData() {
   };
 }
 
-export function createGameState({ roomCode, mode, playerNumbers, now = Date.now(), rng = Math.random }) {
+export function createGameState({ roomCode, mode, playerNumbers, boardSize = DEFAULT_BOARD_SIZE, now = Date.now(), rng = Math.random }) {
   const expected = mode === "pvp" ? 2 : mode === "tag" ? 4 : 0;
   const order = mode === "pvp" ? [1, 2] : mode === "tag" ? [1, 3, 2, 4] : null;
+  if (!BOARD_SIZES.includes(boardSize)) throw new Error("Invalid board size.");
   if (!expected || !Array.isArray(playerNumbers) || playerNumbers.length !== expected ||
       order.some((number) => !playerNumbers.includes(number))) {
     throw new Error("Invalid player set for online mode.");
@@ -104,6 +110,7 @@ export function createGameState({ roomCode, mode, playerNumbers, now = Date.now(
     protocolVersion: 1,
     roomCode,
     mode,
+    boardSize,
     status: "study",
     createdAt: now,
     reviewEndsAt: now + INITIAL_REVIEW_MS,
@@ -119,8 +126,8 @@ export function createGameState({ roomCode, mode, playerNumbers, now = Date.now(
     winnerSide: null,
     winnerPlayerNumber: null,
     playerData,
-    tiles: makeStartingBoard(rng),
-    nextTileNumber: TOTAL_TILES + 1,
+    tiles: makeStartingBoard(rng, boardSize),
+    nextTileNumber: boardSize * boardSize + 1,
     shapeQueue: [],
     lastShape: null,
     selectedTileIds: [],
@@ -273,9 +280,9 @@ function cascade(state, removedIds, now, rng) {
   clearSelection(state, true);
 
   const freshTiles = [];
-  for (let col = 0; col < GRID_COLS; col++) {
+  for (let col = 0; col < state.boardSize; col++) {
     const column = state.tiles.filter((tile) => tile.col === col).sort((a, b) => b.row - a.row);
-    let writeRow = GRID_ROWS - 1;
+    let writeRow = state.boardSize - 1;
     for (const tile of column) {
       tile.row = writeRow--;
       tile.selected = false;
@@ -611,6 +618,7 @@ export function gameViewForPlayer(state, playerNumber) {
     protocolVersion: state.protocolVersion,
     roomCode: state.roomCode,
     mode: state.mode,
+    boardSize: state.boardSize || DEFAULT_BOARD_SIZE,
     status: state.status,
     revision: state.revision,
     reviewEndsAt: state.reviewEndsAt,
