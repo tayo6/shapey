@@ -18,8 +18,12 @@ function normalizeBoardSize(value) {
   const size = Number(value);
   return BOARD_SIZES.includes(size) ? size : 7;
 }
-const TILE_SIZE = 90;   // every shape tile is drawn at 90 x 90
-const TILE_PITCH = 91;  // distance between tile centres (90px tile + 1px gap)
+const BASE_BOARD_SIZE = 7;
+const BASE_TILE_SIZE = 90;
+const BASE_TILE_PITCH = 91;
+// Updated for each match so smaller boards use the same full tray area as 7×7.
+let TILE_SIZE = BASE_TILE_SIZE;
+let TILE_PITCH = BASE_TILE_PITCH;
 // These are set from the chosen staging test size before each board is created.
 let GRID_COLS = normalizeBoardSize(urlParams.get('size'));
 let GRID_ROWS = GRID_COLS;
@@ -584,6 +588,11 @@ class MenuScene extends Phaser.Scene {
   // Every staging mode uses the same three board-size choices. 7×7 remains the default.
   openBoardSize(mode) {
     if (this.pickerUI.length) return;
+    // Tag is intentionally fixed at 7×7; only the other three modes offer smaller boards.
+    if (mode === 'tag') {
+      this.openOnlineLobby('tag', BASE_BOARD_SIZE);
+      return;
+    }
     const add = (object) => { this.pickerUI.push(object); return object; };
     add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.82)
       .setDepth(50).setInteractive());
@@ -615,10 +624,10 @@ class MenuScene extends Phaser.Scene {
   }
 
   // Room creation and joining are attached to Player 1 vs Player 2 and Tag.
-  openOnlineLobby(mode, boardSize = 7) {
+  openOnlineLobby(mode, boardSize = BASE_BOARD_SIZE) {
     if (this.onlineUI && this.onlineUI.length) return;
     this.onlineMode = mode || 'pvp';
-    this.onlineBoardSize = normalizeBoardSize(boardSize);
+    this.onlineBoardSize = this.onlineMode === 'tag' ? BASE_BOARD_SIZE : normalizeBoardSize(boardSize);
     this.onlineUI = [];
     const add = (object) => { this.onlineUI.push(object); return object; };
     const modeTitle = (this.onlineMode === 'tag' ? 'ONLINE TAG · 2 VS 2' : 'ONLINE PLAYER 1 VS PLAYER 2') +
@@ -829,7 +838,7 @@ class MenuScene extends Phaser.Scene {
         return;
       }
       // A room's server-selected size is authoritative for every device that joins it.
-      this.onlineBoardSize = normalizeBoardSize(room.boardSize);
+      this.onlineBoardSize = this.onlineMode === 'tag' ? BASE_BOARD_SIZE : normalizeBoardSize(room.boardSize);
       this.showOnlineRoomCode(code);
       this.connectOnlineRoom(code,
         MULTIPLAYER_API.replace(/^http/, 'ws') + '/ws/' + code, this.onlineMode);
@@ -993,11 +1002,15 @@ class GameScene extends Phaser.Scene {
     this.onlinePlayerNumber = (data && data.onlinePlayerNumber) || null;
     this.onlineRoomCode = (data && data.onlineRoomCode) || null;
     this.onlineState = (data && data.onlineState) || null;
-    this.boardSize = normalizeBoardSize((data && data.boardSize) ||
+    this.mode = (data && data.mode) || (this.onlineState && this.onlineState.mode) || START_MODE || 'pvp';
+    const requestedBoardSize = normalizeBoardSize((data && data.boardSize) ||
       (this.onlineState && this.onlineState.boardSize) || urlParams.get('size'));
+    this.boardSize = this.mode === 'tag' ? BASE_BOARD_SIZE : requestedBoardSize;
     GRID_COLS = this.boardSize;
     GRID_ROWS = this.boardSize;
-    this.mode = (data && data.mode) || START_MODE || 'pvp';
+    const boardScale = BASE_BOARD_SIZE / this.boardSize;
+    TILE_PITCH = BASE_TILE_PITCH * boardScale;
+    TILE_SIZE = BASE_TILE_SIZE * boardScale;
     this.modeCfg = MODES[this.mode];
     // Player vs AI difficulty comes from the picker (or ?level=pro for testing); Easy is the default.
     const level = (data && data.difficulty) || urlParams.get('level');
@@ -2884,7 +2897,8 @@ class GameScene extends Phaser.Scene {
   // Dust cloud at the bottom edge of a tile that just landed.
   spawnDust(x, tileY) {
     const puff = this.add.sprite(x, tileY + TILE_SIZE / 2, 'dust', 'u0').setOrigin(0.5, 1).setDepth(13);
-    puff.setScale(DUST_SCALE);
+    // Scale landing dust with the tile, just like the tile-destruction animation.
+    puff.setScale(DUST_SCALE * (TILE_SIZE / BASE_TILE_SIZE));
     puff.play('dustPuff');
     puff.once('animationcomplete', () => puff.destroy());
   }
