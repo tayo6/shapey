@@ -14,7 +14,7 @@ const AVATAR_COLORS = ['#754322', '#8a4f2a', '#5d3a1e', '#9a6a35', '#6b4a2a', '#
 const $ = (id) => document.getElementById(id);
 const els = {
   directory: $('directoryView'), watch: $('watchView'), rooms: $('roomCards'), directoryStatus: $('directoryStatus'),
-  modeChips: $('modeChips'), statusFilter: $('statusFilter'), refreshRooms: $('refreshRooms'), startDemo: $('startDemo'), navBrowse: $('navBrowse'), gameFrame: $('gameFrame'), muteAudienceSound: $('muteAudienceSound'),
+  modeChips: $('modeChips'), statusFilter: $('statusFilter'), refreshRooms: $('refreshRooms'), startDemo: $('startDemo'), navBrowse: $('navBrowse'), gameFrame: $('gameFrame'), muteAudienceSound: $('muteAudienceSound'), endDemo: $('endDemo'),
   board: $('board'), veil: $('veil'), veilText: $('veilText'), retryConnection: $('retryConnection'), toast: $('toast'),
   side0: $('side0'), side1: $('side1'), p1Score: $('p1Score'), p2Score: $('p2Score'), p1Name: $('p1Name'), p2Name: $('p2Name'),
   turnClock: $('turnClock'), goalText: $('goalText'), revealText: $('revealText'),
@@ -38,6 +38,8 @@ let roomPlayers = [];
 let roomSpectators = 0;
 let currentPoll = null;
 let currentVote = null;
+let pollAcceptedId = '';
+let pollDeclinedId = '';
 let chatIds = new Set();
 let unreadChat = 0;
 let tileNodes = new Map();
@@ -455,6 +457,7 @@ function renderGameState(state) {
   updateVeil();
 }
 function renderPlayers() {
+  els.endDemo.hidden = !(activeMode === 'demo' && demoControlRoomCode === activeRoomCode && demoControlReady);
   els.playersList.replaceChildren();
   const tag = activeMode === 'tag';
   const connected = new Set((roomPlayers || []).filter((p) => p && p.connected).map((p) => p.playerNumber));
@@ -520,45 +523,76 @@ function pollIsOpen(poll) { return Boolean(poll) && !poll.closed && pollSecondsL
 function updatePollIntro() {
   const poll = currentPoll;
   if (!poll) return;
+  const target = poll.initialShape ? String(poll.initialShape).replace(/-/g, ' ').toUpperCase() : 'the first shape';
   if (poll.closed) {
     const votes = Number(poll.totalVotes) || 0;
-    text(els.pollIntro, votes ? 'Poll closed · ' + votes + ' vote' + (votes === 1 ? '' : 's') + ' · the audience result is below'
+    text(els.pollIntro, votes
+      ? 'Poll closed · ' + votes + ' vote' + (votes === 1 ? '' : 's') + ' · choose the hidden tile most likely to match ' + target
       : 'Poll closed · no votes were cast');
   } else if (pollSecondsLeft(poll) > 0) {
-    text(els.pollIntro, 'Vote now · ' + pollSecondsLeft(poll) + 's left · results appear when voting ends');
+    text(els.pollIntro, 'Do you want to help find a hidden tile matching ' + target + '? ' + pollSecondsLeft(poll) + ' seconds left. Vote once.');
   } else {
     text(els.pollIntro, 'Voting has ended · counting the votes…');
   }
 }
-// Like the TV lifeline, spectators vote without seeing the running tally; percentages appear once voting closes.
+// Ask first; audience members who accept get one vote on a hidden board tile.
+// Vote totals stay hidden until the 30-second timer expires.
 function renderPoll(poll) {
-  if (!poll || (currentPoll && currentPoll.id !== poll.id)) currentVote = null;
+  const changed = Boolean(poll && (!currentPoll || currentPoll.id !== poll.id));
+  if (changed) {
+    currentVote = null;
+    pollAcceptedId = '';
+    pollDeclinedId = '';
+  }
   currentPoll = poll || null;
   els.pollOptions.replaceChildren();
   if (!poll) {
-    text(els.pollIntro, activeMode === 'tag'
-      ? 'No poll is open. A Tag player can open one during their turn, and you can then vote.'
-      : 'Audience polls are available in Tag games only.');
+    text(els.pollIntro, ['tag', 'pvp', 'demo'].includes(activeMode)
+      ? 'No poll is open. A player can ask the audience for help after revealing the first shape.'
+      : 'Audience polls are available in online versus games.');
     updateBadges();
     return;
   }
   updatePollIntro();
   const options = poll.options || [];
-  const counts = options.map((option) => Number(poll.counts && poll.counts[option]) || 0);
+  const tileId = (option) => typeof option === 'string' ? option : option.tileId;
+  const tileLabel = (option) => {
+    if (typeof option === 'string') return option.replace(/-/g, ' ');
+    return 'Tile ' + (Number(option.col) + 1) + ', ' + (Number(option.row) + 1);
+  };
+  const counts = options.map((option) => Number(poll.counts && poll.counts[tileId(option)]) || 0);
   const percents = percentSplit(counts);
   const best = Math.max(0, ...counts);
   const open = pollIsOpen(poll) && roomSocket && roomSocket.readyState === WebSocket.OPEN;
+  if (open && !currentVote && pollAcceptedId !== poll.id && pollDeclinedId !== poll.id) {
+    const question = el('p', 'notice', 'A player needs help matching ' + String(poll.initialShape || 'the first shape').replace(/-/g, ' ').toUpperCase() + '. Would you like to help choose one hidden tile?');
+    els.pollOptions.append(question);
+    const yes = el('button', 'wood', 'YES, I’LL HELP');
+    const no = el('button', 'wood', 'NOT NOW');
+    yes.type = no.type = 'button';
+    yes.addEventListener('click', () => { pollAcceptedId = poll.id; playAudienceTone(760); renderPoll(currentPoll); });
+    no.addEventListener('click', () => { pollDeclinedId = poll.id; renderPoll(currentPoll); });
+    els.pollOptions.append(yes, no);
+    updateBadges();
+    return;
+  }
+  if (open && pollDeclinedId === poll.id && !currentVote) {
+    els.pollOptions.append(el('p', 'notice', 'You chose not to vote. You can watch the match; the audience results will appear when voting closes.'));
+    updateBadges();
+    return;
+  }
   options.forEach((option, index) => {
+    const id = tileId(option);
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'poll-option' + (currentVote === option ? ' chosen' : '') +
+    button.className = 'poll-option' + (currentVote === id ? ' chosen' : '') +
       (poll.closed && best > 0 && counts[index] === best ? ' winner' : '');
-    button.disabled = !open;
+    button.disabled = !open || Boolean(currentVote) || pollDeclinedId === poll.id;
     const img = document.createElement('img');
-    img.src = shapeUrl(option);
+    img.src = shapeUrl('mystery');
     img.alt = '';
-    const copy = el('span', 'option-copy', String.fromCharCode(65 + index) + '  ' + option.replace(/-/g, ' '));
-    const count = el('span', 'vote-count', poll.closed ? percents[index] + '%' : (currentVote === option ? 'YOUR VOTE' : ''));
+    const copy = el('span', 'option-copy', String.fromCharCode(65 + index) + '  ' + tileLabel(option));
+    const count = el('span', 'vote-count', poll.closed ? percents[index] + '%' : (currentVote === id ? 'YOUR VOTE' : ''));
     button.append(img, copy, count);
     if (poll.closed) {
       const bar = el('span', 'bar');
@@ -568,14 +602,15 @@ function renderPoll(poll) {
       button.append(bar);
     }
     button.addEventListener('click', () => {
-      if (!pollIsOpen(currentPoll)) return;
-      if (sendSocketMessage({ type: 'poll_vote', shape: option })) {
-        currentVote = option;
+      if (!pollIsOpen(currentPoll) || currentVote) return;
+      if (sendSocketMessage({ type: 'poll_vote', tileId: id })) {
+        currentVote = id;
         renderPoll(currentPoll);
       }
     });
     els.pollOptions.append(button);
   });
+  if (currentVote && open) els.pollOptions.append(el('p', 'notice', 'Your vote is recorded. You have one vote per poll.'));
   updateBadges();
 }
 
@@ -599,6 +634,7 @@ function processMessage(message) {
     (message.chatHistory || []).forEach((m) => appendChat(m, false));
     ensureChatEmpty();
     renderPoll(message.poll);
+    if (message.poll && !message.poll.closed) openPanel('polls');
     text(els.chatStatus, 'Connected to room chat.');
     return;
   }
@@ -625,7 +661,11 @@ function processMessage(message) {
     return;
   }
   if (message.type === 'audience_poll_state') {
-    if (message.poll && (!currentPoll || currentPoll.id !== message.poll.id)) playAudienceTone(760);
+    const newOpenPoll = message.poll && !message.poll.closed && (!currentPoll || currentPoll.id !== message.poll.id);
+    if (newOpenPoll) {
+      playAudienceTone(760);
+      openPanel('polls');
+    }
     renderPoll(message.poll || null);
     return;
   }
@@ -782,6 +822,10 @@ els.muteAudienceSound.addEventListener('change', () => {
   if (!soundMuted) playAudienceTone(520);
 });
 ['closeChat', 'closePoll', 'closeSettings', 'resumeWatch'].forEach((id) => $(id).addEventListener('click', closePanels));
+els.endDemo.addEventListener('click', () => {
+  if (activeMode !== 'demo' || demoControlRoomCode !== activeRoomCode || !demoControlReady) return;
+  sendSocketMessage({ type: 'end_demo' });
+});
 els.backdrop.addEventListener('click', closePanels);
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && activePanel) closePanels(); });
 $('backToDirectory').addEventListener('click', () => showDirectory(true));
