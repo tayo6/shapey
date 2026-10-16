@@ -258,6 +258,9 @@ async function run() {
       message.type === "audience_poll_state" && message.poll?.id === pvpPoll.poll.id && !message.poll.closed,
       WAIT_MS, "PvP spectator vote echo");
     assert.equal("counts" in pvpVoteEcho.poll, false, "Live PvP vote counts must stay hidden until polling closes.");
+    const pvpClosedPollPromise = pvpAudience.waitFor((message) =>
+      message.type === "audience_poll_state" && message.poll?.id === pvpPoll.poll.id && message.poll.closed,
+      35000, "closed PvP poll reveals final results");
 
     // A spectator can watch a live Tag room without receiving player-only inventory data.
     const audience = await joinSpectator(tagRoom, "tag");
@@ -310,9 +313,7 @@ async function run() {
       message.poll.closed, 35_000, "closed audience poll reveals final results");
     assert.equal(finalPoll.poll.totalVotes, 1);
     assert.equal(finalPoll.poll.counts[poll.poll.options[0].tileId], 1);
-    const closedPvpPoll = await pvpAudience.waitFor((message) =>
-      message.type === "audience_poll_state" && message.poll?.id === pvpPoll.poll.id && message.poll.closed,
-      WAIT_MS, "closed PvP poll reveals final results");
+    const closedPvpPoll = await pvpClosedPollPromise;
     assert.equal(closedPvpPoll.poll.totalVotes, 1);
     assert.equal(closedPvpPoll.poll.counts[matchingOption.tileId], 1);
     const postPollTurn = await tagClients[0].waitFor((message) =>
