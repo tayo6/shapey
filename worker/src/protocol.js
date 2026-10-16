@@ -1,5 +1,6 @@
 export const ALLOWED_ORIGINS = Object.freeze([
   "https://tayo6.github.io",
+  "https://shapey-audience-preview.hellohuman100.workers.dev",
   "http://localhost:8080",
   "http://127.0.0.1:8080",
 ]);
