@@ -14,10 +14,7 @@ const localApiParam = urlParams.get('api');
 const localTestApi = ['localhost', '127.0.0.1'].includes(location.hostname) &&
   /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/.test(localApiParam || '')
   ? localApiParam : '';
-const MULTIPLAYER_API = localTestApi ||
-  (location.hostname === 'shapey-audience-preview.hellohuman100.workers.dev'
-    ? location.origin
-    : 'https://shapey-multiplayer-staging.hellohuman100.workers.dev');
+const MULTIPLAYER_API = localTestApi || 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
 
 const FONT = 'HappySchool';
 const TILE_SIZE = 90;   // every shape tile is drawn at 90 x 90
