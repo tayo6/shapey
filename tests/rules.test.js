@@ -48,6 +48,26 @@ test('Play Alone loses only when the score reaches its floor', () => {
   assert.equal(rules.hasReachedScoreFloor(-16, -15), true);
 });
 
+test('versus handoff alternates between Player 1 and Player 2', () => {
+  assert.equal(rules.nextVersusPlayer(0), 1);
+  assert.equal(rules.nextVersusPlayer(1), 0);
+  assert.equal(rules.nextVersusPlayer(null), null);
+  assert.equal(rules.nextVersusPlayer(2), null);
+});
+
+test('Tag partner rotation is Player 1, Player 3, Player 2, Player 4, then repeats', () => {
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 7].map(rules.tagMemberForTurn),
+    [0, 0, 1, 1, 0, 0, 1, 1]);
+});
+
+test('Double Play grants exactly one bonus turn and cannot chain', () => {
+  assert.equal(rules.shouldGrantDoublePlay(false, 0, 0), true);
+  assert.equal(rules.shouldGrantDoublePlay(false, 1, 0), false);
+  assert.equal(rules.shouldGrantDoublePlay(false, 1, 1), true);
+  assert.equal(rules.shouldGrantDoublePlay(true, 0, 0), false);
+  assert.equal(rules.shouldGrantDoublePlay(false, null, 0), false);
+});
+
 test('turn durations follow the versus mode and AI difficulty', () => {
   assert.equal(rules.turnDurationForMode('ai', 'easy'), 45000);
   assert.equal(rules.turnDurationForMode('ai', 'pro'), 30000);
