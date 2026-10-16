@@ -76,7 +76,8 @@ jobs:
           grep -q '"rooms":' /tmp/preview-rooms.json
           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/src/rules.js" -o /tmp/rules.js
           grep -q 'ShapeyRules' /tmp/rules.js
-          # Check assets through the exact preview URL used by the phone, not only on GitHub Pages.\n          assets_base="$base"
+          # Check assets through the exact preview URL used by the phone, not only on GitHub Pages.
+          assets_base="$base"
           for asset in \
             "assets/backgrounds/BG.webp" \
             "assets/backgrounds/header%20%20plank%201.webp" \
