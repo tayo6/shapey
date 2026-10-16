@@ -9,7 +9,7 @@ const GAME_HEIGHT = 1280;
 const urlParams = new URLSearchParams(window.location.search);
 // This file is published only under /staging/ and is pinned to the isolated test Worker.
 // Keep the live site's src/main.js pointed at the production service until staging is approved.
-const MULTIPLAYER_API = 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
+const MULTIPLAYER_API = location.hostname === 'shapey-audience-preview.hellohuman100.workers.dev' ? location.origin : 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
 
 const FONT = 'HappySchool';
 const TILE_SIZE = 90;   // every shape tile is drawn at 90 x 90
@@ -61,7 +61,8 @@ const MODES = {
            targetScore: RULES.targetScoreForMode('tag'), hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false, teams: true },
 };
 const TEAM_PLAYERS = [['Player 1', 'Player 2'], ['Player 3', 'Player 4']]; // Tag: Team 1 and Team 2
-const START_MODE = ['alone', 'ai'].includes(urlParams.get('mode')) ? urlParams.get('mode') : null; // only local modes may skip the menu; online modes must use their room lobby
+const AUDIENCE_WATCH_CODE = /^[A-Z0-9]{6}$/.test(urlParams.get('watch') || '') ? urlParams.get('watch').toUpperCase() : '';
+const START_MODE = ['alone', 'ai'].includes(urlParams.get('mode')) ? urlParams.get('mode') : null; // audience watch is a separate read-only entry point
 const HAZARD_OVERRIDE = RULES.parseProbabilityOverride(urlParams.get('hazard'), urlParams.has('hazard'));
 // A hazard tile has two effects (see hazardHit / hazardBlast):
 // - two-player modes (Player vs AI, Player vs Player, Tag): picked first it does no damage and flips back; picked
@@ -412,8 +413,64 @@ class LoadScene extends Phaser.Scene {
 
   async create() {
     await fontReady; // usually already done by now
+    if (AUDIENCE_WATCH_CODE) {
+      this.startAudienceWatch();
+      return;
+    }
     if (START_MODE) this.scene.start('GameScene', { mode: START_MODE });
     else this.scene.start('MenuScene');
+  }
+
+  async startAudienceWatch() {
+    const code = AUDIENCE_WATCH_CODE;
+    const showError = (message) => {
+      this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, 620, 300, 0x4b2d17, 0.98).setStrokeStyle(5, 0xd5ad72).setDepth(200);
+      this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 45, message, {
+        fontFamily: FONT, fontSize: '28px', color: '#fff2c7', align: 'center',
+        stroke: '#3a2412', strokeThickness: 5, wordWrap: { width: 540 }
+      }).setOrigin(0.5).setDepth(201);
+    };
+    try {
+      const response = await fetch(MULTIPLAYER_API + '/api/rooms/' + code, { cache: 'no-store' });
+      const details = await response.json();
+      if (!response.ok) throw new Error(details.error || 'This room is no longer available.');
+      const roomMode = details.mode || urlParams.get('mode') || 'pvp';
+      const gameMode = roomMode === 'tag' ? 'tag' : 'pvp';
+      const wsBase = MULTIPLAYER_API.replace(/^http/, 'ws');
+      const socket = new WebSocket(wsBase + '/ws/' + code + '?mode=' + encodeURIComponent(roomMode) + '&role=spectator');
+      let started = false;
+      socket.addEventListener('open', () => {
+        socket.send(JSON.stringify({ type: 'spectate' }));
+      });
+      socket.addEventListener('message', (event) => {
+        let message;
+        try { message = JSON.parse(event.data); } catch { return; }
+        if (message.type === 'error' && !started) {
+          showError(message.message || 'Could not connect to this room.');
+          try { socket.close(); } catch {}
+          return;
+        }
+        if (message.type !== 'spectator_welcome' || !message.state || started) return;
+        started = true;
+        this.scene.start('GameScene', {
+          mode: gameMode,
+          online: true,
+          spectator: true,
+          audienceMode: roomMode,
+          onlineSocket: socket,
+          onlineRoomCode: code,
+          onlineState: message.state
+        });
+      });
+      socket.addEventListener('error', () => {
+        if (!started) showError('Could not connect to the room. Return to Live Games and try again.');
+      });
+      socket.addEventListener('close', () => {
+        if (!started) showError('The room connection closed. Return to Live Games and try again.');
+      });
+    } catch (error) {
+      showError(error.message || 'Could not open this room.');
+    }
   }
 }
 
@@ -820,6 +877,9 @@ class GameScene extends Phaser.Scene {
 
   init(data) {
     this.online = Boolean(data && data.online);
+    this.spectator = Boolean(data && data.spectator);
+    this.audienceMode = data && data.audienceMode || '';
+    this.audienceSoundMuted = (() => { try { return localStorage.getItem('shapey-audience-muted') === 'true'; } catch { return false; } })();
     this.onlineSocket = (data && data.onlineSocket) || null;
     this.onlinePlayerNumber = (data && data.onlinePlayerNumber) || null;
     this.onlineRoomCode = (data && data.onlineRoomCode) || null;
@@ -845,8 +905,9 @@ class GameScene extends Phaser.Scene {
     this.dummySelection = [];  // Dummies stay face-up during the attempt but never count as shapes
     this.selectedShape = null; // the shape the current attempt is matching
     this.busy = false;        // true while animations run (input is ignored)
-    this.names = this.modeCfg.teams ? ['TEAM 1', 'TEAM 2']
-      : this.modeCfg.ai ? ['Player 1', 'AI ' + this.ai.tag] : PLAYER_NAMES.slice();
+    this.names = this.spectator && this.audienceMode === 'demo' ? ['AI 1', 'AI 2']
+      : this.modeCfg.teams ? ['TEAM 1', 'TEAM 2']
+        : this.modeCfg.ai ? ['Player 1', 'AI ' + this.ai.tag] : PLAYER_NAMES.slice();
     this.turnNumber = -1;            // counts normal turns from 0; a Double Play bonus keeps the same member
     this.activeMember = 0;           // Tag: which partner (0 or 1) of the active team is playing
     this.timeoutHandling = false;   // prevents duplicate timeout resolution across render frames
@@ -889,8 +950,20 @@ class GameScene extends Phaser.Scene {
     this.createBoard();
     if (this.online) {
       this.attachOnlineSocket();
-      this.showToast('Online match connected. Waiting for the server state.', 3200);
+      if (!this.spectator) this.showToast('Online match connected. Waiting for the server state.', 3200);
+      if (this.spectator) {
+        this.sound.mute = this.audienceSoundMuted;
+        this.audienceMuteHandler = (event) => {
+          if (event.data && event.data.type === 'shapey-audience-mute') {
+            this.audienceSoundMuted = Boolean(event.data.muted);
+            this.sound.mute = this.audienceSoundMuted;
+            try { localStorage.setItem('shapey-audience-muted', String(this.audienceSoundMuted)); } catch {}
+          }
+        };
+        window.addEventListener('message', this.audienceMuteHandler);
+      }
       this.events.once('shutdown', () => {
+        if (this.audienceMuteHandler) window.removeEventListener('message', this.audienceMuteHandler);
         if (this.onlineSocket) {
           try { this.onlineSocket.close(); } catch {}
           this.onlineSocket = null;
@@ -1154,6 +1227,11 @@ class GameScene extends Phaser.Scene {
   }
 
   createBottomButtons() {
+    if (this.spectator) {
+      // Read-only audience view: the parent audience page overlays Chat, Polls and Settings icons.
+      this.buttons = {};
+      return;
+    }
     const BUTTON_HEIGHT = 146;
     const BOTTOM = 1214; // bottom edge of the label plank
     const iconByAction = {
@@ -2011,8 +2089,10 @@ class GameScene extends Phaser.Scene {
     tile.baseScale = tile.scaleX;
     tile.flipChain = Promise.resolve();
     tile.setMask(this.boardMask);
-    tile.setInteractive({ useHandCursor: true });
-    tile.on('pointerdown', () => this.onTileTap(tile));
+    if (!this.spectator) {
+      tile.setInteractive({ useHandCursor: true });
+      tile.on('pointerdown', () => this.onTileTap(tile));
+    }
     return tile;
   }
 
