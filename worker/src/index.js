@@ -566,9 +566,21 @@ export class Room extends DurableObject {
       !game.selectedTileIds.includes(tile.id) && !game.dummyTileIds.includes(tile.id)
     );
     if (candidates.length < 4) return null;
-    for (let i = candidates.length - 1; i > 0; i--) {
+
+    // Include at least one genuine match when available, otherwise the audience would be asked
+    // to help with a question that has no correct answer. Hidden shapes stay server-side.
+    const matching = candidates.filter(tile => tile.shape === game.selectedShape);
+    if (!matching.length) return null;
+    const chosenMatch = matching[Math.floor(Math.random() * matching.length)];
+    const decoys = candidates.filter(tile => tile.id !== chosenMatch.id);
+    for (let i = decoys.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+      [decoys[i], decoys[j]] = [decoys[j], decoys[i]];
+    }
+    const options = [chosenMatch, ...decoys.slice(0, 3)];
+    for (let i = options.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [options[i], options[j]] = [options[j], options[i]];
     }
     const remainingTurnMs = Number.isFinite(game.turnEndsAt) ? Math.max(0, game.turnEndsAt - now) : 0;
     return {
@@ -578,7 +590,7 @@ export class Room extends DurableObject {
       endsAt: now + AUDIENCE_POLL_MS,
       remainingTurnMs,
       initialShape: game.selectedShape,
-      options: candidates.slice(0, 4).map(tile => ({ tileId: tile.id, row: tile.row, col: tile.col })),
+      options: options.map(tile => ({ tileId: tile.id, row: tile.row, col: tile.col })),
       votes: {},
       closed: false
     };
