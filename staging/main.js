@@ -1811,20 +1811,8 @@ class GameScene extends Phaser.Scene {
     const tileLabel = (option) => typeof option === 'string' ? option.toUpperCase()
       : 'TILE R' + (Number(option.row) + 1) + ' C' + (Number(option.col) + 1);
     options.forEach((option, index) => {
-      const tileId = typeof option === 'string' ? option : option.tileId;
       const y = 540 + index * 80;
       const leader = poll.closed && totalVotes > 0 && counts[index] === best;
-      if (poll.closed && requestedByMe && typeof option === 'object' && option.tileId) {
-        const choice = this.add.rectangle(GAME_WIDTH / 2, y, 610, 66, 0x000000, 0.001)
-          .setInteractive({ useHandCursor: true }).setDepth(252);
-        this.pollUI.push(choice);
-        choice.on('pointerdown', () => {
-          this.dismissedPollKey = key;
-          this.sendOnlineAction({ type: 'pick', tileId });
-          this.closeAudiencePoll();
-          this.showToast('Audience tile selected. The match will continue.', 2500);
-        });
-      }
       add(this.add.text(78, y, String.fromCharCode(65 + index) + '  ' + tileLabel(option), {
         fontFamily: FONT, fontSize: '20px', color: '#fff2c7',
         stroke: '#3a2112', strokeThickness: 4,
@@ -1839,14 +1827,36 @@ class GameScene extends Phaser.Scene {
         }).setOrigin(1, 0.5));
       }
     });
-    if (poll.closed) add(this.add.text(GAME_WIDTH / 2, 820,
-      requestedByMe ? 'TAP A RESULT TO PICK THAT HIDDEN TILE' : 'THE REQUESTING PLAYER CHOOSES · YOU CAN WATCH', {
+    if (poll.closed) {
+      const guidance = requestedByMe
+        ? (totalVotes ? 'ACCEPT THE TOP CHOICE OR IGNORE THE RESULTS' : 'NO AUDIENCE SUGGESTION · YOU CAN CONTINUE YOUR TURN')
+        : 'THE REQUESTING PLAYER DECIDES · YOU CAN WATCH';
+      add(this.add.text(GAME_WIDTH / 2, 820, guidance, {
         fontFamily: FONT, fontSize: '17px', color: '#ffe9b8', align: 'center',
         stroke: '#3a2112', strokeThickness: 3, wordWrap: { width: 590 },
       }).setOrigin(0.5));
-    woodButton(this, GAME_WIDTH / 2, 885, 420, 82,
-      poll.closed ? (requestedByMe ? 'IGNORE RESULTS' : 'CLOSE RESULTS') : 'HIDE', 30,
-      () => { this.dismissedPollKey = key; this.closeAudiencePoll(); }, 253).forEach(add);
+      if (requestedByMe && totalVotes > 0) {
+        const winner = options[counts.indexOf(best)];
+        const tileId = typeof winner === 'string' ? winner : winner.tileId;
+        woodButton(this, 235, 900, 270, 76, 'ACCEPT TOP CHOICE', 19, () => {
+          this.dismissedPollKey = key;
+          this.closeAudiencePoll();
+          this.sendOnlineAction({ type: 'pick', tileId });
+          this.showToast('You accepted the audience suggestion.', 2500);
+        }, 253).forEach(add);
+        woodButton(this, 500, 900, 230, 76, 'IGNORE RESULTS', 23, () => {
+          this.dismissedPollKey = key;
+          this.closeAudiencePoll();
+        }, 253).forEach(add);
+      } else {
+        woodButton(this, GAME_WIDTH / 2, 900, 420, 76,
+          requestedByMe ? 'CLOSE RESULTS' : 'CLOSE RESULTS', 25,
+          () => { this.dismissedPollKey = key; this.closeAudiencePoll(); }, 253).forEach(add);
+      }
+    } else {
+      woodButton(this, GAME_WIDTH / 2, 900, 420, 76, 'HIDE', 30,
+        () => { this.dismissedPollKey = key; this.closeAudiencePoll(); }, 253).forEach(add);
+    }
   }
 
   closeAudiencePoll() {
