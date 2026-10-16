@@ -435,13 +435,16 @@ function renderBoard(state, previousState = null, animate = false) {
   // Tag remains 7×7. Other modes scale tile size and spacing to fill the same fixed tray area.
   const boardSize = state.mode === 'tag' ? 7 : requestedSize;
   const boardScale = 7 / boardSize;
+  const tilePitch = 91 * boardScale;
+  const tileSize = tilePitch - 1; // preserve the original 1px gap and 636px tray footprint
+  const tileScale = tileSize / 90;
   els.board.style.setProperty('--board-offset', '0');
-  els.board.style.setProperty('--tile-size', String(90 * boardScale));
-  els.board.style.setProperty('--tile-pitch', String(91 * boardScale));
-  els.board.style.setProperty('--dust-offset-x', String(36 * boardScale));
-  els.board.style.setProperty('--dust-offset-y', String(9 * boardScale));
-  els.board.style.setProperty('--dust-width', String(162 * boardScale));
-  els.board.style.setProperty('--dust-height', String(81 * boardScale));
+  els.board.style.setProperty('--tile-size', String(tileSize));
+  els.board.style.setProperty('--tile-pitch', String(tilePitch));
+  els.board.style.setProperty('--dust-offset-x', String(36 * tileScale));
+  els.board.style.setProperty('--dust-offset-y', String(9 * tileScale));
+  els.board.style.setProperty('--dust-width', String(162 * tileScale));
+  els.board.style.setProperty('--dust-height', String(81 * tileScale));
   const canAnimate = Boolean(animate && previousState && Array.isArray(previousState.tiles) && previousState.status === 'playing');
   const previousTiles = canAnimate ? new Map(previousState.tiles.map((tile) => [String(tile.id), tile])) : new Map();
   const newCountByColumn = new Map();
