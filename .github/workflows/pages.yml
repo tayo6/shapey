@@ -30,6 +30,11 @@ jobs:
       - name: Check game JavaScript syntax
         run: node --check src/main.js
 
+      - name: Check staging UI JavaScript syntax
+        run: |
+          node --check staging/main.js
+          node --check staging/audience.js
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
