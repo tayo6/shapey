@@ -83,11 +83,25 @@
     #toast, .veil p { text-transform:uppercase; }
     #board { position:absolute; left:calc(var(--u) * 36); top:calc(var(--u) * 316); width:calc(var(--u) * 648); height:calc(var(--u) * 648); overflow:hidden; }
     .tile { position:absolute; width:calc(var(--u) * 90); height:calc(var(--u) * 90);
-            left:calc(var(--u) * (6.5 + 91 * var(--c, 0))); top:calc(var(--u) * (6.5 + 91 * var(--r, 0))); transition:left .35s ease, top .35s ease; }
-    .tile img { width:100%; height:100%; }
-    /* The same 5px cyan square stroke the game draws around tiles while they shuffle. */
+            left:calc(var(--u) * (6.5 + 91 * var(--c, 0))); top:calc(var(--u) * (6.5 + 91 * var(--r, 0)));
+            transition:left .35s ease, top .48s cubic-bezier(.22,.75,.28,1), opacity .18s ease; }
+    .tile img { width:100%; height:100%; display:block; object-fit:contain; }
+    /* The same 5px cyan square stroke the game draws while tiles shuffle. */
     .tile.is-moving { outline:calc(var(--u) * 5) solid var(--cyan); outline-offset:calc(var(--u) * -0.5); }
+    .tile.is-spawning { opacity:.82; }
+    .tile.is-vote-option { cursor:crosshair; filter:drop-shadow(0 0 calc(var(--u) * 7) #66e0ffb8); }
+    .tile.is-vote-option img { outline:calc(var(--u) * 2) dashed var(--cyan); outline-offset:calc(var(--u) * -4); }
+    .tile.is-voted img { outline:calc(var(--u) * 4) solid #ffd45e; outline-offset:calc(var(--u) * -4); box-shadow:0 0 calc(var(--u) * 10) #ffd45eaa; }
+    .tile.is-poll-winner img { outline:calc(var(--u) * 4) solid #ffd45e; outline-offset:calc(var(--u) * -4); box-shadow:0 0 calc(var(--u) * 10) #ffd45eaa; }
+    .tile-vote-count { position:absolute; right:calc(var(--u) * 2); bottom:calc(var(--u) * 2); z-index:8; padding:calc(var(--u) * 1) calc(var(--u) * 4); border:calc(var(--u) * 1) solid #ffd45e; border-radius:calc(var(--u) * 5); background:#201208e8; color:#ffdf75; font:bold max(8px,calc(var(--u) * 14)) system-ui,sans-serif; pointer-events:none; }
     .tile.is-selected { outline:calc(var(--u) * 4) solid var(--star); outline-offset:calc(var(--u) * -1); }
+    .board-fx { position:absolute; z-index:10; pointer-events:none; background-repeat:no-repeat; }
+    .destroy-fx { left:calc(var(--u) * (6.5 + 91 * var(--c))); top:calc(var(--u) * (6.5 + 91 * var(--r))); width:calc(var(--u) * 90); height:calc(var(--u) * 90);
+      background-image:url("assets/fx/tile%20destroy%20frame.webp"); background-size:717% 100%; background-position:0 0; animation:board-tile-destroy .48s steps(5,end) forwards; }
+    .dust-fx { left:calc(var(--u) * (6.5 + 91 * var(--c) - 36)); top:calc(var(--u) * (6.5 + 91 * var(--r) + 9)); width:calc(var(--u) * 162); height:calc(var(--u) * 81);
+      background-image:url("assets/fx/dusty.webp"); background-size:683% 100%; background-position:0 0; animation:board-landing-dust .7s steps(6,end) forwards; }
+    @keyframes board-tile-destroy { from { background-position:0 0; opacity:1; } to { background-position:100% 0; opacity:0; } }
+    @keyframes board-landing-dust { from { background-position:0 0; opacity:1; } to { background-position:100% 0; opacity:0; } }
     .veil { position:absolute; left:50%; top:calc(var(--u) * 640); transform:translate(-50%, -50%); width:calc(var(--u) * 560); z-index:12; display:grid; gap:calc(var(--u) * 20); justify-items:center; text-align:center;
             background:rgba(18,10,5,.78); border:calc(var(--u) * 5) solid var(--gold); padding:calc(var(--u) * 30); }
     .veil p { margin:0; white-space:normal; line-height:1.25; }
@@ -122,19 +136,8 @@
     .composer input { min-width:0; background:var(--dark); color:#fff; border:calc(var(--u) * 4) solid #8b623a; padding:0 calc(var(--u) * 18); height:calc(var(--u) * 76); font:inherit; font-size:max(16px, calc(var(--u) * 27)); }
     .chat .hint { min-height:1.2em; }
 
-    /* Polls: "Ask the Audience". Lettered wood buttons, percentages revealed when voting ends. */
-    .poll-options { display:grid; gap:calc(var(--u) * 14); }
-    .poll-option { position:relative; display:grid; grid-template-columns:calc(var(--u) * 64) 1fr auto; align-items:center; gap:0 calc(var(--u) * 16); width:100%; text-align:left; background:var(--wood); border:calc(var(--u) * 4) solid #f3d29a; padding:calc(var(--u) * 12) calc(var(--u) * 18); min-height:calc(var(--u) * 96); }
-    .poll-option:active:not(:disabled) { transform:scale(.98); }
-    .poll-option:disabled { cursor:default; }
-    .poll-option img { width:calc(var(--u) * 64); height:calc(var(--u) * 64); grid-row:1; }
-    .poll-option .option-copy, .poll-option .vote-count { font-size:max(14px, calc(var(--u) * 28)); -webkit-text-stroke:calc(var(--u) * 5) var(--ink); paint-order:stroke fill; text-transform:uppercase; }
-    .poll-option .vote-count { color:var(--star); }
-    .poll-option .bar { grid-column:2 / 4; height:calc(var(--u) * 16); background:var(--dark); margin-top:calc(var(--u) * 8); position:relative; }
-    .poll-option .bar i { position:absolute; left:0; top:0; bottom:0; width:calc(var(--pct, 0) * 1%); background:#b98a3c; }
-    .poll-option.winner { border-color:#ffd45e; }
-    .poll-option.winner .bar i { background:#ffd45e; }
-    .poll-option.chosen { border-color:var(--cyan); }
+    /* The poll panel explains the live board vote; tile selection happens on the board itself. */
+    .poll-options { display:block; color:var(--cream); font-size:max(14px,calc(var(--u) * 25)); line-height:1.4; }
 
     /* Menu (settings): room facts and who is connected. */
     .roster { display:grid; gap:calc(var(--u) * 10); background:var(--dark); border:calc(var(--u) * 4) solid #8b623a; padding:calc(var(--u) * 16); }
@@ -277,7 +280,7 @@
 
     <img class="fill" style="top:0;height:100%" src="assets/backgrounds/Tray%20Shadow.webp" alt="" draggable="false">
     <img class="fill" style="top:calc(var(--u) * 284)" src="assets/backgrounds/tray.webp" alt="" draggable="false">
-    <div id="board" role="img" aria-label="Game board, read-only"></div>
+    <div id="board" role="group" aria-label="Game board. During a poll, tap a cyan-outlined face-down tile to vote."></div>
     <div id="veil" class="veil">
       <p id="veilText" class="gt" style="--fs:30;--st:7">Connecting…</p>
       <button id="retryConnection" type="button" class="wood" style="--fs:32" hidden>RETRY</button>
