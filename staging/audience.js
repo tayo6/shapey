@@ -1,6 +1,6 @@
 'use strict';
 
-const MULTIPLAYER_API = location.hostname === 'shapey-audience-preview.hellohuman100.workers.dev' ? location.origin : 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
+const MULTIPLAYER_API = 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
 const SHAPE_FILES = {
   mystery: 'Mystery.webp', dummy: 'dummy.webp', hazard: 'hazard.webp', cancel: 'cancel.webp',
   capsule: 'capsule.webp', circle: 'circle.webp', cross: 'cross.webp', divide: 'divide.webp',
