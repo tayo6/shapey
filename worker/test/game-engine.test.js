@@ -70,6 +70,16 @@ test("creates exact 5x5, 6x6 and 7x7 boards with playable matching groups", () =
   assert.throws(() => createGameState({
     roomCode: "BAD234", mode: "pvp", playerNumbers: [1, 2], boardSize: 8, now: NOW
   }), /Invalid board size/);
+  for (const boardSize of [5, 6]) {
+    assert.throws(() => createGameState({
+      roomCode: "TAG" + boardSize + "3", mode: "tag", playerNumbers: [1, 2, 3, 4],
+      boardSize, now: NOW, rng: steadyRandom
+    }), /Tag uses a 7x7 board/);
+  }
+  const tagDefault = createGameState({
+    roomCode: "TAG234", mode: "tag", playerNumbers: [1, 2, 3, 4], now: NOW, rng: steadyRandom
+  });
+  assert.equal(tagDefault.boardSize, 7);
 });
 
 test("Tag advances each player with a fresh 30-second pick deadline", () => {
