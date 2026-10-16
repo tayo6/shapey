@@ -136,7 +136,7 @@ async function run() {
   });
   assert.equal(deniedDirectory.status, 403, "Public directory CORS must reject unapproved origins.");
 
-  const [pvpRoom, tagRoom] = await Promise.all([createRoom("pvp"), createRoom("tag")]);
+  const [pvpRoom, tagRoom, pollPvpRoom] = await Promise.all([createRoom("pvp"), createRoom("tag"), createRoom("pvp")]);
   const directoryResponse = await fetch(BASE_URL + "/api/rooms", {
     headers: { Origin: ALLOWED_ORIGIN }
   });
@@ -165,10 +165,23 @@ async function run() {
     allClients.push(pvp2);
     assert.equal(pvp2.playerNumber, 2);
 
-    const [pvpInitial1, pvpInitial2] = await Promise.all([
+    // A separate PvP room lets the audience-poll test run without disturbing the scoring test.
+    const pollPvp1 = await joinRoom(pollPvpRoom, "pvp");
+    allClients.push(pollPvp1);
+    const pollPvp2 = await joinRoom(pollPvpRoom, "pvp");
+    allClients.push(pollPvp2);
+    assert.equal(pollPvp1.playerNumber, 1);
+    assert.equal(pollPvp2.playerNumber, 2);
+
+    const [pvpInitial1, pvpInitial2, pollPvpInitial1, pollPvpInitial2] = await Promise.all([
       pvp1.waitFor((message) => message.type === "game_started"),
-      pvp2.waitFor((message) => message.type === "game_started")
+      pvp2.waitFor((message) => message.type === "game_started"),
+      pollPvp1.waitFor((message) => message.type === "game_started"),
+      pollPvp2.waitFor((message) => message.type === "game_started")
     ]);
+    assert.equal(pollPvpInitial1.state.mode, "pvp");
+    assert.equal(pollPvpInitial1.state.targetScore, 100);
+    assert.equal(pollPvpInitial1.state.status, "study");
     assert.equal(pvpInitial1.state.mode, "pvp");
     assert.equal(pvpInitial1.state.targetScore, 100);
     assert.equal(pvpInitial1.state.status, "study");
@@ -193,8 +206,9 @@ async function run() {
       assert.equal(message.state.activePlayerNumber, 1);
     }
 
-    const [pvpPlaying1, pvpPlaying2, ...tagPlaying] = await Promise.all([
-      playingState(pvp1), playingState(pvp2), ...tagClients.map(playingState)
+    const [pvpPlaying1, pvpPlaying2, pollPvpPlaying1, pollPvpPlaying2, ...tagPlaying] = await Promise.all([
+      playingState(pvp1), playingState(pvp2), playingState(pollPvp1), playingState(pollPvp2),
+      ...tagClients.map(playingState)
     ]);
     for (const state of [pvpPlaying1, pvpPlaying2, ...tagPlaying]) {
       assert.equal(state.status, "playing");
@@ -207,6 +221,43 @@ async function run() {
     const liveDirectory = await liveDirectoryResponse.json();
     assert.ok(liveDirectory.rooms.some(room => room.roomCode === tagRoom.roomCode && room.status === "live"),
       "The public directory must update when a Tag room starts playing.");
+
+    // Player 1 vs Player 2 can also open a poll, and it uses every eligible hidden tile.
+    const pvpAudience = await joinSpectator(pollPvpRoom, "pvp");
+    allClients.push(pvpAudience);
+    const pvpWatched = await pvpAudience.waitFor((message) => message.type === "spectator_welcome", WAIT_MS, "PvP spectator welcome");
+    assert.equal(pvpWatched.mode, "pvp");
+    assert.equal(pvpWatched.state.status, "playing");
+    assert.ok(pvpWatched.state.tiles.every((tile) => !tile.faceUp && tile.shape === null),
+      "PvP spectator snapshots must keep hidden shapes private.");
+    const pollShapeGroups = new Map();
+    for (const tile of pollPvpInitial1.state.tiles) {
+      if (!tile.shape || ["hazard", "dummy", "cancel"].includes(tile.shape)) continue;
+      if (!pollShapeGroups.has(tile.shape)) pollShapeGroups.set(tile.shape, []);
+      pollShapeGroups.get(tile.shape).push(tile);
+    }
+    const pollTriple = [...pollShapeGroups.values()].find((tiles) => tiles.length >= 3)?.slice(0, 3);
+    assert.ok(pollTriple, "The PvP study board should include a normal-shape triple for poll testing.");
+    pollPvp1.send({ type: "game_action", action: { type: "pick", tileId: pollTriple[0].id } });
+    await pollPvp1.waitFor((message) =>
+      message.type === "game_state" && message.state?.selectedTileIds?.length === 1,
+      WAIT_MS, "PvP player reveals a first shape before asking the audience");
+    pollPvp1.send({ type: "audience_poll_start" });
+    const pvpPoll = await pvpAudience.waitFor((message) =>
+      message.type === "audience_poll_state" && message.poll && !message.poll.closed,
+      WAIT_MS, "PvP audience poll broadcast");
+    assert.equal(pvpPoll.poll.initialShape, pollTriple[0].shape);
+    assert.ok(pvpPoll.poll.options.length > 4, "PvP polls must not be restricted to four choices.");
+    assert.ok(pvpPoll.poll.options.every((option) => option.tileId &&
+      Number.isInteger(option.row) && Number.isInteger(option.col) && !("shape" in option)),
+      "PvP poll choices must cover board positions without exposing hidden shapes.");
+    const matchingOption = pvpPoll.poll.options.find((option) => option.tileId === pollTriple[1].id);
+    assert.ok(matchingOption, "The full-board poll should include another tile matching the revealed shape.");
+    pvpAudience.send({ type: "poll_vote", tileId: matchingOption.tileId });
+    const pvpVoteEcho = await pvpAudience.waitFor((message) =>
+      message.type === "audience_poll_state" && message.poll?.id === pvpPoll.poll.id && !message.poll.closed,
+      WAIT_MS, "PvP spectator vote echo");
+    assert.equal("counts" in pvpVoteEcho.poll, false, "Live PvP vote counts must stay hidden until polling closes.");
 
     // A spectator can watch a live Tag room without receiving player-only inventory data.
     const audience = await joinSpectator(tagRoom, "tag");
@@ -235,10 +286,11 @@ async function run() {
     tagClients[0].send({ type: "audience_poll_start" });
     const poll = await audience.waitFor((message) =>
       message.type === "audience_poll_state" && message.poll && !message.poll.closed, WAIT_MS, "audience poll broadcast");
-    assert.equal(poll.poll.options.length, 4);
+    assert.ok(poll.poll.options.length > 4, "Tag polls must offer the eligible hidden board tiles, not four fixed choices.");
     assert.equal(poll.poll.initialShape, matchingTriple[0].shape);
-    assert.ok(poll.poll.options.some((option) => option.tileId && Number.isInteger(option.row) && Number.isInteger(option.col)),
-      "Poll options must point to hidden board tiles, not reveal their shapes.");
+    assert.ok(poll.poll.options.every((option) => option.tileId && Number.isInteger(option.row) &&
+      Number.isInteger(option.col) && !("shape" in option)),
+      "Poll options must cover hidden board positions without revealing their shapes.");
     audience.send({ type: "poll_vote", tileId: poll.poll.options[0].tileId });
     const voted = await tagClients[0].waitFor((message) =>
       message.type === "audience_poll_state" && message.poll?.id === poll.poll.id &&
@@ -258,6 +310,11 @@ async function run() {
       message.poll.closed, 35_000, "closed audience poll reveals final results");
     assert.equal(finalPoll.poll.totalVotes, 1);
     assert.equal(finalPoll.poll.counts[poll.poll.options[0].tileId], 1);
+    const closedPvpPoll = await pvpAudience.waitFor((message) =>
+      message.type === "audience_poll_state" && message.poll?.id === pvpPoll.poll.id && message.poll.closed,
+      WAIT_MS, "closed PvP poll reveals final results");
+    assert.equal(closedPvpPoll.poll.totalVotes, 1);
+    assert.equal(closedPvpPoll.poll.counts[matchingOption.tileId], 1);
     const postPollTurn = await tagClients[0].waitFor((message) =>
       message.type === "game_state" && message.state?.revision > tagPlaying[0].revision + 2 &&
       message.state?.activePlayerNumber === 1 && message.state?.selectedTileIds?.length === 1,
@@ -352,7 +409,7 @@ async function run() {
     });
     assert.equal(deletedDemo.status, 404, "Ending the demo should delete its room data.");
 
-    console.log("Local Worker integration passed: origin guard, PvP scoring/reconnect, Tag turn sequence, audience chat/polls, and AI demo auto-play/cleanup.");
+    console.log("Local Worker integration passed: origin guard, PvP scoring/reconnect and audience polls, full-board Tag polls, chat, and AI demo auto-play/cleanup.");
   } finally {
     await Promise.all(allClients.map((client) => client.close()));
   }
