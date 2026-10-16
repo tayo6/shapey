@@ -1861,6 +1861,7 @@ class GameScene extends Phaser.Scene {
     const previousOnlineStars = this.onlineState && this.onlineState.me &&
       Number.isFinite(Number(this.onlineState.me.stars))
       ? Number(this.onlineState.me.stars) : null;
+    const previousOnlineState = this.onlineState;
     this.onlineState = state;
     this.scores = Array.isArray(state.scores) ? state.scores.slice() : [0, 0];
     this.activePlayer = Number.isInteger(state.activeSide) ? state.activeSide : 0;
@@ -1893,6 +1894,17 @@ class GameScene extends Phaser.Scene {
     }
 
     const previous = this.onlineTilesById || new Map();
+    const canAnimateOnlineCascade = Boolean(!initial && previousOnlineState &&
+      previousOnlineState.status === 'playing' && state.status === 'playing' &&
+      Array.isArray(previousOnlineState.tiles) && Array.isArray(state.tiles));
+    const newCountByColumn = new Map();
+    if (canAnimateOnlineCascade) {
+      for (const viewTile of (state.tiles || [])) {
+        if (!previous.has(viewTile.id) && !viewTile.moving && Number.isInteger(viewTile.col)) {
+          newCountByColumn.set(viewTile.col, (newCountByColumn.get(viewTile.col) || 0) + 1);
+        }
+      }
+    }
     const nextById = new Map();
     const nextGrid = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
     for (const viewTile of (state.tiles || [])) {
@@ -1901,6 +1913,16 @@ class GameScene extends Phaser.Scene {
       const targetY = this.cellY(viewTile.row);
       if (!tile || !tile.active) {
         tile = this.createOnlineTile(viewTile);
+        const spawnCount = newCountByColumn.get(viewTile.col) || 0;
+        if (canAnimateOnlineCascade && spawnCount > 0 && !viewTile.moving) {
+          // Match the local game: new tiles fall in from above the board and puff dust on landing.
+          tile.setPosition(targetX, this.cellY(viewTile.row - spawnCount));
+          const targetRow = viewTile.row;
+          tile.onlineCascadeTargetRow = targetRow;
+          this.fall(tile, targetY, 40 * Math.max(0, spawnCount - 1 - viewTile.row), true).then(() => {
+            if (tile.active && tile.onlineCascadeTargetRow === targetRow) delete tile.onlineCascadeTargetRow;
+          });
+        }
         if (viewTile.moving) {
           this.addShuffleOutline(tile);
           tile.shuffleBaseDepth = tile.depth;
@@ -1916,17 +1938,31 @@ class GameScene extends Phaser.Scene {
         } else {
           this.removeShuffleOutline(tile);
         }
-        if (Math.abs(tile.x - targetX) > 0.5 || Math.abs(tile.y - targetY) > 0.5) {
+        const stillFallingToSameRow = !viewTile.moving && tile.onlineCascadeTargetRow === viewTile.row;
+        if ((Math.abs(tile.x - targetX) > 0.5 || Math.abs(tile.y - targetY) > 0.5) && !stillFallingToSameRow) {
+          const cascadeFall = canAnimateOnlineCascade && !viewTile.moving &&
+            (newCountByColumn.get(viewTile.col) || 0) > 0 &&
+            Math.abs(tile.x - targetX) <= 0.5 && targetY > tile.y + 0.5;
+          delete tile.onlineCascadeTargetRow;
           this.tweens.killTweensOf(tile);
           if (tile.shuffleOutline) this.tweens.killTweensOf(tile.shuffleOutline);
-          const moveDuration = viewTile.moving && Number.isFinite(viewTile.movingUntil)
-            ? Math.max(0, viewTile.movingUntil - Date.now())
-            : (initial ? 0 : 240);
-          const movingTargets = tile.shuffleOutline ? [tile, tile.shuffleOutline] : [tile];
-          this.tweens.add({ targets: movingTargets, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
-          if (tile.ring) {
-            this.tweens.killTweensOf(tile.ring);
-            this.tweens.add({ targets: tile.ring, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
+          if (cascadeFall) {
+            // Existing tiles in a refilled column drop with the same bounce as the local cascade.
+            const targetRow = viewTile.row;
+            tile.onlineCascadeTargetRow = targetRow;
+            this.fall(tile, targetY, 0, false).then(() => {
+              if (tile.active && tile.onlineCascadeTargetRow === targetRow) delete tile.onlineCascadeTargetRow;
+            });
+          } else {
+            const moveDuration = viewTile.moving && Number.isFinite(viewTile.movingUntil)
+              ? Math.max(0, viewTile.movingUntil - Date.now())
+              : (initial ? 0 : 240);
+            const movingTargets = tile.shuffleOutline ? [tile, tile.shuffleOutline] : [tile];
+            this.tweens.add({ targets: movingTargets, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
+            if (tile.ring) {
+              this.tweens.killTweensOf(tile.ring);
+              this.tweens.add({ targets: tile.ring, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
+            }
           }
         }
         tile.row = viewTile.row;
