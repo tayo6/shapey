@@ -10,7 +10,6 @@ on:
     paths:
       - staging/audience.html
       - staging/audience.js
-      - staging/demo-room.js
       - src/rules.js
       - .github/workflows/staging-preview.yml
 
@@ -34,7 +33,7 @@ jobs:
           node --check src/rules.js
           node --check staging/main.js
           node --check staging/audience.js
-          node --check staging/demo-room.js
+          node --check worker/src/index.js
 
       - name: Smoke-test the deployed preview
         env:
@@ -44,11 +43,14 @@ jobs:
           base="${PREVIEW_URL%/staging/audience.html}"
           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 -D /tmp/preview-headers "$PREVIEW_URL" -o /tmp/audience.html
           grep -Fqi 'x-shapey-preview: 0003+0004' /tmp/preview-headers
-          grep -q 'src="/staging/demo-room.js"' /tmp/audience.html
+          grep -q 'id="gameFrame"' /tmp/audience.html
+          grep -q 'id="startDemo"' /tmp/audience.html
           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/audience.js" -o /tmp/audience.js
-          grep -q 'function withDemo(rooms)' /tmp/audience.js
-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/demo-room.js" -o /tmp/demo-room.js
-          grep -q 'window.ShapeyDemo' /tmp/demo-room.js
+          grep -q 'function startAiDemo()' /tmp/audience.js
+          grep -q "type: 'poll_vote', tileId" /tmp/audience.js
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/main.js" -o /tmp/staging-main.js
+          grep -q 'AUDIENCE_WATCH_CODE' /tmp/staging-main.js
+          grep -q 'TAP A RESULT TO PICK THAT HIDDEN TILE' /tmp/staging-main.js
           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/src/rules.js" -o /tmp/rules.js
           grep -q 'ShapeyRules' /tmp/rules.js
           assets_base="https://tayo6.github.io/shapey"
