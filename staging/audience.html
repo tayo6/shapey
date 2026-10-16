@@ -94,7 +94,7 @@
     .stage.has-game-frame #board .tile.is-moving { outline:0; filter:none; }
     .stage.has-game-frame #board .tile.is-selected { outline:0; }
     .tile { position:absolute; width:calc(var(--u) * 90); height:calc(var(--u) * 90);
-            left:calc(var(--u) * (6.5 + 91 * var(--c, 0))); top:calc(var(--u) * (6.5 + 91 * var(--r, 0)));
+            left:calc(var(--u) * (6.5 + 91 * var(--c, 0) + var(--board-offset, 0))); top:calc(var(--u) * (6.5 + 91 * var(--r, 0) + var(--board-offset, 0)));
             transition:left .35s ease, top .48s cubic-bezier(.22,.75,.28,1), opacity .18s ease; }
     .tile img { width:100%; height:100%; display:block; object-fit:contain; }
     /* The same 5px cyan square stroke the game draws while tiles shuffle. */
@@ -107,9 +107,9 @@
     .tile-vote-count { position:absolute; right:calc(var(--u) * 2); bottom:calc(var(--u) * 2); z-index:8; padding:calc(var(--u) * 1) calc(var(--u) * 4); border:calc(var(--u) * 1) solid #ffd45e; border-radius:calc(var(--u) * 5); background:#201208e8; color:#ffdf75; font:bold max(8px,calc(var(--u) * 14)) system-ui,sans-serif; pointer-events:none; }
     .tile.is-selected { outline:calc(var(--u) * 4) solid var(--star); outline-offset:calc(var(--u) * -1); }
     .board-fx { position:absolute; z-index:10; pointer-events:none; background-repeat:no-repeat; }
-    .destroy-fx { left:calc(var(--u) * (6.5 + 91 * var(--c))); top:calc(var(--u) * (6.5 + 91 * var(--r))); width:calc(var(--u) * 90); height:calc(var(--u) * 90);
+    .destroy-fx { left:calc(var(--u) * (6.5 + 91 * var(--c) + var(--board-offset, 0))); top:calc(var(--u) * (6.5 + 91 * var(--r) + var(--board-offset, 0))); width:calc(var(--u) * 90); height:calc(var(--u) * 90);
       background-image:url("assets/fx/tile%20destroy%20frame.webp"); background-size:717% 100%; background-position:0 0; animation:board-tile-destroy .48s steps(5,end) forwards; }
-    .dust-fx { left:calc(var(--u) * (6.5 + 91 * var(--c) - 36)); top:calc(var(--u) * (6.5 + 91 * var(--r) + 9)); width:calc(var(--u) * 162); height:calc(var(--u) * 81);
+    .dust-fx { left:calc(var(--u) * (6.5 + 91 * var(--c) + var(--board-offset, 0) - 36)); top:calc(var(--u) * (6.5 + 91 * var(--r) + var(--board-offset, 0) + 9)); width:calc(var(--u) * 162); height:calc(var(--u) * 81);
       background-image:url("assets/fx/dusty.webp"); background-size:683% 100%; background-position:0 0; animation:board-landing-dust .7s steps(6,end) forwards; }
     @keyframes board-tile-destroy { from { background-position:0 0; opacity:1; } to { background-position:100% 0; opacity:0; } }
     @keyframes board-landing-dust { from { background-position:0 0; opacity:1; } to { background-position:100% 0; opacity:0; } }
