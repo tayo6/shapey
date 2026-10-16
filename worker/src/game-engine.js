@@ -280,9 +280,10 @@ function cascade(state, removedIds, now, rng) {
   clearSelection(state, true);
 
   const freshTiles = [];
-  for (let col = 0; col < state.boardSize; col++) {
+  const boardSize = state.boardSize || DEFAULT_BOARD_SIZE;
+  for (let col = 0; col < boardSize; col++) {
     const column = state.tiles.filter((tile) => tile.col === col).sort((a, b) => b.row - a.row);
-    let writeRow = state.boardSize - 1;
+    let writeRow = boardSize - 1;
     for (const tile of column) {
       tile.row = writeRow--;
       tile.selected = false;
