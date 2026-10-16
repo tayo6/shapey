@@ -62,9 +62,21 @@ jobs:
           grep -q '"stage":"authoritative-gameplay-v1"' /tmp/staging-health.json
           grep -q '"audiencePollSeconds":30' /tmp/staging-health.json
           grep -q '"pollResultsHiddenUntilClose":true' /tmp/staging-health.json
+          # Test the exact audience directory endpoint through both public entry points. The preview's /health is static,
+          # so it cannot substitute for checking a real GET /api/rooms response.
+          backend_rooms_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 1 -H 'Origin: https://shapey-audience-preview.hellohuman100.workers.dev' -o /tmp/backend-rooms.json -w '%{http_code}' 'https://shapey-multiplayer-staging.hellohuman100.workers.dev/api/rooms')"
+          echo "Direct staging room-directory status: $backend_rooms_status"
+          cat /tmp/backend-rooms.json
+          preview_rooms_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 1 -H 'Origin: https://shapey-audience-preview.hellohuman100.workers.dev' -o /tmp/preview-rooms.json -w '%{http_code}' "$base/api/rooms")"
+          echo "Preview room-directory status: $preview_rooms_status"
+          cat /tmp/preview-rooms.json
+          test "$backend_rooms_status" = 200
+          test "$preview_rooms_status" = 200
+          grep -q '"rooms":' /tmp/backend-rooms.json
+          grep -q '"rooms":' /tmp/preview-rooms.json
           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/src/rules.js" -o /tmp/rules.js
           grep -q 'ShapeyRules' /tmp/rules.js
-          assets_base="https://tayo6.github.io/shapey"
+          # Check assets through the exact preview URL used by the phone, not only on GitHub Pages.\n          assets_base="$base"
           for asset in \
             "assets/backgrounds/BG.webp" \
             "assets/backgrounds/header%20%20plank%201.webp" \
