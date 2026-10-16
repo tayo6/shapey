@@ -240,13 +240,22 @@ async function run() {
     audience.send({ type: "poll_vote", tileId: poll.poll.options[0].tileId });
     const voted = await tagClients[0].waitFor((message) =>
       message.type === "audience_poll_state" && message.poll?.id === poll.poll.id &&
-      message.poll.totalVotes === 1, WAIT_MS, "player receives spectator vote");
-    assert.equal(voted.poll.counts[poll.poll.options[0].tileId], 1);
+      !message.poll.closed, WAIT_MS, "player receives spectator vote broadcast");
+    assert.equal("counts" in voted.poll, false,
+      "Live vote counts must stay hidden until the audience poll closes.");
+    assert.equal("totalVotes" in voted.poll, false,
+      "Live total vote counts must stay hidden until the audience poll closes.");
     audience.send({ type: "poll_vote", tileId: poll.poll.options[1].tileId });
     const duplicateVote = await audience.waitFor((message) =>
       message.type === "error" && /already voted/i.test(message.message || ""),
       WAIT_MS, "second vote from one spectator is rejected");
     assert.match(duplicateVote.message, /already voted/i);
+
+    const finalPoll = await audience.waitFor((message) =>
+      message.type === "audience_poll_state" && message.poll?.id === poll.poll.id &&
+      message.poll.closed, 35_000, "closed audience poll reveals final results");
+    assert.equal(finalPoll.poll.totalVotes, 1);
+    assert.equal(finalPoll.poll.counts[poll.poll.options[0].tileId], 1);
 
     // Live chat is relayed to players and spectators with bounded, plain-text messages.
     audience.send({ type: "chat", text: "Hello <audience> viewer" });
