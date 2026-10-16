@@ -328,7 +328,7 @@ function renderRooms() {
   const filtered = roomsCache
     .filter((room) => statusFilterValue === 'all' || (statusFilterValue === 'live' ? room.status === 'live' : isWaiting(room)))
     .filter((room) => modeFilterValue === 'all' || room.mode === modeFilterValue)
-    .sort((a, b) => (rank[a.status] ?? 4) - (rank[b.status] ?? 4) || (Number(b.spectatorCount) || 0) - (Number(a.spectatorCount) || 0));
+    .sort((a, b) => (Number(b.spectatorCount) || 0) - (Number(a.spectatorCount) || 0) || (rank[a.status] ?? 4) - (rank[b.status] ?? 4));
   els.rooms.replaceChildren();
   if (!filtered.length) {
     els.rooms.append(el('div', 'notice', roomsCache.length
