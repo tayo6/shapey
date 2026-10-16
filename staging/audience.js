@@ -503,7 +503,7 @@ function renderBoard(state, previousState = null, animate = false) {
       (isClickable ? '. Tap to vote for this tile' : isThisVote ? '. Your vote' : ''));
     tile.style.zIndex = tileData.moving ? '4' : tileData.selected ? '3' : (isClickable || isThisVote || isWinner ? '6' : '1');
     const voteBadge = tile.querySelector('.tile-vote-count');
-    if (voteBadge && currentPoll && currentPoll.closed && isPollOption && totalVotes > 0) {
+    if (voteBadge && currentPoll && currentPoll.closed && isPollOption && totalVotes > 0 && votes > 0) {
       voteBadge.hidden = false;
       voteBadge.textContent = (percentById.get(id) || 0) + '%';
     } else if (voteBadge) {
