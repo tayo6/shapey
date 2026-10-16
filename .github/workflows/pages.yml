@@ -28,7 +28,9 @@ jobs:
         run: node --test tests/rules.test.js
 
       - name: Check game JavaScript syntax
-        run: node --check src/main.js
+        run: |
+          node --check src/main.js
+          node --check src/rules.js
 
       - name: Check staging UI JavaScript syntax
         run: |
