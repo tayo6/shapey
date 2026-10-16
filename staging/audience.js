@@ -349,28 +349,106 @@ function renderPlayers() {
   }
   text(els.roomSummary, modeName(activeMode) + ' · Room ' + activeRoomCode + ' · ' + statusName(roomStatus) + ' · ' + roomSpectators + ' watching');
 }
-function renderBoard(state) {
+function renderBoard(state, previousState = null, animate = false) {
   if (!state || !Array.isArray(state.tiles)) {
     els.board.replaceChildren();
     tileNodes.clear();
     return;
   }
+  const cell = 100 / 7;
+  const canAnimate = Boolean(animate && previousState && Array.isArray(previousState.tiles) &&
+    previousState.status === 'playing');
+  const previousTiles = canAnimate ? new Map(previousState.tiles.map((tile) => [String(tile.id), tile])) : new Map();
+  const newCountByColumn = new Map();
+  if (canAnimate) {
+    for (const tile of state.tiles) {
+      if (!previousTiles.has(String(tile.id))) {
+        newCountByColumn.set(tile.col, (newCountByColumn.get(tile.col) || 0) + 1);
+      }
+    }
+  }
+
+  const poll = currentPoll;
+  const options = Array.isArray(poll && poll.options) ? poll.options : [];
+  const optionIds = new Set(options.map((option) => option && option.tileId).filter((id) => typeof id === 'string'));
+  const voteCounts = poll && poll.closed ? (poll.counts || {}) : {};
+  const optionCounts = options.map((option) => Number(voteCounts[option.tileId]) || 0);
+  const totalVotes = optionCounts.reduce((sum, count) => sum + count, 0);
+  const bestVoteCount = Math.max(0, ...optionCounts);
+  const percentages = percentSplit(optionCounts);
+  const percentByTileId = new Map();
+  options.forEach((option, index) => percentByTileId.set(option.tileId, percentages[index]));
+  const canVote = Boolean(pollIsOpen(poll) && !currentVote && roomSocket &&
+    roomSocket.readyState === WebSocket.OPEN);
+
   const keep = new Set();
   for (const tileData of state.tiles) {
     if (!Number.isInteger(tileData.row) || !Number.isInteger(tileData.col)) continue;
-    keep.add(tileData.id);
-    let tile = tileNodes.get(tileData.id);
+    const id = String(tileData.id);
+    keep.add(id);
+    const left = (tileData.col * cell) + '%';
+    const top = (tileData.row * cell) + '%';
+    let tile = tileNodes.get(id);
+    let animateSpawn = false;
     if (!tile) {
       tile = document.createElement('div');
       tile.className = 'tile';
+      tile.dataset.tileId = id;
       const image = document.createElement('img');
       image.draggable = false;
-      tile.append(image);
+      image.alt = 'Game tile';
+      const voteBadge = document.createElement('span');
+      voteBadge.className = 'tile-vote-count';
+      voteBadge.hidden = true;
+      tile.append(image, voteBadge);
+      tile.addEventListener('click', () => voteForTile(tile.dataset.tileId));
+      tile.addEventListener('keydown', (event) => {
+        if ((event.key === 'Enter' || event.key === ' ') && tile.tabIndex >= 0) {
+          event.preventDefault();
+          voteForTile(tile.dataset.tileId);
+        }
+      });
+      tile.addEventListener('transitionend', (event) => {
+        if (event.propertyName === 'top') finishSpawnDust(tile);
+      });
+
+      animateSpawn = canAnimate && !previousTiles.has(id) && state.status !== 'study';
+      if (animateSpawn) {
+        const spawnCount = newCountByColumn.get(tileData.col) || 1;
+        const startingRow = tileData.row - spawnCount;
+        const landingDelay = 40 * Math.max(0, spawnCount - 1 - tileData.row);
+        const landingDuration = 260 + Math.max(1, tileData.row - startingRow) * 90;
+        tile.style.left = left;
+        tile.style.top = (startingRow * cell) + '%';
+        tile.style.transitionDelay = landingDelay + 'ms';
+        tile.style.transitionDuration = '.36s, ' + landingDuration + 'ms, .18s';
+        tile.dataset.spawnDust = 'true';
+        tile.dataset.dustRow = String(tileData.row);
+        tile.dataset.dustCol = String(tileData.col);
+        tile.classList.add('is-spawning');
+      } else {
+        tile.style.left = left;
+        tile.style.top = top;
+      }
       els.board.append(tile);
-      tileNodes.set(tileData.id, tile);
+      tileNodes.set(id, tile);
+      if (animateSpawn) {
+        const spawnCount = newCountByColumn.get(tileData.col) || 1;
+        const landingDelay = 40 * Math.max(0, spawnCount - 1 - tileData.row);
+        const landingDuration = 260 + Math.max(1, spawnCount) * 90;
+        window.requestAnimationFrame(() => {
+          if (tileNodes.get(id) !== tile) return;
+          tile.classList.remove('is-spawning');
+          tile.style.top = top;
+        });
+        window.setTimeout(() => finishSpawnDust(tile), landingDelay + landingDuration + 100);
+      }
+    } else {
+      // Existing tiles glide down into the gaps, reproducing the board cascade in the game.
+      tile.style.left = left;
+      tile.style.top = top;
     }
-    tile.style.left = (tileData.col * 100 / 7) + '%';
-    tile.style.top = (tileData.row * 100 / 7) + '%';
+
     tile.classList.toggle('is-moving', Boolean(tileData.moving));
     tile.classList.toggle('is-selected', Boolean(tileData.selected));
     const image = tile.firstElementChild;
@@ -378,14 +456,88 @@ function renderBoard(state) {
     const url = shapeUrl(visibleShape);
     if (image.src !== url) image.src = url;
     image.alt = tileData.faceUp && tileData.shape ? tileData.shape : 'Hidden tile';
-    tile.setAttribute('aria-label', image.alt + (tileData.moving ? ', shuffling' : ''));
-    tile.style.zIndex = tileData.moving ? '4' : (tileData.selected ? '3' : '1');
+    const isPollOption = optionIds.has(id) && !tileData.faceUp && !tileData.selected && !tileData.moving;
+    const isThisVote = currentVote === id;
+    const voteCount = Number(voteCounts[id]) || 0;
+    const isWinner = Boolean(poll && poll.closed && totalVotes > 0 && isPollOption && voteCount === bestVoteCount);
+    const isClickableOption = canVote && isPollOption;
+    tile.classList.toggle('is-vote-option', isClickableOption);
+    tile.classList.toggle('is-voted', isThisVote);
+    tile.classList.toggle('is-poll-winner', isWinner);
+    tile.setAttribute('role', isClickableOption ? 'button' : 'img');
+    tile.tabIndex = isClickableOption ? 0 : -1;
+    const position = 'Row ' + (tileData.row + 1) + ', column ' + (tileData.col + 1);
+    const voteHint = isClickableOption ? '. Tap to vote for this tile' : isThisVote ? '. Your vote' : '';
+    tile.setAttribute('aria-label', image.alt + ', ' + position + voteHint);
+    tile.style.zIndex = tileData.moving ? '4'
+      : tileData.selected ? '3' : (isClickableOption || isThisVote || isWinner ? '6' : '1');
+
+    const badge = tile.querySelector('.tile-vote-count');
+    if (badge && poll && poll.closed && isPollOption && totalVotes > 0) {
+      badge.hidden = false;
+      badge.textContent = (percentByTileId.get(id) || 0) + '%';
+    } else if (badge) {
+      badge.hidden = true;
+      badge.textContent = '';
+    }
   }
+
   for (const [id, node] of tileNodes.entries()) {
     if (!keep.has(id)) {
+      const previousTile = previousTiles.get(id);
+      if (canAnimate && previousTile) playBoardEffect('destroy', previousTile.row, previousTile.col);
       node.remove();
       tileNodes.delete(id);
     }
+  }
+}
+function finishSpawnDust(tile) {
+  if (!tile || tile.dataset.spawnDust !== 'true') return;
+  delete tile.dataset.spawnDust;
+  tile.style.transitionDelay = '';
+  tile.style.transitionDuration = '';
+  if (tileNodes.get(tile.dataset.tileId) !== tile) return;
+  playBoardEffect('dust', Number(tile.dataset.dustRow), Number(tile.dataset.dustCol));
+}
+function playBoardEffect(kind, row, col) {
+  if (!Number.isInteger(row) || !Number.isInteger(col) || row < 0 || row > 6 || col < 0 || col > 6) return;
+  const cell = 100 / 7;
+  const effect = document.createElement('div');
+  effect.className = 'board-fx ' + (kind === 'dust' ? 'dust-fx' : 'destroy-fx');
+  if (kind === 'dust') {
+    const width = cell * 1.8;
+    const height = cell * 0.9;
+    effect.style.width = width + '%';
+    effect.style.height = height + '%';
+    effect.style.left = ((col + 0.5) * cell - width / 2) + '%';
+    effect.style.top = ((row + 1) * cell - height) + '%';
+  } else {
+    effect.style.left = (col * cell) + '%';
+    effect.style.top = (row * cell) + '%';
+    effect.style.width = cell + '%';
+    effect.style.height = cell + '%';
+  }
+  els.board.append(effect);
+  effect.addEventListener('animationend', () => effect.remove(), { once: true });
+}
+function voteForTile(tileId) {
+  const poll = currentPoll;
+  if (!pollIsOpen(poll) || currentVote || !roomSocket || roomSocket.readyState !== WebSocket.OPEN) return;
+  if (!Array.isArray(poll.options) || !poll.options.some((option) => option && option.tileId === tileId)) return;
+  const tile = currentState && Array.isArray(currentState.tiles)
+    ? currentState.tiles.find((item) => String(item.id) === String(tileId)) : null;
+  if (!tile || tile.faceUp || tile.selected || tile.moving) return;
+  if (sendSocketMessage({ type: 'poll_vote', tileId })) {
+    currentVote = tileId;
+    renderPoll(currentPoll);
+    setWatchStatus('Vote submitted for row ' + (tile.row + 1) + ', column ' + (tile.col + 1) + '.', false);
+  }
+}
+function updateBoardPollHint() {
+  if (currentPoll && pollIsOpen(currentPoll)) {
+    text(els.boardFootnote, 'Audience poll open: tap any cyan-outlined face-down tile on the shared 7 × 7 board to vote once.');
+  } else if (currentPoll && currentPoll.closed) {
+    text(els.boardFootnote, 'Audience poll closed. Gold outlines and percentages show the most popular board tile or tied tiles.');
   }
 }
 function updateTurnClock() {
@@ -404,7 +556,8 @@ function renderGameState(state) {
       state.scores.some((score, index) => score !== previousState.scores[index])) playAudienceTone(760);
   else if (previousState && previousState.activePlayerNumber !== state.activePlayerNumber) playAudienceTone(480);
   activeMode = state.mode || activeMode;
-  renderBoard(state);
+  renderBoard(state, previousState, Boolean(previousState));
+  updateBoardPollHint();
   renderScores(state);
   const status = state.status;
   if (status === 'study') {
@@ -460,58 +613,50 @@ function updatePollIntro() {
   const poll = currentPoll;
   if (!poll) return;
   if (poll.closed) {
-    const votes = Number(poll.totalVotes) || 0;
-    text(els.pollIntro, votes ? 'Poll closed · ' + votes + ' vote' + (votes === 1 ? '' : 's') + ' · the audience result is shown below'
+    const options = Array.isArray(poll.options) ? poll.options : [];
+    const counts = options.map((option) => Number((poll.counts || {})[option.tileId]) || 0);
+    const total = counts.reduce((sum, count) => sum + count, 0);
+    const best = Math.max(0, ...counts);
+    const leaders = options.filter((option, index) => total > 0 && counts[index] === best);
+    const positions = leaders.slice(0, 3).map((option) => 'row ' + (Number(option.row) + 1) + ', column ' + (Number(option.col) + 1));
+    text(els.pollIntro, total
+      ? 'Poll closed · ' + total + ' vote' + (total === 1 ? '' : 's') + ' · most popular: ' + positions.join(' / ')
       : 'Poll closed · no votes were cast');
   } else if (pollSecondsLeft(poll) > 0) {
-    text(els.pollIntro, 'Ask the Audience · ' + pollSecondsLeft(poll) + 's left to vote · results are revealed when voting ends');
+    text(els.pollIntro, 'Ask the Audience · ' + pollSecondsLeft(poll) +
+      's left · tap any cyan-outlined face-down tile on the board to vote once');
   } else {
     text(els.pollIntro, 'Voting has ended · counting the votes…');
   }
 }
-// Like the TV lifeline, spectators vote without seeing the running tally; percentages appear once voting closes.
+// Spectators choose on the shared 7 × 7 board; there is no short, fixed list of shape choices.
 function renderPoll(poll) {
+  const previousPoll = currentPoll;
   if (!poll || (currentPoll && currentPoll.id !== poll.id)) currentVote = null;
   currentPoll = poll || null;
   els.pollOptions.replaceChildren();
+  renderBoard(currentState, currentState, false);
+  updateBoardPollHint();
   if (!poll) {
-    text(els.pollIntro, activeMode === 'tag'
-      ? 'No poll is open. Tag players can open a poll during their turn; spectators can then vote.'
-      : activeMode === 'demo' ? 'AI vs AI demos do not open audience polls. Watch a real Tag room to vote when a player asks the audience.'
-      : 'Audience polls are available in Tag games only.');
+    text(els.pollIntro, activeMode === 'demo'
+      ? 'AI vs AI demos pause periodically for audience polls. When one opens, tap any highlighted face-down tile on the board.'
+      : (activeMode === 'tag' || activeMode === 'pvp')
+        ? 'No poll is open. During the active turn, a player can ask the audience to choose a hidden tile from the shared board.'
+        : 'Audience polls are available in online Player 1 vs Player 2 and Tag games.');
     return;
   }
   updatePollIntro();
-  const options = poll.options || [];
-  const counts = options.map((option) => Number(poll.counts && poll.counts[option]) || 0);
-  const percents = percentSplit(counts);
-  const best = Math.max(0, ...counts);
-  const open = pollIsOpen(poll) && roomSocket && roomSocket.readyState === WebSocket.OPEN;
-  options.forEach((option, index) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'poll-option' + (currentVote === option ? ' chosen' : '') +
-      (poll.closed && best > 0 && counts[index] === best ? ' winner' : '');
-    button.disabled = !open;
-    const img = document.createElement('img');
-    img.src = shapeUrl(option);
-    img.alt = '';
-    const copy = document.createElement('span');
-    copy.className = 'option-copy';
-    text(copy, String.fromCharCode(65 + index) + ' · ' + option.replace(/-/g, ' '));
-    const count = document.createElement('span');
-    count.className = 'vote-count';
-    text(count, poll.closed ? percents[index] + '%' : (currentVote === option ? 'Your vote' : ''));
-    button.append(img, copy, count);
-    button.addEventListener('click', () => {
-      if (!pollIsOpen(currentPoll)) return;
-      if (sendSocketMessage({ type: 'poll_vote', shape: option })) {
-        currentVote = option;
-        renderPoll(currentPoll);
-      }
-    });
-    els.pollOptions.append(button);
-  });
+  if (!poll.closed && (!previousPoll || previousPoll.id !== poll.id)) {
+    if (openAudiencePanel !== 'polls') toggleAudiencePanel('polls');
+    setWatchStatus('Audience poll open. Tap any cyan-outlined face-down tile on the live board to vote.', false);
+  }
+  if (!poll.closed) {
+    text(els.pollOptions, currentVote
+      ? 'Your vote is locked. Wait for the poll to close to see the results.'
+      : 'Tap a cyan-outlined face-down tile directly on the board. Every eligible hidden tile can be chosen; no fixed three- or four-option list.');
+  } else {
+    text(els.pollOptions, 'Voting is closed. The winning tile or tied tiles are highlighted on the board.');
+  }
 }
 function processMessage(message) {
   if (!message || typeof message.type !== 'string') return;
@@ -530,7 +675,9 @@ function processMessage(message) {
     }
     (message.chatHistory || []).forEach(appendChat);
     renderPoll(message.poll);
-    setWatchStatus('Connected as spectator. You can watch, chat and vote in an open poll.', false);
+    if (!message.poll || message.poll.closed) {
+      setWatchStatus('Connected as spectator. You can watch, chat and vote when a poll is open.', false);
+    }
     els.chatStatus.textContent = 'Connected to room chat.';
     return;
   }
