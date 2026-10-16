@@ -33,15 +33,18 @@ function audiencePollSnapshot(poll) {
   for (const vote of Object.values(poll.votes || {})) {
     if (Object.prototype.hasOwnProperty.call(counts, vote)) counts[vote] += 1;
   }
+  const closed = Boolean(poll.closed);
   return {
     id: poll.id,
     startedByPlayer: poll.startedByPlayer,
     initialShape: poll.initialShape,
     options: poll.options.map(option => ({ tileId: option.tileId, row: option.row, col: option.col })),
-    counts,
-    totalVotes: Object.values(counts).reduce((sum, value) => sum + value, 0),
+    ...(closed ? {
+      counts,
+      totalVotes: Object.values(counts).reduce((sum, value) => sum + value, 0)
+    } : {}),
     endsAt: poll.endsAt,
-    closed: Boolean(poll.closed)
+    closed
   };
 }
 
