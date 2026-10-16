@@ -84,6 +84,8 @@
     #board { position:absolute; left:calc(var(--u) * 36); top:calc(var(--u) * 316); width:calc(var(--u) * 648); height:calc(var(--u) * 648); overflow:hidden; z-index:9; }
     /* Transparent board tiles sit above the actual game iframe only to receive audience votes. */
     .stage.has-game-frame #board { border:0; background:transparent; box-shadow:none; }
+    .stage.has-game-frame:not(.game-ready) #board { visibility:hidden; pointer-events:none; }
+    .stage.has-game-frame .nav-icon { z-index:32; }
     .stage.has-game-frame #board .tile > img { opacity:0; }
     .stage.has-game-frame #board .tile.is-vote-option { outline:calc(var(--u) * 3) dashed var(--cyan); outline-offset:calc(var(--u) * -4); filter:drop-shadow(0 0 calc(var(--u) * 7) #66e0ffb8); }
     .stage.has-game-frame #board .tile.is-vote-option img { outline:0; }

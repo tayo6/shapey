@@ -35,6 +35,7 @@ const MIN_MATCH = 3;          // smallest scoring match; points are calculated i
 // being revealed never pauses, resets or extends the turn, and the turn ending never cuts a reveal short.
 // Test overrides: ?turn=10000 (turn length) and ?invwindow=20000 (inventory window), in milliseconds.
 const TURN_MS = Number(urlParams.get('turn')) || 45000;
+const AI_TURN_MS = 5000; // every AI pick-turn has a fixed 5-second limit
 // Anti-stalling: a player may open the inventory at most 2 times in any rolling 5 minutes.
 // The turn clock keeps running while the inventory is open.
 const INVENTORY_OPEN_LIMIT = 2;
@@ -448,6 +449,7 @@ class LoadScene extends Phaser.Scene {
             if (message && typeof message.type === 'string') this.deliver(message);
           };
           window.addEventListener('message', this.parentMessageHandler);
+          try { window.parent.postMessage({ type: 'shapey-audience-ready' }, window.location.origin); } catch {}
         }
         send(data) {
           try { window.parent.postMessage({ type: 'shapey-audience-socket-send', data }, window.location.origin); } catch {}
@@ -950,11 +952,9 @@ class GameScene extends Phaser.Scene {
     this.difficulty = AI_LEVELS[level] ? level : 'easy';
     this.ai = AI_LEVELS[this.difficulty];
     const tagTurnMs = urlParams.has('turn') ? TURN_MS : 30000;
-    this.turnDurationMs = this.mode === 'tag'
-      ? tagTurnMs
-      : RULES.turnDurationForMode(
-        this.mode, this.difficulty, TURN_MS, urlParams.has('turn') ? TURN_MS : 30000
-      );
+    // Human turns: 45 seconds in AI-vs-Player and Player 1 vs Player 2; Tag: 30 seconds.
+    // Difficulty changes AI decisions, not the human's turn length.
+    this.turnDurationMs = this.mode === 'tag' ? tagTurnMs : TURN_MS;
   }
 
   create() {
@@ -1010,6 +1010,9 @@ class GameScene extends Phaser.Scene {
     this.createBottomButtons();
     this.createFx();
     this.createBoard();
+    if (this.spectator && urlParams.get('embed') === '1') {
+      try { window.parent.postMessage({ type: 'shapey-game-ready' }, window.location.origin); } catch {}
+    }
     if (this.online) {
       this.attachOnlineSocket();
       if (!this.spectator) this.showToast('Online match connected. Waiting for the server state.', 3200);
@@ -1194,9 +1197,12 @@ class GameScene extends Phaser.Scene {
 
   // Both clocks are redrawn from their own deadlines, so they can never hold each other up.
   refreshClocks() {
+    const openingStudy = this.online
+      ? Boolean(this.onlineState && this.onlineState.status === 'study')
+      : Number.isFinite(this.openingReviewEndsAt) && Date.now() < this.openingReviewEndsAt;
     const turnLeft = this.modeCfg.turnClock
       ? formatClock(Math.min(this.currentTurnDurationMs || this.turnDurationMs, this.turnClock.remaining())) : '';
-    if (this.modeCfg.turnClock) this.setClockText(this.timerText, turnLeft);
+    if (this.modeCfg.turnClock) this.setClockText(this.timerText, openingStudy ? '--:--' : turnLeft);
 
     const revealLeft = this.online && this.onlineState
       ? Math.max(0, ...((this.onlineState.reveals || []).map((batch) => batch.endsAt - Date.now())),
@@ -1211,7 +1217,7 @@ class GameScene extends Phaser.Scene {
 
     // The shop covers the header, so it shows the turn clock too: opening it never stops the clock.
     if (this.inventoryTimerText && this.inventoryTimerText.active) {
-      this.setClockText(this.inventoryTimerText, 'TURN\n' + turnLeft);
+      this.setClockText(this.inventoryTimerText, 'TURN\n' + (openingStudy ? '--:--' : turnLeft));
     }
   }
 
@@ -1227,9 +1233,9 @@ class GameScene extends Phaser.Scene {
     this.turnEnding = false;
     this.timeoutHandling = false;
     this.turnId++;
-    // Play Alone has no countdown. Professional AI matches use 30 seconds per turn; other versus turns use 45.
-    // Double Play repeats this mode's normal turn duration; only Extra Time adds time.
-    const duration = this.turnDurationMs;
+    // AI turns always have 5 seconds; human turns use the full duration for their mode.
+    // Double Play repeats the active player's normal duration; only Extra Time adds time.
+    const duration = this.mode === 'ai' && player === 1 ? AI_TURN_MS : this.turnDurationMs;
     this.currentTurnDurationMs = duration;
     if (this.modeCfg.turnClock) {
       this.turnClock.start(duration + (this.turnNumber === 0 && !bonus ? REVIEW_MS : 0));
@@ -1918,6 +1924,7 @@ class GameScene extends Phaser.Scene {
       }
     }
     all.forEach((tile) => this.aiSee(tile)); // the AI studies the board too (and forgets about half of it)
+    this.openingReviewEndsAt = Date.now() + REVIEW_MS;
     this.startReview(all, REVIEW_MS, false); // study phase: everything face-up for 15s, then flip to mystery (no shuffle)
   }
 

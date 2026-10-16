@@ -253,7 +253,7 @@ function resetRoomView() {
   tileNodes.clear();
   els.board.replaceChildren();
   if (els.gameFrame) { els.gameFrame.hidden = true; els.gameFrame.src = 'about:blank'; }
-  els.watch.classList.remove('has-game-frame');
+  els.watch.classList.remove('has-game-frame', 'game-ready');
   els.pollOptions.replaceChildren();
   els.chatMessages.replaceChildren();
   chatIds = new Set();
@@ -600,9 +600,10 @@ function updateHud() {
   if (!state) { text(els.turnClock, '--:--'); text(els.revealText, ''); return; }
   const now = Date.now();
   let clock;
-  if (state.status === 'playing' && Number.isFinite(state.turnEndsAt)) clock = formatClock(state.turnEndsAt - now);
+  if (state.status === 'study') clock = '--:--';
+  else if (state.status === 'playing' && Number.isFinite(state.turnEndsAt)) clock = formatClock(state.turnEndsAt - now);
   else if (state.status === 'finished') clock = formatClock(0);
-  else clock = formatClock(Number(state.turnDurationMs) || 0);
+  else clock = '--:--';
   text(els.turnClock, clock);
   let left = state.status === 'study' && Number.isFinite(state.reviewEndsAt) ? state.reviewEndsAt - now : 0;
   (state.reveals || []).forEach((batch) => { left = Math.max(left, batch.endsAt - now); });
@@ -856,6 +857,7 @@ async function startWatching(roomCode, hintedMode, pushUrl) {
     const socket = new WebSocket(wsBase + '/ws/' + code + '?mode=' + encodeURIComponent(activeMode) + '&role=spectator');
     els.gameFrame.hidden = false;
     els.watch.classList.add('has-game-frame');
+    els.watch.classList.remove('game-ready');
     const frameUrl = new URL('staging/index.html', document.baseURI);
     frameUrl.searchParams.set('watch', code);
     frameUrl.searchParams.set('mode', activeMode);
@@ -953,6 +955,22 @@ els.navBrowse.addEventListener('click', () => showDirectory(true));
 els.gameFrame.addEventListener('load', () => {
   if (latestGameFrameMessage) forwardGameFrameMessage(latestGameFrameMessage);
   syncGameFrameMute();
+});
+window.addEventListener('message', (event) => {
+  if (event.origin !== window.location.origin || event.source !== els.gameFrame.contentWindow) return;
+  const message = event.data;
+  if (!message || typeof message.type !== 'string') return;
+  if (message.type === 'shapey-audience-ready') {
+    // The iframe may finish loading after the room's first snapshot; resend it now that the
+    // embedded receiver exists, so a first room-open never remains on the loading screen.
+    if (latestGameFrameMessage) forwardGameFrameMessage(latestGameFrameMessage);
+    syncGameFrameMute();
+  } else if (message.type === 'shapey-game-ready') {
+    els.watch.classList.add('game-ready');
+  } else if (message.type === 'shapey-audience-socket-send' &&
+             message.data && typeof message.data.type === 'string') {
+    sendSocketMessage(message.data);
+  }
 });
 els.modeChips.addEventListener('click', (event) => {
   const chip = event.target.closest('.chip');
