@@ -142,43 +142,111 @@
     .roster-row .state { color:#b79a73; }
     .roster-row .state.on { color:var(--star); }
     @media (prefers-reduced-motion:reduce) { .tile { transition:none; } }
+
+    /* Clubhouse-inspired public lobby from the approved staging design. */
+    .stage-banner { text-align:center; font:11px/1.4 system-ui,sans-serif; letter-spacing:.08em; color:#fff; background:#8b2424; padding:4px 8px; }
+    .topbar { display:flex; gap:14px; justify-content:space-between; align-items:center; padding:15px clamp(14px,4vw,38px); border-bottom:2px solid #7b512e; background:#1b100af0; }
+    .brand { display:flex; align-items:center; gap:10px; color:var(--cream); text-decoration:none; font-size:1.55rem; min-width:0; }
+    .brand img { width:40px;height:40px;object-fit:contain; }
+    .top-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .top-actions a { color:var(--cream); text-decoration:none; border:1px solid #8c6a45; border-radius:10px; padding:9px 12px; }
+    .lobby { width:min(1280px,100%); margin:0 auto; padding:clamp(14px,3vw,30px); }
+    .hero { display:flex; justify-content:space-between; gap:18px; align-items:end; margin-bottom:20px; }
+    .hero h1 { margin-bottom:6px; font-size:clamp(1.8rem,4vw,3rem); }
+    .subcopy { color:var(--muted); font-family:system-ui,sans-serif; line-height:1.5; max-width:710px; margin:0; }
+    .panel { background:linear-gradient(155deg,#4b2e1b,#2f1d12); border:2px solid #8b623a; border-radius:16px; padding:16px; box-shadow:0 8px 25px #0005; }
+    .filters { display:flex; align-items:end; flex-wrap:wrap; gap:18px; margin-bottom:18px; }
+    .filters-group { display:grid; gap:8px; min-width:0; }
+    .filters-label { font:13px system-ui,sans-serif; color:var(--muted); }
+    .chips { display:flex; gap:8px; flex-wrap:wrap; }
+    .chip { padding:8px 13px; border-radius:999px; box-shadow:none; font-size:.95rem; background:#21140c; min-height:42px; }
+    .chip.is-active { background:linear-gradient(#754a27,#4a2b16); border-color:var(--cyan); color:#fff; }
+    .field { display:flex; flex-direction:column; gap:6px; color:var(--muted); font:13px system-ui,sans-serif; }
+    .field select { background:#21140c; color:var(--cream); border:1px solid #99704a; border-radius:9px; padding:10px; min-height:42px; min-width:200px; }
+    .hero-actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .hero-actions button { min-height:46px; }
+    .room-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:14px; }
+    .room-card { display:flex; flex-direction:column; gap:11px; min-height:210px; text-transform:none; }
+    .room-card h3 { font-size:1.3rem; margin:0; overflow-wrap:anywhere; white-space:normal; }
+    .room-card .top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .room-card .wood { width:auto; min-width:100px; }
+    .room-meta { color:var(--muted); font:14px/1.5 system-ui,sans-serif; }
+    .card-bottom { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:auto; }
+    .tag-pill.demo { color:#d7f7ff; border-color:#66e0ff; background:#12303b; }
+    .statusline { min-height:24px; color:var(--muted); font:14px/1.5 system-ui,sans-serif; margin:0 0 14px; }
+    .statusline.error { color:#ffb4a8; }
+    .game-frame { position:absolute; inset:0; z-index:8; display:block; width:100%; height:100%; border:0; background:#2a1a0e; }
+    .game-frame[hidden] { display:none; }
+    .settings-toggle { display:flex; align-items:center; gap:10px; padding:10px 0; color:var(--cream); font-size:max(14px,calc(var(--u) * 24)); }
+    .settings-toggle input { width:22px; height:22px; accent-color:#8b623a; }
+    @media (max-width:700px) {
+      .topbar { align-items:flex-start; }
+      .brand { font-size:1.2rem; }
+      .brand img { width:32px;height:32px; }
+      .top-actions { justify-content:flex-end; }
+      .hero { align-items:flex-start; flex-direction:column; }
+      .hero-actions { width:100%; }
+      .hero-actions button { flex:1 1 auto; }
+      .lobby { padding:14px; }
+      .panel { padding:12px; }
+    }
+
   </style>
 </head>
 <body>
 
-<!-- ======================= LIVE GAMES (room list) ======================= -->
-<main id="directoryView" class="dir">
-  <header class="dir-head">
-    <img class="shadow" src="assets/backgrounds/header%20shadow.webp" alt="">
-    <img class="plank" src="assets/backgrounds/header%20%20plank%201.webp" alt="">
-    <img class="logo" src="assets/ui/shapey%20icon.webp" alt="Shapey">
-    <h1 class="gt" style="--fs:54;--st:11">LIVE GAMES</h1>
-  </header>
-
-  <div id="modeChips" class="filter-row" role="group" aria-label="Filter by mode">
-    <button type="button" class="wood is-active" data-mode="all" aria-pressed="true">ALL</button>
-    <button type="button" class="wood" data-mode="tag" aria-pressed="false">TAG: 2 VS 2</button>
-    <button type="button" class="wood" data-mode="pvp" aria-pressed="false">PLAYER 1 VS PLAYER 2</button>
-    <button type="button" class="wood" data-mode="ai" aria-pressed="false" hidden>AI VS AI</button>
-  </div>
-  <div id="statusChips" class="filter-row" role="group" aria-label="Filter by status">
-    <button type="button" class="wood is-active" data-status="live" aria-pressed="true">LIVE</button>
-    <button type="button" class="wood" data-status="waiting" aria-pressed="false">WAITING</button>
-    <button type="button" class="wood" data-status="all" aria-pressed="false">ALL ROOMS</button>
-  </div>
-  <p id="directoryStatus" class="dir-status" role="status" aria-live="polite">Loading live games…</p>
-  <div id="roomCards" class="room-list" aria-live="polite"></div>
-
-  <nav class="dir-nav">
-    <img src="assets/backgrounds/bottom%20navigation.webp" alt="">
-    <a class="wood home" href="staging/">GAME HOME</a>
-    <button id="refreshRooms" type="button" class="wood refresh">REFRESH</button>
+<!-- ======================= LIVE GAMES (Clubhouse-inspired lobby) ======================= -->
+<div class="stage-banner">SHAPEY STAGING — audience view · separate from the live game</div>
+<header class="topbar">
+  <a class="brand" href="staging/">
+    <img src="assets/ui/shapey%20icon.webp" alt="Shapey">
+    <span>Shapey Audience</span>
+  </a>
+  <nav class="top-actions" aria-label="Audience navigation">
+    <button id="navBrowse" type="button">Browse live games</button>
+    <a href="staging/">Game home</a>
   </nav>
+</header>
+<main id="directoryView" class="lobby">
+  <section class="hero">
+    <div>
+      <h1>Live Games</h1>
+      <p class="subcopy">Browse public Shapey rooms and watch matches as they happen. You join as an audience member, so you cannot take a player seat or make game moves.</p>
+    </div>
+    <div class="hero-actions">
+      <button id="startDemo" type="button">▶ Start AI vs AI demo</button>
+      <button id="refreshRooms" type="button">Refresh list</button>
+    </div>
+  </section>
+
+  <section class="panel" aria-label="Filter live games">
+    <div class="filters">
+      <div class="filters-group">
+        <span class="filters-label">Mode</span>
+        <div id="modeChips" class="chips" role="group" aria-label="Filter by mode">
+          <button type="button" class="chip is-active" data-mode="all" aria-pressed="true">All (0)</button>
+          <button type="button" class="chip" data-mode="tag" aria-pressed="false">Tag · 2 vs 2 (0)</button>
+          <button type="button" class="chip" data-mode="pvp" aria-pressed="false">1 vs 1 (0)</button>
+          <button type="button" class="chip" data-mode="demo" aria-pressed="false">AI vs AI (0)</button>
+        </div>
+      </div>
+      <label class="field">Status
+        <select id="statusFilter">
+          <option value="live" selected>Live games</option>
+          <option value="waiting">Waiting rooms</option>
+          <option value="all">All available rooms</option>
+        </select>
+      </label>
+    </div>
+    <p id="directoryStatus" class="statusline" role="status" aria-live="polite">Loading rooms…</p>
+    <div id="roomCards" class="room-grid" aria-live="polite"></div>
+  </section>
 </main>
 
 <!-- ============================ WATCH A ROOM ============================ -->
 <main id="watchView" class="stage" hidden>
   <div class="canvas">
+    <iframe id="gameFrame" class="game-frame" title="Live Shapey gameplay" hidden allow="autoplay"></iframe>
     <img class="fill" style="top:0;height:100%" src="assets/backgrounds/BG.webp" alt="" draggable="false">
     <img class="fill" style="top:0" src="assets/backgrounds/header%20shadow.webp" alt="" draggable="false">
     <img class="fill" style="top:0" src="assets/backgrounds/header%20%20plank%201.webp" alt="" draggable="false">
@@ -243,6 +311,7 @@
         <button id="closeSettings" type="button" class="wood x" aria-label="Close menu">X</button>
       </header>
       <p id="roomSummary" class="sub"></p>
+      <label class="settings-toggle"><input id="muteAudienceSound" type="checkbox"> Mute audience sounds</label>
       <div id="playersList" class="roster"></div>
       <button id="resumeWatch" type="button" class="wood" style="--fs:34">RESUME</button>
       <button id="shareRoom" type="button" class="wood" style="--fs:30">COPY WATCH LINK</button>
@@ -251,8 +320,6 @@
   </div>
 </main>
 
-<script src="src/rules.js"></script>
-<script src="staging/demo-room.js"></script> <!-- developer demo room; delete this line and the file when development is done -->
 <script src="staging/audience.js"></script>
 </body>
 </html>
