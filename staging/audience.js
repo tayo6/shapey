@@ -1,6 +1,6 @@
 'use strict';
 
-const MULTIPLAYER_API = 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
+const MULTIPLAYER_API = location.hostname === 'shapey-audience-preview.hellohuman100.workers.dev' ? location.origin : 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
 const SHAPE_FILES = {
   mystery: 'Mystery.webp', dummy: 'dummy.webp', hazard: 'hazard.webp', cancel: 'cancel.webp',
   capsule: 'capsule.webp', circle: 'circle.webp', cross: 'cross.webp', divide: 'divide.webp',
@@ -8,13 +8,13 @@ const SHAPE_FILES = {
   sphere: 'sphere.webp', square: 'square.webp', star: 'star .webp', x: 'x.webp'
 };
 // The game's own mode names (MODES in main.js).
-const MODE_LABELS = { tag: 'TAG: 2 VS 2', pvp: 'PLAYER 1 VS PLAYER 2', ai: 'AI VS AI' };
+const MODE_LABELS = { tag: 'TAG: 2 VS 2', pvp: 'PLAYER 1 VS PLAYER 2', demo: 'AI VS AI' };
 const AVATAR_COLORS = ['#754322', '#8a4f2a', '#5d3a1e', '#9a6a35', '#6b4a2a', '#7c3f1d'];
 
 const $ = (id) => document.getElementById(id);
 const els = {
   directory: $('directoryView'), watch: $('watchView'), rooms: $('roomCards'), directoryStatus: $('directoryStatus'),
-  modeChips: $('modeChips'), statusChips: $('statusChips'), refreshRooms: $('refreshRooms'),
+  modeChips: $('modeChips'), statusFilter: $('statusFilter'), refreshRooms: $('refreshRooms'), startDemo: $('startDemo'), navBrowse: $('navBrowse'), gameFrame: $('gameFrame'), muteAudienceSound: $('muteAudienceSound'),
   board: $('board'), veil: $('veil'), veilText: $('veilText'), retryConnection: $('retryConnection'), toast: $('toast'),
   side0: $('side0'), side1: $('side1'), p1Score: $('p1Score'), p2Score: $('p2Score'), p1Name: $('p1Name'), p2Name: $('p2Name'),
   turnClock: $('turnClock'), goalText: $('goalText'), revealText: $('revealText'),
@@ -52,6 +52,11 @@ let refreshTimer = null;
 let turnTimer = null;
 let modeFilterValue = 'all';
 let statusFilterValue = 'live';
+let demoControlToken = '';
+let demoControlRoomCode = '';
+let demoControlReady = false;
+let audienceAudio = null;
+let soundMuted = (() => { try { return localStorage.getItem('shapey-audience-muted') === 'true'; } catch (_) { return false; } })();
 let watchToken = 0;      // bumps whenever the viewer opens or leaves a room, so a slow connect can tell it is stale
 let roomsCache = [];
 let roomsLoadedAt = null;
@@ -66,13 +71,27 @@ function shapeUrl(shape) {
 }
 function text(el, value) { el.textContent = value == null ? '' : String(value); }
 function modeName(mode) { return MODE_LABELS[mode] || (mode ? String(mode).toUpperCase() : MODE_LABELS.pvp); }
-function playerWord(mode) { return mode === 'ai' ? 'AI' : 'Player'; }
-function isDemo(code) { return Boolean(window.ShapeyDemo && window.ShapeyDemo.isDemoCode(code)); }
+function playerWord(mode) { return mode === 'demo' || mode === 'ai' ? 'AI' : 'Player'; }
+function playAudienceTone(frequency = 620) {
+  if (soundMuted) return;
+  try {
+    const AudioClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioClass) return;
+    if (!audienceAudio) audienceAudio = new AudioClass();
+    if (audienceAudio.state === 'suspended') audienceAudio.resume();
+    const oscillator = audienceAudio.createOscillator(); const gain = audienceAudio.createGain();
+    oscillator.type = 'sine'; oscillator.frequency.value = frequency;
+    gain.gain.setValueAtTime(0.035, audienceAudio.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audienceAudio.currentTime + 0.12);
+    oscillator.connect(gain); gain.connect(audienceAudio.destination); oscillator.start(); oscillator.stop(audienceAudio.currentTime + 0.12);
+  } catch (_) {}
+}
+function syncGameFrameMute() { try { els.gameFrame.contentWindow?.postMessage({ type: 'shapey-audience-mute', muted: soundMuted }, '*'); } catch (_) {} }
 function statusName(status) {
   return ({ live: 'Live', starting: 'Starting', ready: 'Ready', waiting: 'Waiting' })[status] || status || 'Unknown';
 }
 function sideOf(mode, playerNumber) { return mode === 'tag' ? (playerNumber <= 2 ? 0 : 1) : playerNumber - 1; }
-function sideNames(mode) { return mode === 'tag' ? ['TEAM 1', 'TEAM 2'] : mode === 'ai' ? ['AI 1', 'AI 2'] : ['Player 1', 'Player 2']; }
+function sideNames(mode) { return mode === 'tag' ? ['TEAM 1', 'TEAM 2'] : (mode === 'demo' || mode === 'ai') ? ['AI 1', 'AI 2'] : ['Player 1', 'Player 2']; }
 // Same wording as the game's turnLabel(): "Team 2: Player 3" in Tag, "Player 1" otherwise.
 function turnLabel(mode, playerNumber) {
   return mode === 'tag' ? 'Team ' + (sideOf(mode, playerNumber) + 1) + ': Player ' + playerNumber : playerWord(mode) + ' ' + playerNumber;
@@ -231,7 +250,7 @@ function makeRoomCard(room) {
   title.style.setProperty('--st', 6);
   title.style.whiteSpace = 'normal';
   const pills = el('div', 'pills');
-  if (room.demo) pills.append(el('span', 'tag-pill', 'Demo'));
+  if (room.mode === 'demo') pills.append(el('span', 'tag-pill demo', 'Demo'));
   pills.append(makePill(room.status));
   top.append(title, pills);
   card.append(top);
@@ -253,7 +272,7 @@ function makeRoomCard(room) {
     const minutes = Math.max(0, Math.floor((Date.now() - room.createdAt) / 60000));
     details.push(minutes < 1 ? 'just started' : 'open ' + minutes + ' min');
   }
-  if (room.demo) details.push('two AIs playing, built for testing');
+  if (room.mode === 'demo') details.push('Two AIs playing · audience view');
   card.append(el('div', 'sub', details.join(' · ')));
 
   const watch = el('button', 'wood', 'WATCH');
@@ -269,25 +288,25 @@ function updateFilterChips() {
   const matchesMode = (room) => modeFilterValue === 'all' || room.mode === modeFilterValue;
   const byStatus = roomsCache.filter(matchesStatus);
   const byMode = roomsCache.filter(matchesMode);
-  const modeCount = { all: byStatus.length, tag: byStatus.filter((r) => r.mode === 'tag').length, pvp: byStatus.filter((r) => r.mode === 'pvp').length, ai: byStatus.filter((r) => r.mode === 'ai').length };
-  const hasAi = roomsCache.some((room) => room.mode === 'ai');
-  if (!hasAi && modeFilterValue === 'ai') modeFilterValue = 'all';
-  const statusCount = { live: byMode.filter((r) => r.status === 'live').length, waiting: byMode.filter(isWaiting).length, all: byMode.length };
-  const modeNames = { all: 'ALL', tag: MODE_LABELS.tag, pvp: MODE_LABELS.pvp, ai: MODE_LABELS.ai };
-  const statusNames = { live: 'LIVE', waiting: 'WAITING', all: 'ALL ROOMS' };
-  els.modeChips.querySelectorAll('.wood').forEach((chip) => {
+  const modeCount = {
+    all: byStatus.length,
+    tag: byStatus.filter((r) => r.mode === 'tag').length,
+    pvp: byStatus.filter((r) => r.mode === 'pvp').length,
+    demo: byStatus.filter((r) => r.mode === 'demo').length
+  };
+  const modeNames = { all: 'All', tag: 'Tag · 2 vs 2', pvp: '1 vs 1', demo: 'AI vs AI' };
+  els.modeChips.querySelectorAll('.chip').forEach((chip) => {
     const key = chip.dataset.mode;
-    chip.hidden = key === 'ai' && !hasAi;
     chip.classList.toggle('is-active', key === modeFilterValue);
     chip.setAttribute('aria-pressed', String(key === modeFilterValue));
-    text(chip, modeNames[key] + ' (' + modeCount[key] + ')');
+    text(chip, modeNames[key] + ' (' + (modeCount[key] ?? 0) + ')');
   });
-  els.statusChips.querySelectorAll('.wood').forEach((chip) => {
-    const key = chip.dataset.status;
-    chip.classList.toggle('is-active', key === statusFilterValue);
-    chip.setAttribute('aria-pressed', String(key === statusFilterValue));
-    text(chip, statusNames[key] + ' (' + statusCount[key] + ')');
+  const statusCount = { live: byMode.filter((r) => r.status === 'live').length, waiting: byMode.filter(isWaiting).length, all: byMode.length };
+  const statusNames = { live: 'Live games', waiting: 'Waiting rooms', all: 'All available rooms' };
+  [...els.statusFilter.options].forEach((option) => {
+    option.textContent = statusNames[option.value] + ' (' + (statusCount[option.value] ?? 0) + ')';
   });
+  els.statusFilter.value = statusFilterValue;
 }
 function renderRooms() {
   if (!roomsLoadedAt) return;
@@ -308,7 +327,6 @@ function renderRooms() {
   const noun = filtered.length === 1 ? 'room' : 'rooms';
   setDirectoryStatus(filtered.length + ' ' + noun + ' · updated ' + roomsLoadedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), false);
 }
-function withDemo(rooms) { return window.ShapeyDemo ? [window.ShapeyDemo.summary(), ...rooms] : rooms; }
 async function loadRooms() {
   const seq = ++roomsLoadSeq;
   setDirectoryStatus('Refreshing the room list…', false);
@@ -319,7 +337,7 @@ async function loadRooms() {
     try { data = await response.json(); } catch (_) {}
     if (seq !== roomsLoadSeq) return; // a newer refresh has started; ignore this older answer
     if (!response.ok) throw new Error(data.error || ('Room directory returned HTTP ' + response.status));
-    roomsCache = withDemo(Array.isArray(data.rooms) ? data.rooms : []);
+    roomsCache = Array.isArray(data.rooms) ? data.rooms : [];
     roomsLoadedAt = new Date();
     renderRooms();
   } catch (error) {
