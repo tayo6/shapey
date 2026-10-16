@@ -1297,7 +1297,7 @@ class GameScene extends Phaser.Scene {
     };
     const actions = this.mode === 'alone'
       ? ['settings', 'submit']
-      : ['pvp', 'tag'].includes(this.mode)
+      : this.mode === 'tag'
         ? ['settings', 'submit', 'polls', 'inventory']
         : ['settings', 'submit', 'inventory'];
     // Keep each mode's icons centred and remove controls that mode does not support.
@@ -1331,7 +1331,7 @@ class GameScene extends Phaser.Scene {
     if (polls) {
       polls.setInteractive({ useHandCursor: true });
       polls.on('pointerdown', () => {
-        if ((this.mode === 'pvp' || this.modeCfg.teams) && !this.panelOpen && !this.inventoryOpen) this.showAudiencePoll();
+        if (this.modeCfg.teams && !this.panelOpen && !this.inventoryOpen) this.showAudiencePoll();
       });
     }
 
@@ -1675,8 +1675,8 @@ class GameScene extends Phaser.Scene {
     this.closeAudiencePoll();
     if (this.gameOver) return;
     if (this.online) {
-      if (!['pvp', 'tag'].includes(this.mode) || !this.onlineSocket || this.onlineSocket.readyState !== WebSocket.OPEN) {
-        this.showToast('Ask the Audience is available in connected online matches.', 2500);
+      if (!this.modeCfg.teams || !this.onlineSocket || this.onlineSocket.readyState !== WebSocket.OPEN) {
+        this.showToast('Live audience polling is available in connected Tag rooms.', 2500);
         return;
       }
       this.onlineSocket.send(JSON.stringify({ type: 'audience_poll_start' }));
