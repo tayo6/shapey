@@ -51,7 +51,14 @@ jobs:
           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/main.js" -o /tmp/staging-main.js
           grep -q 'AUDIENCE_WATCH_CODE' /tmp/staging-main.js
           grep -q 'ACCEPT TOP CHOICE' /tmp/staging-main.js
-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/health" -o /tmp/staging-health.json
+          direct_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 1 -o /tmp/direct-health.json -w '%{http_code}' 'https://shapey-multiplayer-staging.hellohuman100.workers.dev/health')"
+          echo "Direct staging Worker health status: $direct_status"
+          cat /tmp/direct-health.json
+          proxy_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 1 -o /tmp/staging-health.json -w '%{http_code}' "$base/health")"
+          echo "Preview-proxied staging Worker health status: $proxy_status"
+          cat /tmp/staging-health.json
+          test "$direct_status" = 200
+          test "$proxy_status" = 200
           grep -q '"stage":"authoritative-gameplay-v1"' /tmp/staging-health.json
           grep -q '"audiencePollSeconds":30' /tmp/staging-health.json
           grep -q '"pollResultsHiddenUntilClose":true' /tmp/staging-health.json
