@@ -962,7 +962,10 @@ els.modeChips.addEventListener('click', (event) => {
 });
 els.statusFilter.addEventListener('change', () => { statusFilterValue = els.statusFilter.value; renderRooms(); });
 els.btnChat.addEventListener('click', () => openChatPage());
-els.backToGame.addEventListener('click', () => closeChatPage(true));
+els.backToGame.addEventListener('click', () => {
+  if (window.location.hash === '#chat') window.history.back();
+  else closeChatPage(false);
+});
 els.btnPolls.addEventListener('click', () => openPanel('polls'));
 els.btnSettings.addEventListener('click', () => openPanel('settings'));
 els.muteAudienceSound.checked = soundMuted;
@@ -980,8 +983,10 @@ els.endDemo.addEventListener('click', () => {
 els.backdrop.addEventListener('click', closePanels);
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
-  if (chatPageOpen) closeChatPage(true);
-  else if (activePanel) closePanels();
+  if (chatPageOpen) {
+    if (window.location.hash === '#chat') window.history.back();
+    else closeChatPage(false);
+  } else if (activePanel) closePanels();
 });
 $('backToDirectory').addEventListener('click', () => showDirectory(true));
 els.shareRoom.addEventListener('click', shareWatchLink);
@@ -1022,5 +1027,7 @@ turnTimer = window.setInterval(() => {
   updateBadges();
 }, 250);
 const initialParams = new URLSearchParams(window.location.search);
-if (initialParams.get('room')) startWatching(initialParams.get('room'), initialParams.get('mode') || '', false);
-else loadRooms();
+if (initialParams.get('room')) {
+  startWatching(initialParams.get('room'), initialParams.get('mode') || '', false);
+  if (window.location.hash === '#chat') openChatPage(false);
+} else loadRooms();
