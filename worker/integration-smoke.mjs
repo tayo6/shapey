@@ -216,16 +216,37 @@ async function run() {
     assert.ok(watched.state.tiles.every((tile) => !tile.faceUp && tile.shape === null),
       "Spectator snapshots must keep hidden shapes private.");
 
-    // Player 1 starts a real poll; a spectator vote is validated and counts are broadcast live.
+    // The active player reveals one shape, then asks the audience to choose among hidden tiles.
+    const studyTiles = tagInitialMessages[0].state.tiles.filter((tile) =>
+      tile.shape && !["hazard", "dummy", "cancel"].includes(tile.shape));
+    const shapeGroups = new Map();
+    for (const tile of studyTiles) {
+      if (!shapeGroups.has(tile.shape)) shapeGroups.set(tile.shape, []);
+      shapeGroups.get(tile.shape).push(tile);
+    }
+    const matchingTriple = [...shapeGroups.values()].find((tiles) => tiles.length >= 3)?.slice(0, 3);
+    assert.ok(matchingTriple, "The Tag study board should include a normal-shape triple for poll testing.");
+    tagClients[0].send({ type: "game_action", action: { type: "pick", tileId: matchingTriple[0].id } });
+    await tagClients[0].waitFor((message) =>
+      message.type === "game_state" && message.state?.selectedTileIds?.length === 1,
+      WAIT_MS, "player reveals first shape before asking audience");
     tagClients[0].send({ type: "audience_poll_start" });
     const poll = await audience.waitFor((message) =>
       message.type === "audience_poll_state" && message.poll && !message.poll.closed, WAIT_MS, "audience poll broadcast");
     assert.equal(poll.poll.options.length, 4);
-    audience.send({ type: "poll_vote", shape: poll.poll.options[0] });
+    assert.equal(poll.poll.initialShape, matchingTriple[0].shape);
+    assert.ok(poll.poll.options.some((option) => option.tileId && Number.isInteger(option.row) && Number.isInteger(option.col)),
+      "Poll options must point to hidden board tiles, not reveal their shapes.");
+    audience.send({ type: "poll_vote", tileId: poll.poll.options[0].tileId });
     const voted = await tagClients[0].waitFor((message) =>
       message.type === "audience_poll_state" && message.poll?.id === poll.poll.id &&
       message.poll.totalVotes === 1, WAIT_MS, "player receives spectator vote");
-    assert.equal(voted.poll.counts[poll.poll.options[0]], 1);
+    assert.equal(voted.poll.counts[poll.poll.options[0].tileId], 1);
+    audience.send({ type: "poll_vote", tileId: poll.poll.options[1].tileId });
+    const duplicateVote = await audience.waitFor((message) =>
+      message.type === "error" && /already voted/i.test(message.message || ""),
+      WAIT_MS, "second vote from one spectator is rejected");
+    assert.match(duplicateVote.message, /already voted/i);
 
     // Live chat is relayed to players and spectators with bounded, plain-text messages.
     audience.send({ type: "chat", text: "Hello <audience> viewer" });
