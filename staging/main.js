@@ -1238,7 +1238,8 @@ class GameScene extends Phaser.Scene {
     const duration = this.mode === 'ai' && player === 1 ? AI_TURN_MS : this.turnDurationMs;
     this.currentTurnDurationMs = duration;
     if (this.modeCfg.turnClock) {
-      this.turnClock.start(duration + (this.turnNumber === 0 && !bonus ? REVIEW_MS : 0));
+      // The opening 15-second study phase is separate; never add it to a pick timer.
+      this.turnClock.start(duration);
     } else this.turnClock.endsAt = Infinity;
     this.updateActivePlayerUI();
     if (this.modeCfg.teams) this.goalText.setText(this.turnLabel().toUpperCase());
