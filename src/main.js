@@ -709,6 +709,7 @@ class GameScene extends Phaser.Scene {
     this.panelOpen = false;
     this.panelUI = [];
     this.turnId = 0;                 // bumped on every turn so a stale AI loop can tell its turn is over
+    this.pendingSubmitTurnId = null;  // don't discard Submit taps made during an animation
     this.totalAttempts = 0;          // Play Alone statistic only; never a loss condition
     this.aiMemory = new Map();       // tile -> shape the AI believes it is
     this.aiRecall = this.ai.recall[0] + Math.random() * (this.ai.recall[1] - this.ai.recall[0]);
@@ -753,6 +754,16 @@ class GameScene extends Phaser.Scene {
     this.hideFinishedReveals();
     this.healStuckTiles();
     this.refreshClocks();
+    // A manual Submit tap made during an animation must be serviced when that same turn is idle.
+    // If a mismatch, hazard or match ends the turn first, startTurn() clears the stale request.
+    if (this.pendingSubmitTurnId !== null) {
+      if (this.pendingSubmitTurnId !== this.turnId || this.turnEnding || this.gameOver || !this.modeCfg.twoPlayers) {
+        this.pendingSubmitTurnId = null;
+      } else if (!this.busy) {
+        this.pendingSubmitTurnId = null;
+        this.submit(false, false, true);
+      }
+    }
     // Let an in-flight animation finish, then resolve the deadline once. A ready match is auto-submitted;
     // otherwise the current selection is cleared and the turn passes.
     if (this.modeCfg.turnClock && !this.turnEnding && !this.timeoutHandling && this.turnClock.expired() && !this.busy) {
@@ -905,6 +916,7 @@ class GameScene extends Phaser.Scene {
   // `player` is the side that plays (0 or 1; a team in Tag). Scores, planks and the AI all work per side.
   startTurn(player, options = {}) {
     const bonus = options.bonus === true;
+    this.pendingSubmitTurnId = null; // never carry a manual submit into another player's turn
     this.activePlayer = player;
     if (!bonus) this.turnNumber++;
     // Tag normal turns rotate partners: P1 → P3 → P2 → P4. A Double Play bonus repeats the same partner.
@@ -1770,10 +1782,19 @@ class GameScene extends Phaser.Scene {
   }
 
   // -------------------------------------------------------------- submit
-  async submit(fromAI = false, forced = false) {
-    // A late submit is normally ignored. Forced is used only by the turn deadline to resolve a pick.
-    if (this.busy || this.turnEnding || this.gameOver || (this.turnClock.expired() && !forced)) return;
-    if (!forced && !fromAI && (this.panelOpen || this.isAITurn())) return;
+  async submit(fromAI = false, forced = false, queued = false) {
+    // Don't silently ignore Submit while a flip, hazard or other board animation is resolving.
+    // Freeze this player's clock and honour the request as soon as the same turn becomes idle.
+    if (this.turnEnding || this.gameOver || (this.turnClock.expired() && !forced && !queued)) return;
+    if (this.busy) {
+      if (!forced && !fromAI && !queued && this.modeCfg.twoPlayers && !this.isAITurn()) {
+        this.pendingSubmitTurnId = this.turnId;
+        if (this.modeCfg.turnClock) this.turnClock.stop();
+        this.showToast('Submit queued until the current move finishes.', 1800);
+      }
+      return;
+    }
+    if (!forced && !fromAI && !queued && (this.panelOpen || this.isAITurn())) return;
 
     // Even a Dummy-only or empty manual submit ends a versus turn; it never changes the score.
     if (this.selection.length === 0) {
