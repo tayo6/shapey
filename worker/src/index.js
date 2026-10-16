@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import {
-  isAllowedOrigin, isRoomCode, modeDetails, isRoomExpired,
+  isAllowedOrigin, isRoomCode, isBoardSize, modeDetails, isRoomExpired,
   roomExpiryDeadline, ROOM_IDLE_TTL_MS, MAX_MESSAGE_BYTES, messageByteLength,
   nextMessageRateState, nextRoomCreationWindow
 } from "./protocol.js";
@@ -134,6 +134,8 @@ export default {
       catch { return json({ error: "Send a JSON body with mode set to pvp or tag." }, 400, cors); }
       const details = modeDetails(body?.mode);
       if (!details) return json({ error: "Choose Player 1 vs Player 2 (pvp), Tag (tag), or AI vs AI demo (demo)." }, 400, cors);
+      const boardSize = body.boardSize === undefined ? 7 : body.boardSize;
+      if (!isBoardSize(boardSize)) return json({ error: "Choose a board size of 5, 6, or 7." }, 400, cors);
       const demoControlToken = details.mode === "demo" ? newSeatToken() : null;
 
       const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -145,12 +147,13 @@ export default {
         const created = await stub.fetch("https://room.internal/create", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ roomCode: code, ...details, demoControlToken })
+          body: JSON.stringify({ roomCode: code, ...details, boardSize, demoControlToken })
         });
         if (created.status === 409) continue;
         if (!created.ok) return json({ error: "Could not reserve a room. Please try again." }, 503, cors);
         return json({
           roomCode: code,
+          boardSize,
           websocketUrl: url.origin.replace(/^http/, "ws") + "/ws/" + code,
           status: details.mode === "demo" ? "starting" : "waiting",
           ...details,
@@ -226,8 +229,9 @@ export class Room extends DurableObject {
       try { data = await request.json(); }
       catch { return json({ error: "Invalid directory entry." }, 400); }
       const details = modeDetails(data?.mode);
+      const boardSize = data.boardSize === undefined ? 7 : data.boardSize;
       const statuses = ["waiting", "ready", "starting", "live"];
-      if (!details || !isRoomCode(data?.roomCode) || !statuses.includes(data?.status)) {
+      if (!details || !isRoomCode(data?.roomCode) || !statuses.includes(data?.status) || !isBoardSize(boardSize)) {
         return json({ error: "Invalid directory entry." }, 400);
       }
       const now = Date.now();
@@ -242,6 +246,7 @@ export class Room extends DurableObject {
         status: data.status,
         playerCount: Number.isInteger(data.playerCount) ? Math.min(details.maxPlayers, Math.max(0, data.playerCount)) : 0,
         maxPlayers: details.maxPlayers,
+        boardSize,
         spectatorCount: Number.isInteger(data.spectatorCount) ? Math.min(MAX_SPECTATORS_PER_ROOM, Math.max(0, data.spectatorCount)) : 0,
         scores,
         activePlayerNumber,
@@ -280,7 +285,9 @@ export class Room extends DurableObject {
       try { data = await request.json(); }
       catch { return json({ error: "Invalid room setup." }, 400); }
       const details = modeDetails(data?.mode);
+      const boardSize = data.boardSize === undefined ? 7 : data.boardSize;
       if (!details || data.maxPlayers !== details.maxPlayers || !isRoomCode(data.roomCode) ||
+          !isBoardSize(boardSize) ||
           (details.mode === "demo" && typeof data.demoControlToken !== "string")) {
         return json({ error: "Invalid room setup." }, 400);
       }
@@ -297,13 +304,14 @@ export class Room extends DurableObject {
         roomCode: data.roomCode,
         mode: details.mode,
         maxPlayers: details.maxPlayers,
+        boardSize,
         demoControlTokenHash: data.demoControlToken ? await hashSeatToken(data.demoControlToken) : null,
         createdAt: now,
         lastActivityAt: now
       });
       if (details.mode === "demo") {
         // A demo is an automatically running PvP game whose two player seats are controlled by the Worker.
-        const game = createGameState({ roomCode: data.roomCode, mode: "pvp", playerNumbers: [1, 2], now });
+        const game = createGameState({ roomCode: data.roomCode, mode: "pvp", playerNumbers: [1, 2], boardSize, now });
         // Keep the sample short enough to watch on one device; regular PvP still targets 100.
         game.targetScore = 10;
         game.demoNextActionAt = Number(game.reviewEndsAt) + 500;
@@ -339,7 +347,8 @@ export class Room extends DurableObject {
       const game = await this.ctx.storage.get("game");
       const status = game?.status === "finished" ? "finished" : game?.status === "playing" ? "live" :
         game?.status === "study" ? "starting" : room.mode === "demo" ? "starting" : connected >= room.maxPlayers ? "ready" : "waiting";
-      return json({ roomCode: room.roomCode, mode: room.mode, maxPlayers: room.maxPlayers, status, players });
+      return json({ roomCode: room.roomCode, mode: room.mode, maxPlayers: room.maxPlayers,
+        boardSize: room.boardSize || 7, status, players });
     }
 
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
@@ -430,6 +439,7 @@ export class Room extends DurableObject {
       status,
       playerCount: connectedPlayerNumbers.size,
       maxPlayers: room.maxPlayers,
+      boardSize: room.boardSize || 7,
       spectatorCount: this.spectatorCount(),
       scores: Array.isArray(game?.scores) ? game.scores.slice(0, 2) : [0, 0],
       activePlayerNumber: Number.isInteger(game?.activePlayerNumber) ? game.activePlayerNumber : null,
@@ -760,13 +770,15 @@ export class Room extends DurableObject {
         seatToken,
         roomCode: room.roomCode,
         mode: room.mode,
-        maxPlayers: room.maxPlayers
+        maxPlayers: room.maxPlayers,
+        boardSize: room.boardSize || 7
       }));
       this.broadcast({
         type: "room_state",
         roomCode: room.roomCode,
         mode: room.mode,
         maxPlayers: room.maxPlayers,
+        boardSize: room.boardSize || 7,
         status: this.connectedCount() >= room.maxPlayers ? "ready" : "waiting",
         players: this.playerList()
       });
@@ -776,7 +788,7 @@ export class Room extends DurableObject {
       const existingGame = await this.ctx.storage.get("game");
       if (connected >= room.maxPlayers && !existingGame) {
         const playerNumbers = Array.from({ length: room.maxPlayers }, (_, index) => index + 1);
-        const game = createGameState({ roomCode: room.roomCode, mode: room.mode, playerNumbers });
+        const game = createGameState({ roomCode: room.roomCode, mode: room.mode, playerNumbers, boardSize: room.boardSize || 7 });
         await this.ctx.storage.put("game", game);
         await this.broadcastGameState("game_started");
       } else if (existingGame) {
@@ -816,6 +828,7 @@ export class Room extends DurableObject {
       type: "spectator_welcome",
       roomCode: room.roomCode,
       mode: room.mode,
+      boardSize: room.boardSize || 7,
       status: game ? game.status : (this.connectedCount() >= room.maxPlayers ? "ready" : "waiting"),
       players: this.playerList(),
       spectatorCount: this.spectatorCount(),
