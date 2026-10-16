@@ -648,7 +648,7 @@ function renderPoll(poll) {
   updatePollIntro();
   if (!poll.closed && (!previousPoll || previousPoll.id !== poll.id)) {
     // Do not leave a panel over the board: spectators must be able to tap a board tile immediately.
-    closeAudiencePanel();
+    if (openAudiencePanel) toggleAudiencePanel(openAudiencePanel);
     setWatchStatus('Audience poll open. Tap any cyan-outlined face-down tile on the live board to vote.', false);
   }
   if (!poll.closed) {
