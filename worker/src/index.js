@@ -94,7 +94,9 @@ export default {
         ok: true,
         service: "shapey-multiplayer",
         stage: "authoritative-gameplay-v1",
-        protocolVersion: 1
+        protocolVersion: 1,
+        audiencePollSeconds: AUDIENCE_POLL_MS / 1000,
+        pollResultsHiddenUntilClose: true
       }, 200, cors);
     }
 
