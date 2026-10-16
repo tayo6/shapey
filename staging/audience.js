@@ -164,7 +164,7 @@ function closePanels() {
 function openPanel(name) {
   if (activePanel === name) { closePanels(); return; }
   closePanels();
-  if (name === 'polls' && !['tag', 'pvp', 'demo'].includes(activeMode)) return;
+  if (name === 'polls' && !['tag', 'demo'].includes(activeMode)) return;
   activePanel = name;
   els.backdrop.hidden = false;
   PANELS[name].panel.hidden = false;
@@ -180,15 +180,15 @@ function openPanel(name) {
 }
 // These audience rooms all use the existing Chat, Polls and Settings icons.
 function applyModeUI() {
-  const audienceMode = ['tag', 'pvp', 'demo'].includes(activeMode);
-  els.btnPolls.hidden = !audienceMode;
-  els.btnChat.style.setProperty('--x', audienceMode ? 175 : 250);
+  const hasPolls = ['tag', 'demo'].includes(activeMode);
+  els.btnPolls.hidden = !hasPolls;
+  els.btnChat.style.setProperty('--x', hasPolls ? 175 : 250);
   els.btnPolls.style.setProperty('--x', 360);
-  els.btnSettings.style.setProperty('--x', audienceMode ? 545 : 470);
+  els.btnSettings.style.setProperty('--x', hasPolls ? 545 : 470);
   const names = sideNames(activeMode);
   text(els.p1Name, names[0]);
   text(els.p2Name, names[1]);
-  if (!audienceMode && activePanel === 'polls') closePanels();
+  if (!hasPolls && activePanel === 'polls') closePanels();
 }
 
 // ------------------------------------------------------------------ views
@@ -556,9 +556,9 @@ function renderPoll(poll) {
   currentPoll = poll || null;
   els.pollOptions.replaceChildren();
   if (!poll) {
-    text(els.pollIntro, ['tag', 'pvp', 'demo'].includes(activeMode)
-      ? 'No poll is open. A player can ask the audience for help after revealing the first shape.'
-      : 'Audience polls are available in online versus games.');
+    text(els.pollIntro, ['tag', 'demo'].includes(activeMode)
+      ? 'No poll is open. A Tag player can ask the audience for help after revealing the first shape.'
+      : 'Audience polls are available in Tag games only.');
     updateBadges();
     return;
   }
