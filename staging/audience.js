@@ -184,7 +184,7 @@ function openPanel(name) {
 }
 // These audience rooms all use the existing Chat, Polls and Settings icons.
 function applyModeUI() {
-  const hasPolls = ['tag', 'demo'].includes(activeMode);
+  const hasPolls = ['pvp', 'tag', 'demo'].includes(activeMode);
   els.btnPolls.hidden = !hasPolls;
   els.btnChat.style.setProperty('--x', hasPolls ? 175 : 250);
   els.btnPolls.style.setProperty('--x', 360);
