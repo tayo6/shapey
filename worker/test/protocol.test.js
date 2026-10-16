@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   ALLOWED_ORIGINS, ROOM_IDLE_TTL_MS, ROOM_MAX_LIFETIME_MS,
   MESSAGE_RATE_LIMIT, MESSAGE_RATE_WINDOW_MS, MAX_MESSAGE_BYTES,
-  isAllowedOrigin, isRoomCode, modeDetails, isRoomExpired, roomExpiryDeadline,
+  isAllowedOrigin, isRoomCode, isBoardSize, modeDetails, isRoomExpired, roomExpiryDeadline,
   messageByteLength, nextMessageRateState,
   ROOM_CREATE_RATE_WINDOW_MS, ROOM_CREATE_RATE_LIMIT, nextRoomCreationWindow,
 } from "../src/protocol.js";
@@ -13,6 +13,11 @@ test("only the production site and documented local origins are allowed", () => 
   for (const origin of ["", null, "https://evil.example", "https://tayo6.github.io.evil.example"]) {
     assert.equal(isAllowedOrigin(origin), false);
   }
+});
+
+test("only 5x5, 6x6 and 7x7 board sizes are accepted", () => {
+  for (const size of [5, 6, 7]) assert.equal(isBoardSize(size), true);
+  for (const size of [4, 8, 0, -1, "5", null, undefined]) assert.equal(isBoardSize(size), false);
 });
 
 test("online modes and the read-only AI demo are admitted with the intended capacity", () => {
