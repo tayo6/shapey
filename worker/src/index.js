@@ -135,7 +135,12 @@ export default {
       const details = modeDetails(body?.mode);
       if (!details) return json({ error: "Choose Player 1 vs Player 2 (pvp), Tag (tag), or AI vs AI demo (demo)." }, 400, cors);
       const boardSize = body.boardSize === undefined ? 7 : body.boardSize;
-      if (!isBoardSize(boardSize)) return json({ error: "Choose a board size of 5, 6, or 7." }, 400, cors);
+      if (!isBoardSize(boardSize) || (details.mode === "tag" && boardSize !== 7)) {
+        const message = details.mode === "tag"
+          ? "Tag uses a 7x7 board."
+          : "Choose a board size of 5, 6, or 7.";
+        return json({ error: message }, 400, cors);
+      }
       const demoControlToken = details.mode === "demo" ? newSeatToken() : null;
 
       const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
