@@ -256,6 +256,11 @@ async function run() {
       message.poll.closed, 35_000, "closed audience poll reveals final results");
     assert.equal(finalPoll.poll.totalVotes, 1);
     assert.equal(finalPoll.poll.counts[poll.poll.options[0].tileId], 1);
+    const postPollTurn = await tagClients[0].waitFor((message) =>
+      message.type === "game_state" && message.state?.revision > tagPlaying[0].revision + 1 &&
+      message.state?.activePlayerNumber === 1 && message.state?.selectedTileIds?.length === 1,
+      WAIT_MS, "Tag player's turn and selected shape are restored after poll");
+    let tagRevision = postPollTurn.state.revision;
 
     // Live chat is relayed to players and spectators with bounded, plain-text messages.
     audience.send({ type: "chat", text: "Hello <audience> viewer" });
@@ -310,7 +315,6 @@ async function run() {
     assert.deepEqual(resumed.state.scores, [1, 0]);
 
     // Tag: execute four real empty-turn submissions and verify that the Worker enforces P1→P3→P2→P4.
-    let tagRevision = tagPlaying[0].revision;
     for (const [current, next] of [[1, 3], [3, 2], [2, 4], [4, 1]]) {
       const actor = tagClients[current - 1];
       actor.send({ type: "game_action", action: { type: "submit" } });
