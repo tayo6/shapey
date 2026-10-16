@@ -1162,9 +1162,10 @@ class GameScene extends Phaser.Scene {
       polls: 'btnPolls',
       inventory: 'btnInventory',
     };
+    const supportsAudiencePolling = this.mode === 'pvp' || this.mode === 'tag';
     const actions = this.mode === 'alone'
       ? ['settings', 'submit']
-      : this.mode === 'tag'
+      : supportsAudiencePolling
         ? ['settings', 'submit', 'polls', 'inventory']
         : ['settings', 'submit', 'inventory'];
     // Keep each mode's icons centred and remove controls that mode does not support.
@@ -1193,12 +1194,13 @@ class GameScene extends Phaser.Scene {
     settings.setInteractive({ useHandCursor: true });
     settings.on('pointerdown', () => this.openPanel());
 
-    // Only Tag has the poll icon. Current results are explicitly simulated practice votes.
+    // Both online modes can ask the audience to choose a hidden tile directly on the shared board.
     const polls = this.buttons.btnPolls;
     if (polls) {
       polls.setInteractive({ useHandCursor: true });
       polls.on('pointerdown', () => {
-        if (this.modeCfg.teams && !this.panelOpen && !this.inventoryOpen) this.showAudiencePoll();
+        if ((this.mode === 'pvp' || this.mode === 'tag') && this.online &&
+            !this.panelOpen && !this.inventoryOpen) this.showAudiencePoll();
       });
     }
 
@@ -1536,14 +1538,15 @@ class GameScene extends Phaser.Scene {
     this.inventoryOpen = false;
   }
 
-  // Tag's bottom Polls action opens a live audience poll when online. Local-mode practice
-  // still uses clearly labelled simulated votes so it cannot be mistaken for real audience data.
+  // Online Player 1 vs Player 2 and Tag use real spectator votes. Local-mode practice
+  // still uses clearly labelled simulated votes so it cannot be mistaken for live audience data.
   showAudiencePoll() {
     this.closeAudiencePoll();
     if (this.gameOver) return;
     if (this.online) {
-      if (!this.modeCfg.teams || !this.onlineSocket || this.onlineSocket.readyState !== WebSocket.OPEN) {
-        this.showToast('Live audience polling requires a connected Tag room.', 2500);
+      if ((this.mode !== 'pvp' && this.mode !== 'tag') ||
+          !this.onlineSocket || this.onlineSocket.readyState !== WebSocket.OPEN) {
+        this.showToast('Live audience polling requires a connected Player 1 vs Player 2 or Tag room.', 2500);
         return;
       }
       this.onlineSocket.send(JSON.stringify({ type: 'audience_poll_start' }));
@@ -1633,51 +1636,53 @@ class GameScene extends Phaser.Scene {
       stroke: '#3a2112', strokeThickness: 8, align: 'center', wordWrap: { width: 590 },
     }).setOrigin(0.5));
 
-    const options = poll.options || [];
-    const counts = options.map((shape) => Number((poll.counts || {})[shape]) || 0);
-    const totalVotes = counts.reduce((sum, n) => sum + n, 0);
-    const percents = percentSplit(counts);
+    const options = Array.isArray(poll.options)
+      ? poll.options.filter((option) => option && typeof option.tileId === 'string') : [];
+    const counts = options.map((option) => Number((poll.counts || {})[option.tileId]) || 0);
+    const totalVotes = counts.reduce((sum, count) => sum + count, 0);
     const best = Math.max(0, ...counts);
     const secondsLeft = () => Math.max(0, Math.ceil(((Number(poll.endsAt) || 0) - Date.now()) / 1000));
+    const positionLabel = (option) => 'ROW ' + (Number(option.row) + 1) + ', COLUMN ' + (Number(option.col) + 1);
     const subtitle = () => {
-      if (poll.closed) return totalVotes > 0 ? 'POLL CLOSED · ' + totalVotes + (totalVotes === 1 ? ' VOTE' : ' VOTES') : 'NO VOTES WERE CAST';
+      if (poll.closed) return totalVotes > 0
+        ? 'POLL CLOSED · ' + totalVotes + (totalVotes === 1 ? ' VOTE' : ' VOTES')
+        : 'NO VOTES WERE CAST';
       const left = secondsLeft();
-      return left > 0 ? 'THE AUDIENCE IS VOTING · ' + left + 's' : 'COUNTING THE VOTES…';
+      return left > 0 ? 'THE AUDIENCE IS VOTING ON THE BOARD · ' + left + 's' : 'COUNTING THE VOTES…';
     };
     const subtitleText = add(this.add.text(GAME_WIDTH / 2, 420, subtitle(), {
       fontFamily: FONT, fontSize: '21px', color: '#ffe36e', align: 'center',
-      stroke: '#3a2112', strokeThickness: 4,
+      stroke: '#3a2112', strokeThickness: 4, wordWrap: { width: 570 },
     }).setOrigin(0.5));
     if (!poll.closed) {
       this.pollTimer = this.time.addEvent({
         delay: 250, loop: true,
         callback: () => { if (subtitleText.active) subtitleText.setText(subtitle()); },
       });
+      add(this.add.text(GAME_WIDTH / 2, 525,
+        'Spectators tap a face-down tile on the live board to vote.', {
+        fontFamily: FONT, fontSize: '21px', color: '#fff2c7', align: 'center',
+        stroke: '#3a2112', strokeThickness: 4, wordWrap: { width: 540 },
+      }).setOrigin(0.5));
     } else if (totalVotes > 0) {
-      const leaders = counts.filter((n) => n === best).length;
-      add(this.add.text(GAME_WIDTH / 2, 462, leaders > 1 ? 'THE AUDIENCE IS SPLIT'
-        : 'TOP CHOICE: ' + String(options[counts.indexOf(best)]).toUpperCase(), {
-        fontFamily: FONT, fontSize: '26px', color: '#ffe36e', align: 'center',
-        stroke: '#3a2112', strokeThickness: 5,
+      const leaders = options.filter((option, index) => counts[index] === best);
+      const labels = leaders.slice(0, 3).map(positionLabel);
+      add(this.add.text(GAME_WIDTH / 2, 500,
+        (leaders.length === 1 ? 'TOP BOARD PICK: ' : 'TOP BOARD PICKS: ') + labels.join(' · '), {
+        fontFamily: FONT, fontSize: '22px', color: '#ffe36e', align: 'center',
+        stroke: '#3a2112', strokeThickness: 4, wordWrap: { width: 560 },
+      }).setOrigin(0.5));
+      add(this.add.text(GAME_WIDTH / 2, 555,
+        'The audience chose from the full board.', {
+        fontFamily: FONT, fontSize: '19px', color: '#fff2c7', align: 'center',
+        stroke: '#3a2112', strokeThickness: 4, wordWrap: { width: 540 },
+      }).setOrigin(0.5));
+    } else if (poll.closed) {
+      add(this.add.text(GAME_WIDTH / 2, 510, 'No votes were cast this time.', {
+        fontFamily: FONT, fontSize: '22px', color: '#fff2c7', align: 'center',
+        stroke: '#3a2112', strokeThickness: 4,
       }).setOrigin(0.5));
     }
-    options.forEach((shape, index) => {
-      const y = 540 + index * 80;
-      add(this.add.text(78, y, String.fromCharCode(65 + index) + '  ' + String(shape).toUpperCase(), {
-        fontFamily: FONT, fontSize: '20px', color: '#fff2c7',
-        stroke: '#3a2112', strokeThickness: 4,
-      }).setOrigin(0, 0.5));
-      add(this.add.rectangle(270, y, 288, 24, 0x25180f, 1).setOrigin(0, 0.5));
-      if (poll.closed) {
-        const leader = totalVotes > 0 && counts[index] === best;
-        add(this.add.rectangle(270, y, Math.max(3, 2.88 * percents[index]), 18, leader ? 0xffd45e : 0xb98a3c, 1)
-          .setOrigin(0, 0.5));
-        add(this.add.text(625, y, percents[index] + '%', {
-          fontFamily: FONT, fontSize: '22px', color: leader ? '#ffe36e' : '#ffffff',
-          stroke: '#3a2112', strokeThickness: 4, align: 'right',
-        }).setOrigin(1, 0.5));
-      }
-    });
     woodButton(this, GAME_WIDTH / 2, 885, 420, 82,
       poll.closed ? 'CLOSE RESULTS' : 'HIDE', 30,
       () => { this.dismissedPollKey = key; this.closeAudiencePoll(); }, 252).forEach(add);
