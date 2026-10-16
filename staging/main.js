@@ -1754,8 +1754,8 @@ class GameScene extends Phaser.Scene {
     if (!poll || this.gameOver) { this.closeAudiencePoll(); return; }
     const requestedByMe = Number(poll.startedByPlayer) === Number(this.onlinePlayerNumber);
     const key = poll.id + ':' + (poll.closed ? 'closed' : 'open');
-    if (this.dismissedPollKey === key) return; // the player closed this view; do not pop it up again
-    if (this.pollShownKey === key && this.pollUI && this.pollUI.length) return; // nothing new to draw
+    if (this.dismissedPollKey === key) return;
+    if (this.pollShownKey === key && this.pollUI && this.pollUI.length) return;
     this.closeAudiencePoll();
     this.pollShownKey = key;
     this.pollUI = [];
@@ -1773,77 +1773,58 @@ class GameScene extends Phaser.Scene {
       stroke: '#3a2112', strokeThickness: 8, align: 'center', wordWrap: { width: 590 },
     }).setOrigin(0.5));
 
-    const options = Array.isArray(poll.options) ? poll.options.filter((option) => option && typeof option.tileId === 'string') : [];
+    const options = Array.isArray(poll.options)
+      ? poll.options.filter((option) => option && typeof option.tileId === 'string') : [];
     const counts = options.map((option) => Number((poll.counts || {})[option.tileId]) || 0);
-    const totalVotes = counts.reduce((sum, n) => sum + n, 0);
+    const totalVotes = counts.reduce((sum, count) => sum + count, 0);
     const best = Math.max(0, ...counts);
     const secondsLeft = () => Math.max(0, Math.ceil(((Number(poll.endsAt) || 0) - Date.now()) / 1000));
-    const targetShape = String(poll.initialShape || 'the first shape').replace(/-/g, ' ').toUpperCase();
+    const shapeName = String(poll.initialShape || 'the first shape').replace(/-/g, ' ').toUpperCase();
     const positionLabel = (option) => 'ROW ' + (Number(option.row) + 1) + ' · COL ' + (Number(option.col) + 1);
     const subtitle = () => {
       if (poll.closed) return totalVotes > 0
         ? 'POLL CLOSED · ' + totalVotes + (totalVotes === 1 ? ' VOTE' : ' VOTES')
         : 'NO VOTES WERE CAST';
       const left = secondsLeft();
-      return left > 0 ? 'THE AUDIENCE IS CHOOSING ON THE BOARD · ' + left + 's' : 'COUNTING THE VOTES…';
+      return left > 0 ? 'FIND ANOTHER ' + shapeName + ' · ' + left + 's' : 'COUNTING THE VOTES…';
     };
     const subtitleText = add(this.add.text(GAME_WIDTH / 2, 420, subtitle(), {
       fontFamily: FONT, fontSize: '21px', color: '#ffe36e', align: 'center',
       stroke: '#3a2112', strokeThickness: 4, wordWrap: { width: 570 },
     }).setOrigin(0.5));
+
     if (!poll.closed) {
       this.pollTimer = this.time.addEvent({
-        delay: 250, loop: true,
+        delay: 250,
+        loop: true,
         callback: () => { if (subtitleText.active) subtitleText.setText(subtitle()); },
       });
       add(this.add.text(GAME_WIDTH / 2, 515,
-        'Spectators tap any highlighted face-down tile on the shared board.', {
+        'Spectators tap a highlighted face-down tile on the shared board.', {
         fontFamily: FONT, fontSize: '21px', color: '#fff2c7', align: 'center',
         stroke: '#3a2112', strokeThickness: 4, wordWrap: { width: 550 },
       }).setOrigin(0.5));
+      woodButton(this, GAME_WIDTH / 2, 900, 420, 76, 'HIDE', 30,
+        () => { this.dismissedPollKey = key; this.closeAudiencePoll(); }, 253).forEach(add);
     } else if (totalVotes > 0) {
       const leaders = options.filter((option, index) => counts[index] === best);
       const labels = leaders.slice(0, 3).map(positionLabel);
-      add(this.add.text(GAME_WIDTH / 2, 485,
+      add(this.add.text(GAME_WIDTH / 2, 500,
         (leaders.length === 1 ? 'TOP BOARD PICK: ' : 'TOP BOARD PICKS: ') + labels.join(' / '), {
         fontFamily: FONT, fontSize: '22px', color: '#ffe36e', align: 'center',
         stroke: '#3a2112', strokeThickness: 4, wordWrap: { width: 560 },
       }).setOrigin(0.5));
-      add(this.add.text(GAME_WIDTH / 2, 540,
+      add(this.add.text(GAME_WIDTH / 2, 555,
         'The audience voted on the full board, not a fixed list.', {
         fontFamily: FONT, fontSize: '19px', color: '#fff2c7', align: 'center',
         stroke: '#3a2112', strokeThickness: 4, wordWrap: { width: 540 },
       }).setOrigin(0.5));
-    } else if (poll.closed) {
-      add(this.add.text(GAME_WIDTH / 2, 510, 'No votes were cast this time.', {
-        fontFamily: FONT, fontSize: '22px', color: '#fff2c7', align: 'center',
-        stroke: '#3a2112', strokeThickness: 4,
-      }).setOrigin(0.5));
-    }
-    if (poll.closed) {
-        add(this.add.rectangle(270, y, Math.max(3, 2.88 * percents[index]), 18, leader ? 0xffd45e : 0xb98a3c, 1)
-          .setOrigin(0, 0.5));
-        add(this.add.text(625, y, percents[index] + '%', {
-          fontFamily: FONT, fontSize: '22px', color: leader ? '#ffe36e' : '#ffffff',
-          stroke: '#3a2112', strokeThickness: 4, align: 'right',
-        }).setOrigin(1, 0.5));
-      }
-    });
-    if (poll.closed) {
-      const guidance = requestedByMe
-        ? (totalVotes ? 'ACCEPT THE TOP CHOICE OR IGNORE THE RESULTS' : 'NO AUDIENCE SUGGESTION · YOU CAN CONTINUE YOUR TURN')
-        : 'THE REQUESTING PLAYER DECIDES · YOU CAN WATCH';
-      add(this.add.text(GAME_WIDTH / 2, 820, guidance, {
-        fontFamily: FONT, fontSize: '17px', color: '#ffe9b8', align: 'center',
-        stroke: '#3a2112', strokeThickness: 3, wordWrap: { width: 590 },
-      }).setOrigin(0.5));
-      if (requestedByMe && totalVotes > 0) {
+      if (requestedByMe) {
         const winner = options[counts.indexOf(best)];
-        const tileId = typeof winner === 'string' ? winner : winner.tileId;
         woodButton(this, 235, 900, 270, 76, 'ACCEPT TOP CHOICE', 19, () => {
           this.dismissedPollKey = key;
           this.closeAudiencePoll();
-          this.sendOnlineAction({ type: 'pick', tileId });
+          this.sendOnlineAction({ type: 'pick', tileId: winner.tileId });
           this.showToast('You accepted the audience suggestion.', 2500);
         }, 253).forEach(add);
         woodButton(this, 500, 900, 230, 76, 'IGNORE RESULTS', 23, () => {
@@ -1851,12 +1832,19 @@ class GameScene extends Phaser.Scene {
           this.closeAudiencePoll();
         }, 253).forEach(add);
       } else {
-        woodButton(this, GAME_WIDTH / 2, 900, 420, 76,
-          requestedByMe ? 'CLOSE RESULTS' : 'CLOSE RESULTS', 25,
+        add(this.add.text(GAME_WIDTH / 2, 810, 'THE REQUESTING PLAYER DECIDES · YOU CAN WATCH', {
+          fontFamily: FONT, fontSize: '17px', color: '#ffe9b8', align: 'center',
+          stroke: '#3a2112', strokeThickness: 3, wordWrap: { width: 590 },
+        }).setOrigin(0.5));
+        woodButton(this, GAME_WIDTH / 2, 900, 420, 76, 'CLOSE RESULTS', 25,
           () => { this.dismissedPollKey = key; this.closeAudiencePoll(); }, 253).forEach(add);
       }
     } else {
-      woodButton(this, GAME_WIDTH / 2, 900, 420, 76, 'HIDE', 30,
+      add(this.add.text(GAME_WIDTH / 2, 525, 'No audience suggestion this time. Continue your turn.', {
+        fontFamily: FONT, fontSize: '22px', color: '#fff2c7', align: 'center',
+        stroke: '#3a2112', strokeThickness: 4,
+      }).setOrigin(0.5));
+      woodButton(this, GAME_WIDTH / 2, 900, 420, 76, 'CLOSE RESULTS', 25,
         () => { this.dismissedPollKey = key; this.closeAudiencePoll(); }, 253).forEach(add);
     }
   }
