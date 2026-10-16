@@ -2487,8 +2487,10 @@ class GameScene extends Phaser.Scene {
   // -------------------------------------------------------------- picking
   addRing(tile) {
     tile.ring = this.add.graphics({ x: tile.x, y: tile.y }).setDepth(12);
-    tile.ring.lineStyle(5, 0xffe066, 1);
-    tile.ring.strokeRoundedRect(-43, -43, 86, 86, 14);
+    const scale = TILE_SIZE / BASE_TILE_SIZE;
+    const ringSize = TILE_SIZE - 4 * scale;
+    tile.ring.lineStyle(5 * scale, 0xffe066, 1);
+    tile.ring.strokeRoundedRect(-ringSize / 2, -ringSize / 2, ringSize, ringSize, 14 * scale);
   }
 
   removeRing(tile) {
