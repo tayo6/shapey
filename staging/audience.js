@@ -431,10 +431,17 @@ function renderBoard(state, previousState = null, animate = false) {
     tileNodes.clear();
     return;
   }
-  const boardSize = [5, 6, 7].includes(Number(state.boardSize)) ? Number(state.boardSize) : 7;
-  const cell = 100 / boardSize;
-  // The audience board keeps the same 7×7 display area; smaller boards are centred within it.
-  els.board.style.setProperty('--board-offset', String((7 - boardSize) * 91 / 2));
+  const requestedSize = [5, 6, 7].includes(Number(state.boardSize)) ? Number(state.boardSize) : 7;
+  // Tag remains 7×7. Other modes scale tile size and spacing to fill the same fixed tray area.
+  const boardSize = state.mode === 'tag' ? 7 : requestedSize;
+  const boardScale = 7 / boardSize;
+  els.board.style.setProperty('--board-offset', '0');
+  els.board.style.setProperty('--tile-size', String(90 * boardScale));
+  els.board.style.setProperty('--tile-pitch', String(91 * boardScale));
+  els.board.style.setProperty('--dust-offset-x', String(36 * boardScale));
+  els.board.style.setProperty('--dust-offset-y', String(9 * boardScale));
+  els.board.style.setProperty('--dust-width', String(162 * boardScale));
+  els.board.style.setProperty('--dust-height', String(81 * boardScale));
   const canAnimate = Boolean(animate && previousState && Array.isArray(previousState.tiles) && previousState.status === 'playing');
   const previousTiles = canAnimate ? new Map(previousState.tiles.map((tile) => [String(tile.id), tile])) : new Map();
   const newCountByColumn = new Map();
@@ -484,8 +491,6 @@ function renderBoard(state, previousState = null, animate = false) {
         if (event.propertyName === 'top') finishSpawnDust(tile);
       });
       animateSpawn = canAnimate && !previousTiles.has(id) && state.status !== 'study';
-      const left = (tileData.col * cell) + '%';
-      const top = (tileData.row * cell) + '%';
       if (animateSpawn) {
         const spawnCount = newCountByColumn.get(tileData.col) || 1;
         const startingRow = tileData.row - spawnCount;
