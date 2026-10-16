@@ -50,7 +50,7 @@ jobs:
           grep -q "type: 'poll_vote', tileId" /tmp/audience.js
           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/main.js" -o /tmp/staging-main.js
           grep -q 'AUDIENCE_WATCH_CODE' /tmp/staging-main.js
-          grep -q 'TAP A RESULT TO PICK THAT HIDDEN TILE' /tmp/staging-main.js
+          grep -q 'ACCEPT TOP CHOICE' /tmp/staging-main.js
           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/src/rules.js" -o /tmp/rules.js
           grep -q 'ShapeyRules' /tmp/rules.js
           assets_base="https://tayo6.github.io/shapey"
