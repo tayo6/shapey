@@ -570,23 +570,15 @@ export class Room extends DurableObject {
       !tile.faceUp && !tile.selected && !tile.moving &&
       !game.selectedTileIds.includes(tile.id) && !game.dummyTileIds.includes(tile.id)
     );
-    if (candidates.length < 4) return null;
+    if (candidates.length < 1) return null;
 
     // Include at least one genuine match when available, otherwise the audience would be asked
     // to help with a question that has no correct answer. Hidden shapes stay server-side.
     const matching = candidates.filter(tile => tile.shape === game.selectedShape);
     if (!matching.length) return null;
-    const chosenMatch = matching[Math.floor(Math.random() * matching.length)];
-    const decoys = candidates.filter(tile => tile.id !== chosenMatch.id);
-    for (let i = decoys.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [decoys[i], decoys[j]] = [decoys[j], decoys[i]];
-    }
-    const options = [chosenMatch, ...decoys.slice(0, 3)];
-    for (let i = options.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [options[i], options[j]] = [options[j], options[i]];
-    }
+    // Let spectators choose from every eligible hidden tile on the live board, rather than a fixed four.
+    // The public snapshot contains only tile IDs and positions, never their hidden shapes.
+    const options = candidates;
     const remainingTurnMs = Number.isFinite(game.turnEndsAt) ? Math.max(0, game.turnEndsAt - now) : 0;
     return {
       id: shortRandomId(),
@@ -962,8 +954,8 @@ export class Room extends DurableObject {
     const room = await this.ctx.storage.get("room");
     const game = await this.ctx.storage.get("game");
     const now = Date.now();
-    if (!room || room.mode !== "tag") {
-      ws.send(JSON.stringify({ type: "error", message: "Audience polls are available in Tag only." }));
+    if (!room || !["pvp", "tag"].includes(room.mode)) {
+      ws.send(JSON.stringify({ type: "error", message: "Audience polls are available in online Player 1 vs Player 2 and Tag rooms." }));
       return;
     }
     if (!game || game.status !== "playing" || game.pendingEffect ||
