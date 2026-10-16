@@ -156,7 +156,7 @@ function closePanels() {
 function openPanel(name) {
   if (activePanel === name) { closePanels(); return; }
   closePanels();
-  if (name === 'polls' && activeMode !== 'tag') return; // like the game, polls belong to Tag only
+  if (name === 'polls' && !['tag', 'pvp', 'demo'].includes(activeMode)) return;
   activePanel = name;
   els.backdrop.hidden = false;
   PANELS[name].panel.hidden = false;
@@ -170,16 +170,17 @@ function openPanel(name) {
   if (name === 'polls') renderPoll(currentPoll);
   updateBadges();
 }
-// Only Tag has a polls button (as in the game); the remaining icons are re-centred like the game's bottom bar.
+// These audience rooms all use the existing Chat, Polls and Settings icons.
 function applyModeUI() {
-  const tag = activeMode === 'tag';
-  els.btnPolls.hidden = !tag;
-  els.btnChat.style.setProperty('--x', tag ? 175 : 250);
-  els.btnSettings.style.setProperty('--x', tag ? 545 : 470);
+  const audienceMode = ['tag', 'pvp', 'demo'].includes(activeMode);
+  els.btnPolls.hidden = !audienceMode;
+  els.btnChat.style.setProperty('--x', audienceMode ? 175 : 250);
+  els.btnPolls.style.setProperty('--x', 360);
+  els.btnSettings.style.setProperty('--x', audienceMode ? 545 : 470);
   const names = sideNames(activeMode);
   text(els.p1Name, names[0]);
   text(els.p2Name, names[1]);
-  if (!tag && activePanel === 'polls') closePanels();
+  if (!audienceMode && activePanel === 'polls') closePanels();
 }
 
 // ------------------------------------------------------------------ views
@@ -203,6 +204,7 @@ function resetRoomView() {
   tileNodes.forEach((node) => node.remove());
   tileNodes.clear();
   els.board.replaceChildren();
+  if (els.gameFrame) { els.gameFrame.hidden = true; els.gameFrame.src = 'about:blank'; }
   els.pollOptions.replaceChildren();
   els.chatMessages.replaceChildren();
   chatIds = new Set();
@@ -342,15 +344,8 @@ async function loadRooms() {
     renderRooms();
   } catch (error) {
     if (seq !== roomsLoadSeq) return;
-    if (window.ShapeyDemo) {
-      // Keep the demo room usable even when the staging worker is unreachable.
-      roomsCache = withDemo([]);
-      roomsLoadedAt = new Date();
-      renderRooms();
-    } else {
-      els.rooms.replaceChildren(el('div', 'notice', error.message || 'The live directory is unavailable. Please retry.'));
-    }
-    setDirectoryStatus('Could not reach the live room service. ' + (window.ShapeyDemo ? 'Only the demo room is shown.' : 'The staging Worker may need its latest update.'), true);
+    els.rooms.replaceChildren(el('div', 'notice', error.message || 'The live directory is unavailable. Please retry.'));
+    setDirectoryStatus('Could not reach the live room service. Please refresh and try again.', true);
   } finally {
     if (seq === roomsLoadSeq) els.refreshRooms.disabled = false;
   }
@@ -587,12 +582,17 @@ function renderPoll(poll) {
 // ------------------------------------------------------------------ socket messages
 function processMessage(message) {
   if (!message || typeof message.type !== 'string') return;
+  if (message.type === 'demo_control_ready') {
+    if (activeMode === 'demo' && demoControlRoomCode === activeRoomCode) { demoControlReady = true; renderPlayers(); }
+    return;
+  }
+  if (message.type === 'demo_ended') { showDirectory(true); setDirectoryStatus('The AI-vs-AI demo has ended. Start another demo to keep testing.', false); return; }
   if (message.type === 'spectator_welcome') {
     roomStatus = message.status || 'waiting';
     roomPlayers = message.players || [];
     roomSpectators = Number(message.spectatorCount) || 0;
     connectionLost = false;
-    setWatchStatus(isDemo(activeRoomCode) ? 'Demo room · two AIs are playing' : 'Connected · you are watching', false);
+    setWatchStatus(activeMode === 'demo' ? 'Watching the AI-vs-AI demo.' : 'Watching the match.', false);
     if (message.state) renderGameState(message.state);
     else setWatchStatus('Waiting for all players to join…', false);
     renderPlayers();
@@ -621,9 +621,11 @@ function processMessage(message) {
   }
   if (message.type === 'chat_message' && message.message) {
     appendChat(message.message, true);
+    playAudienceTone(620);
     return;
   }
   if (message.type === 'audience_poll_state') {
+    if (message.poll && (!currentPoll || currentPoll.id !== message.poll.id)) playAudienceTone(760);
     renderPoll(message.poll || null);
     return;
   }
@@ -659,16 +661,10 @@ async function startWatching(roomCode, hintedMode, pushUrl) {
   els.watch.hidden = false;
   if (pushUrl) enterWatchView(code);
   try {
-    const demo = isDemo(code);
-    let details;
-    if (demo) {
-      details = window.ShapeyDemo.details();
-    } else {
-      const roomResponse = await fetch(api('/api/rooms/' + code), { cache: 'no-store' });
-      details = await roomResponse.json();
-      if (token !== watchToken) return; // the viewer left or opened another room while this was loading
-      if (!roomResponse.ok) throw new Error(details.error || 'Room not found.');
-    }
+    const roomResponse = await fetch(api('/api/rooms/' + code), { cache: 'no-store' });
+    const details = await roomResponse.json();
+    if (token !== watchToken) return; // the viewer left or opened another room while this was loading
+    if (!roomResponse.ok) throw new Error(details.error || 'Room not found.');
     if (!activeMode) activeMode = details.mode;
     if (details.mode !== activeMode) throw new Error('The shared link has a different game mode. Please open the room again from the live games list.');
     applyModeUI();
@@ -676,11 +672,19 @@ async function startWatching(roomCode, hintedMode, pushUrl) {
     roomPlayers = details.players || [];
     renderPlayers();
     const wsBase = MULTIPLAYER_API.replace(/^http/, 'ws');
-    const socket = demo ? window.ShapeyDemo.createSocket()
-      : new WebSocket(wsBase + '/ws/' + code + '?mode=' + encodeURIComponent(activeMode) + '&role=spectator');
+    const socket = new WebSocket(wsBase + '/ws/' + code + '?mode=' + encodeURIComponent(activeMode) + '&role=spectator');
+    els.gameFrame.hidden = false;
+    const frameUrl = new URL('staging/index.html', document.baseURI);
+    frameUrl.searchParams.set('watch', code);
+    frameUrl.searchParams.set('mode', activeMode);
+    frameUrl.searchParams.set('embed', '1');
+    els.gameFrame.src = frameUrl.href;
+    syncGameFrameMute();
     roomSocket = socket;
     socket.addEventListener('open', () => {
-      if (roomSocket === socket) sendSocketMessage({ type: 'spectate' });
+      if (roomSocket !== socket) return;
+      sendSocketMessage({ type: 'spectate' });
+      if (demoControlToken && demoControlRoomCode === code) socket.send(JSON.stringify({ type: 'demo_control', token: demoControlToken }));
     });
     socket.addEventListener('message', (event) => {
       if (roomSocket !== socket) return;
@@ -734,22 +738,49 @@ async function shareWatchLink() {
 }
 
 // ------------------------------------------------------------------ wiring
+async function startAiDemo() {
+  els.startDemo.disabled = true;
+  setDirectoryStatus('Opening an AI vs AI demo room…', false);
+  try {
+    const response = await fetch(api('/api/rooms'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ mode: 'demo' })
+    });
+    let data = {};
+    try { data = await response.json(); } catch (_) {}
+    if (!response.ok) throw new Error(data.error || 'Could not create the AI demo.');
+    demoControlToken = data.demoControlToken || '';
+    demoControlRoomCode = data.roomCode || '';
+    demoControlReady = false;
+    if (!demoControlToken || !demoControlRoomCode) throw new Error('The Worker did not return the demo control details.');
+    await startWatching(data.roomCode, 'demo', true);
+  } catch (error) {
+    setDirectoryStatus(error.message || 'Could not open the AI demo.', true);
+  } finally {
+    if (!els.directory.hidden) els.startDemo.disabled = false;
+  }
+}
 els.refreshRooms.addEventListener('click', loadRooms);
+els.startDemo.addEventListener('click', startAiDemo);
+els.navBrowse.addEventListener('click', () => showDirectory(true));
 els.modeChips.addEventListener('click', (event) => {
-  const chip = event.target.closest('.wood');
+  const chip = event.target.closest('.chip');
   if (!chip) return;
   modeFilterValue = chip.dataset.mode;
   renderRooms();
 });
-els.statusChips.addEventListener('click', (event) => {
-  const chip = event.target.closest('.wood');
-  if (!chip) return;
-  statusFilterValue = chip.dataset.status;
-  renderRooms();
-});
+els.statusFilter.addEventListener('change', () => { statusFilterValue = els.statusFilter.value; renderRooms(); });
 els.btnChat.addEventListener('click', () => openPanel('chat'));
 els.btnPolls.addEventListener('click', () => openPanel('polls'));
 els.btnSettings.addEventListener('click', () => openPanel('settings'));
+els.muteAudienceSound.checked = soundMuted;
+els.muteAudienceSound.addEventListener('change', () => {
+  soundMuted = els.muteAudienceSound.checked;
+  try { localStorage.setItem('shapey-audience-muted', String(soundMuted)); } catch (_) {}
+  syncGameFrameMute();
+  if (!soundMuted) playAudienceTone(520);
+});
 ['closeChat', 'closePoll', 'closeSettings', 'resumeWatch'].forEach((id) => $(id).addEventListener('click', closePanels));
 els.backdrop.addEventListener('click', closePanels);
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && activePanel) closePanels(); });
