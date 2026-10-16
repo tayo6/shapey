@@ -48,4 +48,21 @@ jobs:
           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/audience.js" | grep -q 'function withDemo(rooms)'
           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/demo-room.js" | grep -q 'window.ShapeyDemo'
           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/src/rules.js" | grep -q 'ShapeyRules'
-          echo "Preview page, audience script, AI demo, and rule script are reachable."
+          assets_base="https://tayo6.github.io/shapey"
+          for asset in \
+            "assets/backgrounds/BG.webp" \
+            "assets/backgrounds/header%20%20plank%201.webp" \
+            "assets/backgrounds/bottom%20navigation.webp" \
+            "assets/backgrounds/Tray%20Shadow.webp" \
+            "assets/backgrounds/tray.webp" \
+            "assets/fonts/HAPPY%20SCHOOL.TTF" \
+            "assets/ui/chat.webp" \
+            "assets/ui/polls.webp" \
+            "assets/ui/settings.webp" \
+            "assets/ui/player%20plank.webp" \
+            "assets/ui/player%20plank%202.webp" \
+            "assets/ui/timer%20plank.webp" \
+            "assets/shapes/circle.webp"; do
+            curl --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 1 "$assets_base/$asset" -o /dev/null
+          done
+          echo "Preview page, demo scripts, rule script, and Shapey artwork assets are reachable."
