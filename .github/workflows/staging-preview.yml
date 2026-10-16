@@ -82,6 +82,9 @@ jobs:
             "assets/backgrounds/Tray%20Shadow.webp" \
             "assets/backgrounds/tray.webp" \
             "assets/fonts/HAPPY%20SCHOOL.TTF" \
+            "assets/ui/shapey%20icon.webp" \
+            "assets/ui/shapey%20logo.webp" \
+            "assets/ui/load%20rectangle.webp" \
             "assets/ui/chat.webp" \
             "assets/ui/polls.webp" \
             "assets/ui/settings.webp" \
