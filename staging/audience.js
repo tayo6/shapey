@@ -64,6 +64,7 @@ let roomsCache = [];
 let roomsLoadedAt = null;
 let roomsLoadSeq = 0;    // only the newest room-list request may update the screen
 let pollLockedId = null;
+let latestGameFrameMessage = null;
 
 function api(path) { return MULTIPLAYER_API + path; }
 function directoryUrl() { return new URL('staging/audience.html', document.baseURI); }
@@ -88,7 +89,12 @@ function playAudienceTone(frequency = 620) {
     oscillator.connect(gain); gain.connect(audienceAudio.destination); oscillator.start(); oscillator.stop(audienceAudio.currentTime + 0.12);
   } catch (_) {}
 }
-function syncGameFrameMute() { try { els.gameFrame.contentWindow?.postMessage({ type: 'shapey-audience-mute', muted: soundMuted }, '*'); } catch (_) {} }
+function syncGameFrameMute() { try { els.gameFrame.contentWindow?.postMessage({ type: 'shapey-audience-mute', muted: soundMuted }, window.location.origin); } catch (_) {} }
+function forwardGameFrameMessage(message) {
+  if (!message || !['spectator_welcome', 'game_state', 'game_started'].includes(message.type)) return;
+  latestGameFrameMessage = message;
+  try { els.gameFrame.contentWindow?.postMessage({ type: 'shapey-audience-message', message }, window.location.origin); } catch (_) {}
+}
 function statusName(status) {
   return ({ live: 'Live', starting: 'Starting', ready: 'Ready', waiting: 'Waiting' })[status] || status || 'Unknown';
 }
@@ -195,6 +201,7 @@ function closeSocket() {
 }
 function resetRoomView() {
   currentState = null;
+  latestGameFrameMessage = null;
   currentPoll = null;
   currentVote = null;
   pollAcceptedId = '';
@@ -619,6 +626,7 @@ function renderPoll(poll) {
 // ------------------------------------------------------------------ socket messages
 function processMessage(message) {
   if (!message || typeof message.type !== 'string') return;
+  forwardGameFrameMessage(message);
   if (message.type === 'demo_control_ready') {
     if (activeMode === 'demo' && demoControlRoomCode === activeRoomCode) { demoControlReady = true; renderPlayers(); }
     return;
@@ -720,6 +728,10 @@ async function startWatching(roomCode, hintedMode, pushUrl) {
     frameUrl.searchParams.set('watch', code);
     frameUrl.searchParams.set('mode', activeMode);
     frameUrl.searchParams.set('embed', '1');
+    els.gameFrame.onload = () => {
+      if (latestGameFrameMessage) forwardGameFrameMessage(latestGameFrameMessage);
+      syncGameFrameMute();
+    };
     els.gameFrame.src = frameUrl.href;
     syncGameFrameMute();
     roomSocket = socket;
@@ -806,6 +818,10 @@ async function startAiDemo() {
 els.refreshRooms.addEventListener('click', loadRooms);
 els.startDemo.addEventListener('click', startAiDemo);
 els.navBrowse.addEventListener('click', () => showDirectory(true));
+els.gameFrame.addEventListener('load', () => {
+  if (latestGameFrameMessage) forwardGameFrameMessage(latestGameFrameMessage);
+  syncGameFrameMute();
+});
 els.modeChips.addEventListener('click', (event) => {
   const chip = event.target.closest('.chip');
   if (!chip) return;
