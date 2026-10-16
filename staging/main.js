@@ -2616,7 +2616,10 @@ class GameScene extends Phaser.Scene {
     await this.resetSelection();
     if (tile.active) await this.flipTile(tile, false);
     this.busy = false;
-    // (a hazard is not an attempt: no penalty of any kind)
+    // In versus modes, a standalone Hazard is harmless but still uses up this player's turn.
+    // Play Alone keeps the existing rule: the player may continue after a standalone Hazard.
+    if (this.modeCfg.twoPlayers) this.endTurn('hazard');
+    // A standalone Hazard never applies a score penalty.
   }
 
   // Play alone: a wrong shape costs a point (a too-small submit is free). (Two-player modes keep failed attempts free.)
