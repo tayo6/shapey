@@ -858,6 +858,9 @@ class GameScene extends Phaser.Scene {
     this.panelOpen = false;
     this.panelUI = [];
     this.turnId = 0;                 // bumped on every turn so a stale AI loop can tell its turn is over
+    this.pendingSubmitTurnId = null;  // a Submit tap during an animation must be honoured when that animation finishes
+    this.pendingOnlineSubmitKey = null;
+    this.onlineSubmitPending = false;
     this.totalAttempts = 0;          // Play Alone statistic only; never a loss condition
     this.aiMemory = new Map();       // tile -> shape the AI believes it is
     this.aiRecall = this.ai.recall[0] + Math.random() * (this.ai.recall[1] - this.ai.recall[0]);
@@ -915,6 +918,17 @@ class GameScene extends Phaser.Scene {
       this.healStuckTiles();
     }
     this.refreshClocks();
+    // A manual Submit is a request, not a tap we silently discard. If an animation was already
+    // resolving, service that request as soon as the same turn is idle. A mismatch/hazard/match
+    // that ends the turn first invalidates the queued request in startTurn().
+    if (!this.online && this.pendingSubmitTurnId !== null) {
+      if (this.pendingSubmitTurnId !== this.turnId || this.turnEnding || this.gameOver || !this.modeCfg.twoPlayers) {
+        this.pendingSubmitTurnId = null;
+      } else if (!this.busy) {
+        this.pendingSubmitTurnId = null;
+        this.submit(false, false, true);
+      }
+    }
     // The online server resolves expired turns and broadcasts the accepted state.
     // Local play resolves its own deadline after any in-flight animation finishes.
     if (!this.online && this.modeCfg.turnClock && !this.turnEnding && !this.timeoutHandling && this.turnClock.expired() && !this.busy) {
@@ -1072,6 +1086,7 @@ class GameScene extends Phaser.Scene {
   // `player` is the side that plays (0 or 1; a team in Tag). Scores, planks and the AI all work per side.
   startTurn(player, options = {}) {
     const bonus = options.bonus === true;
+    this.pendingSubmitTurnId = null; // never carry a manual submit into another player's turn
     this.activePlayer = player;
     if (!bonus) this.turnNumber++;
     // Tag normal turns rotate partners: P1 → P3 → P2 → P4. A Double Play bonus repeats the same partner.
@@ -1806,12 +1821,22 @@ class GameScene extends Phaser.Scene {
             this.turnClock.endsAt = this.onlineState.turnEndsAt;
           }
         }
+        // The server may begin resolving a pick just before this client's snapshot arrives.
+        // If it rejects Submit for that reason, retry only after the authoritative state is idle.
+        if (/resolving an action/i.test(message.message || '') &&
+            this.onlineState && this.onlineState.status === 'playing' &&
+            this.onlineState.activePlayerNumber === this.onlinePlayerNumber &&
+            this.queueOnlineSubmit(this.onlineState)) {
+          this.showToast('Submit queued until the current move finishes.', 1800);
+          return;
+        }
         this.showToast(message.message || 'The server rejected that action.', 3000);
       } else if (message.type === 'player_disconnected') {
         this.showToast('A player disconnected. Waiting for them to reconnect.', 3500);
       }
     });
     socket.addEventListener('close', () => {
+      this.pendingOnlineSubmitKey = null;
       if (this.onlineSubmitPending) {
         this.onlineSubmitPending = false;
         if (this.onlineState && Number.isFinite(this.onlineState.turnEndsAt)) {
@@ -1819,6 +1844,43 @@ class GameScene extends Phaser.Scene {
         }
       }
       if (this.online && !this.gameOver) this.showToast('Connection lost. Return to the main menu and reconnect.', 4500);
+    });
+  }
+
+  onlineTurnKey(state) {
+    return {
+      turnIndex: Number(state.turnIndex),
+      activePlayerNumber: Number(state.activePlayerNumber),
+      isBonusTurn: Boolean(state.isBonusTurn),
+    };
+  }
+
+  isSameOnlineTurn(state, key) {
+    return Boolean(state && key && state.status === 'playing' &&
+      state.activePlayerNumber === this.onlinePlayerNumber &&
+      Number(state.turnIndex) === key.turnIndex &&
+      Number(state.activePlayerNumber) === key.activePlayerNumber &&
+      Boolean(state.isBonusTurn) === key.isBonusTurn);
+  }
+
+  queueOnlineSubmit(state = this.onlineState) {
+    if (!state || state.status !== 'playing' || state.activePlayerNumber !== this.onlinePlayerNumber) return false;
+    this.pendingOnlineSubmitKey = this.onlineTurnKey(state);
+    return true;
+  }
+
+  processPendingOnlineSubmit(state) {
+    const key = this.pendingOnlineSubmitKey;
+    if (!key) return;
+    if (!this.isSameOnlineTurn(state, key)) {
+      this.pendingOnlineSubmitKey = null;
+      return;
+    }
+    if (state.pendingEffect) return;
+    this.pendingOnlineSubmitKey = null;
+    this.time.delayedCall(0, () => {
+      const current = this.onlineState;
+      if (!this.gameOver && this.isSameOnlineTurn(current, key)) this.submit(false, false, true);
     });
   }
 
@@ -1979,6 +2041,7 @@ class GameScene extends Phaser.Scene {
       this.activePlayer = Number.isInteger(state.winnerSide) ? state.winnerSide : this.activePlayer;
       this.endGame('First to ' + state.targetScore + ' points wins.');
     }
+    this.processPendingOnlineSubmit(state);
   }
 
   // Draw the same cyan square used by local shuffle animation around server-moved tiles.
@@ -2339,19 +2402,37 @@ class GameScene extends Phaser.Scene {
   }
 
   // -------------------------------------------------------------- submit
-  async submit(fromAI = false, forced = false) {
+  async submit(fromAI = false, forced = false, queued = false) {
     if (this.online) {
+      const state = this.onlineState;
+      if (!forced && !fromAI && state && state.status === 'playing' &&
+          state.activePlayerNumber === this.onlinePlayerNumber && state.pendingEffect) {
+        const alreadyQueued = Boolean(this.pendingOnlineSubmitKey);
+        this.queueOnlineSubmit(state);
+        if (!alreadyQueued) this.showToast('Submit queued until the current move finishes.', 1800);
+        return;
+      }
       const sent = this.sendOnlineAction({ type: 'submit' });
       if (sent) {
+        this.pendingOnlineSubmitKey = null;
         // Freeze the submitting player's display until the authoritative next-turn state arrives.
         this.onlineSubmitPending = true;
         this.turnClock.stop();
       }
       return;
     }
-    // A late submit is normally ignored. Forced is used only by the turn deadline to resolve a pick.
-    if (this.busy || this.turnEnding || this.gameOver || (this.turnClock.expired() && !forced)) return;
-    if (!forced && !fromAI && (this.panelOpen || this.isAITurn())) return;
+    // If Submit is tapped during a flip, hazard or other board animation, remember the request
+    // instead of silently ignoring it. The same turn will be submitted when it becomes idle.
+    if (this.turnEnding || this.gameOver || (this.turnClock.expired() && !forced && !queued)) return;
+    if (this.busy) {
+      if (!forced && !fromAI && !queued && this.modeCfg.twoPlayers && !this.isAITurn()) {
+        this.pendingSubmitTurnId = this.turnId;
+        if (this.modeCfg.turnClock) this.turnClock.stop();
+        this.showToast('Submit queued until the current move finishes.', 1800);
+      }
+      return;
+    }
+    if (!forced && !fromAI && !queued && (this.panelOpen || this.isAITurn())) return;
 
     // The outgoing player's clock must not consume time spent resolving a submitted move.
     // startTurn() starts a fresh deadline for the next player after board resolution.
