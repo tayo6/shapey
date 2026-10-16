@@ -257,7 +257,7 @@ async function run() {
     assert.equal(finalPoll.poll.totalVotes, 1);
     assert.equal(finalPoll.poll.counts[poll.poll.options[0].tileId], 1);
     const postPollTurn = await tagClients[0].waitFor((message) =>
-      message.type === "game_state" && message.state?.revision > tagPlaying[0].revision + 1 &&
+      message.type === "game_state" && message.state?.revision > tagPlaying[0].revision + 2 &&
       message.state?.activePlayerNumber === 1 && message.state?.selectedTileIds?.length === 1,
       WAIT_MS, "Tag player's turn and selected shape are restored after poll");
     let tagRevision = postPollTurn.state.revision;
