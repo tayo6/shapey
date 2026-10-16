@@ -49,6 +49,26 @@
     };
   }
 
+  // Ordinary versus turns alternate between the two sides. Return null for an invalid owner
+  // so endTurn() can stop safely instead of starting a turn for an undefined player.
+  function nextVersusPlayer(activePlayer) {
+    if (activePlayer === 0) return 1;
+    if (activePlayer === 1) return 0;
+    return null;
+  }
+
+  // Tag rotates partners every other turn: P1, P3, P2, P4, then repeat.
+  // turnNumber is zero-based and only advances for normal turns, not Double Play turns.
+  function tagMemberForTurn(turnNumber) {
+    if (!Number.isInteger(turnNumber) || turnNumber < 0) return 0;
+    return Math.floor(turnNumber / 2) % 2;
+  }
+
+  // Double Play grants exactly one repeated turn, never a chain of bonus turns.
+  function shouldGrantDoublePlay(isBonusTurn, doublePlayPendingPlayer, activePlayer) {
+    return !isBonusTurn && Number.isInteger(activePlayer) && doublePlayPendingPlayer === activePlayer;
+  }
+
   // Only Professional AI uses the shorter 30-second turn; all other versus turns use 45 seconds.
   function turnDurationForMode(mode, difficulty, standardMs = 45000, professionalMs = 30000) {
     return mode === 'ai' && difficulty === 'pro' ? professionalMs : standardMs;
@@ -85,6 +105,9 @@
     penaltyToApply,
     targetScoreForMode,
     turnDurationForMode,
+    nextVersusPlayer,
+    tagMemberForTurn,
+    shouldGrantDoublePlay,
     initialStarBalance,
     nextMatchStreak,
     hasReachedTarget,
