@@ -473,7 +473,7 @@ function renderBoard(state, previousState = null, animate = false) {
       : tileData.selected ? '3' : (isClickableOption || isThisVote || isWinner ? '6' : '1');
 
     const badge = tile.querySelector('.tile-vote-count');
-    if (badge && poll && poll.closed && isPollOption && totalVotes > 0) {
+    if (badge && poll && poll.closed && isPollOption && totalVotes > 0 && voteCount > 0) {
       badge.hidden = false;
       badge.textContent = (percentByTileId.get(id) || 0) + '%';
     } else if (badge) {
