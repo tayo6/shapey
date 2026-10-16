@@ -60,6 +60,7 @@
     .room-card { display:grid; gap:calc(var(--u) * 12); text-transform:uppercase; }
     .room-card .top { display:flex; justify-content:space-between; align-items:center; gap:calc(var(--u) * 12); }
     .room-card h3 { margin:0; }
+    .pills { display:flex; gap:calc(var(--u) * 8); }
     .tag-pill { padding:calc(var(--u) * 6) calc(var(--u) * 14); background:var(--dark); border:calc(var(--u) * 3) solid var(--gold); color:var(--sand); font-size:max(11px, calc(var(--u) * 20)); }
     .tag-pill.live { color:var(--star); border-color:var(--star); }
     .score-row { display:flex; align-items:center; justify-content:center; gap:calc(var(--u) * 14); }
@@ -158,6 +159,7 @@
     <button type="button" class="wood is-active" data-mode="all" aria-pressed="true">ALL</button>
     <button type="button" class="wood" data-mode="tag" aria-pressed="false">TAG: 2 VS 2</button>
     <button type="button" class="wood" data-mode="pvp" aria-pressed="false">PLAYER 1 VS PLAYER 2</button>
+    <button type="button" class="wood" data-mode="ai" aria-pressed="false" hidden>AI VS AI</button>
   </div>
   <div id="statusChips" class="filter-row" role="group" aria-label="Filter by status">
     <button type="button" class="wood is-active" data-status="live" aria-pressed="true">LIVE</button>
@@ -249,6 +251,8 @@
   </div>
 </main>
 
+<script src="src/rules.js"></script>
+<script src="staging/demo-room.js"></script> <!-- developer demo room; delete this line and the file when development is done -->
 <script src="staging/audience.js"></script>
 </body>
 </html>
