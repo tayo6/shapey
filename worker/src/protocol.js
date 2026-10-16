@@ -11,6 +11,11 @@ export const MESSAGE_RATE_LIMIT = 60;
 export const MAX_MESSAGE_BYTES = 4096;
 export const ROOM_CREATE_RATE_WINDOW_MS = 10 * 60 * 1000;
 export const ROOM_CREATE_RATE_LIMIT = 5;
+export const SUPPORTED_BOARD_SIZES = Object.freeze([5, 6, 7]);
+
+export function isBoardSize(value) {
+  return Number.isInteger(value) && SUPPORTED_BOARD_SIZES.includes(value);
+}
 
 export function isAllowedOrigin(origin) {
   return typeof origin === "string" && ALLOWED_ORIGINS.includes(origin);
