@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { chromium } from "playwright";
 
 const PAGE_URL = process.env.SHAPEY_BROWSER_URL ||
-  "http://127.0.0.1:8080/index.html?api=http://127.0.0.1:8787";
+  "http://127.0.0.1:8080/staging/index.html?api=http://127.0.0.1:8787";
 const TIMEOUT = 45_000;
 
 async function clickWorld(page, x, y) {
