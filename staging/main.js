@@ -1242,7 +1242,7 @@ class GameScene extends Phaser.Scene {
     };
     const actions = this.mode === 'alone'
       ? ['settings', 'submit']
-      : this.mode === 'tag'
+      : ['pvp', 'tag'].includes(this.mode)
         ? ['settings', 'submit', 'polls', 'inventory']
         : ['settings', 'submit', 'inventory'];
     // Keep each mode's icons centred and remove controls that mode does not support.
@@ -1276,7 +1276,7 @@ class GameScene extends Phaser.Scene {
     if (polls) {
       polls.setInteractive({ useHandCursor: true });
       polls.on('pointerdown', () => {
-        if (this.modeCfg.teams && !this.panelOpen && !this.inventoryOpen) this.showAudiencePoll();
+        if ((this.mode === 'pvp' || this.modeCfg.teams) && !this.panelOpen && !this.inventoryOpen) this.showAudiencePoll();
       });
     }
 
@@ -1620,12 +1620,12 @@ class GameScene extends Phaser.Scene {
     this.closeAudiencePoll();
     if (this.gameOver) return;
     if (this.online) {
-      if (!this.modeCfg.teams || !this.onlineSocket || this.onlineSocket.readyState !== WebSocket.OPEN) {
-        this.showToast('Live audience polling requires a connected Tag room.', 2500);
+      if (!['pvp', 'tag'].includes(this.mode) || !this.onlineSocket || this.onlineSocket.readyState !== WebSocket.OPEN) {
+        this.showToast('Ask the Audience is available in connected online matches.', 2500);
         return;
       }
       this.onlineSocket.send(JSON.stringify({ type: 'audience_poll_start' }));
-      this.showToast('Opening a live poll for spectators…', 1800);
+      this.showToast('Asking the audience to help match your first shape…', 1800);
       return;
     }
     this.pollUI = [];
@@ -1683,14 +1683,11 @@ class GameScene extends Phaser.Scene {
       () => this.closeAudiencePoll(), 252).forEach(add);
   }
 
-  // Online poll, modelled on "Ask the Audience": while the audience votes the contestant sees the
-  // lettered options and a countdown only; the percentages are revealed when voting closes.
-  // Only the team that opened the poll sees it, so the other team never sees the audience's advice.
+  // Both opponents see the shared Ask the Audience poll and final leaderboard.
+  // Only the player who opened it can choose a result; the other player can watch but not vote.
   renderOnlineAudiencePoll(poll) {
     if (!poll || this.gameOver) { this.closeAudiencePoll(); return; }
-    const mySide = this.onlinePlayerNumber ? (this.onlinePlayerNumber <= 2 ? 0 : 1) : null;
-    const pollSide = Number(poll.startedByPlayer) <= 2 ? 0 : 1;
-    if (mySide === null || mySide !== pollSide) { this.closeAudiencePoll(); return; }
+    const requestedByMe = Number(poll.startedByPlayer) === Number(this.onlinePlayerNumber);
     const key = poll.id + ':' + (poll.closed ? 'closed' : 'open');
     if (this.dismissedPollKey === key) return; // the player closed this view; do not pop it up again
     if (this.pollShownKey === key && this.pollUI && this.pollUI.length) return; // nothing new to draw
@@ -1741,15 +1738,25 @@ class GameScene extends Phaser.Scene {
     }
     options.forEach((shape, index) => {
       const y = 540 + index * 80;
+      const leader = poll.closed && totalVotes > 0 && counts[index] === best;
+      if (poll.closed && requestedByMe) {
+        const choice = this.add.rectangle(GAME_WIDTH / 2, y, 610, 66, 0x000000, 0.001)
+          .setInteractive({ useHandCursor: true }).setDepth(252);
+        this.pollUI.push(choice);
+        choice.on('pointerdown', () => {
+          this.audienceSuggestedShape = shape;
+          this.dismissedPollKey = key;
+          this.closeAudiencePoll();
+          this.showToast('Audience suggestion: ' + String(shape).toUpperCase() + '. Choose a matching tile, or continue without the suggestion.', 4200);
+        });
+      }
       add(this.add.text(78, y, String.fromCharCode(65 + index) + '  ' + String(shape).toUpperCase(), {
         fontFamily: FONT, fontSize: '20px', color: '#fff2c7',
         stroke: '#3a2112', strokeThickness: 4,
       }).setOrigin(0, 0.5));
-      add(this.add.rectangle(270, y, 288, 24, 0x25180f, 1).setOrigin(0, 0.5));
+      add(this.add.rectangle(270, y, 288, 24, 0x25180f, 1));
       if (poll.closed) {
-        const leader = totalVotes > 0 && counts[index] === best;
-        add(this.add.rectangle(270, y, Math.max(3, 2.88 * percents[index]), 18, leader ? 0xffd45e : 0xb98a3c, 1)
-          .setOrigin(0, 0.5));
+        add(this.add.rectangle(270, y, Math.max(3, 2.88 * percents[index]), 18, leader ? 0xffd45e : 0xb98a3c, 1));
         add(this.add.text(625, y, percents[index] + '%', {
           fontFamily: FONT, fontSize: '22px', color: leader ? '#ffe36e' : '#ffffff',
           stroke: '#3a2112', strokeThickness: 4, align: 'right',
@@ -1757,8 +1764,8 @@ class GameScene extends Phaser.Scene {
       }
     });
     woodButton(this, GAME_WIDTH / 2, 885, 420, 82,
-      poll.closed ? 'CLOSE RESULTS' : 'HIDE', 30,
-      () => { this.dismissedPollKey = key; this.closeAudiencePoll(); }, 252).forEach(add);
+      poll.closed ? (requestedByMe ? 'IGNORE RESULTS' : 'CLOSE RESULTS') : 'HIDE', 30,
+      () => { this.dismissedPollKey = key; this.closeAudiencePoll(); }, 253).forEach(add);
   }
 
   closeAudiencePoll() {
