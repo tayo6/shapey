@@ -67,13 +67,10 @@ jobs:
           backend_rooms_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 1 -H 'Origin: https://shapey-audience-preview.hellohuman100.workers.dev' -o /tmp/backend-rooms.json -w '%{http_code}' 'https://shapey-multiplayer-staging.hellohuman100.workers.dev/api/rooms')"
           echo "Direct staging room-directory status: $backend_rooms_status"
           cat /tmp/backend-rooms.json
-          preview_rooms_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 1 -H 'Origin: https://shapey-audience-preview.hellohuman100.workers.dev' -o /tmp/preview-rooms.json -w '%{http_code}' "$base/api/rooms")"
-          echo "Preview room-directory status: $preview_rooms_status"
-          cat /tmp/preview-rooms.json
           test "$backend_rooms_status" = 200
-          test "$preview_rooms_status" = 200
           grep -q '"rooms":' /tmp/backend-rooms.json
-          grep -q '"rooms":' /tmp/preview-rooms.json
+          grep -Fq "https://shapey-multiplayer-staging.hellohuman100.workers.dev" /tmp/audience.js
+          grep -Fq "https://shapey-multiplayer-staging.hellohuman100.workers.dev" /tmp/staging-main.js
           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/src/rules.js" -o /tmp/rules.js
           grep -q 'ShapeyRules' /tmp/rules.js
           # Check assets through the exact preview URL used by the phone, not only on GitHub Pages.
