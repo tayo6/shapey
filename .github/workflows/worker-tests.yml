@@ -3,7 +3,7 @@ name: Multiplayer Worker tests
 on:
   push:
     branches:
-      - feat/authoritative-online-gameplay
+      - staging/audience-room-ui-0003
     paths:
       - "worker/**"
       - "src/**"
