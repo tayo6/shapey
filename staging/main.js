@@ -10,7 +10,14 @@ const urlParams = new URLSearchParams(window.location.search);
 if (urlParams.get('embed') === '1') document.body.classList.add('audience-embed');
 // This file is published only under /staging/ and is pinned to the isolated test Worker.
 // Keep the live site's src/main.js pointed at the production service until staging is approved.
-const MULTIPLAYER_API = location.hostname === 'shapey-audience-preview.hellohuman100.workers.dev' ? location.origin : 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
+const localApiParam = urlParams.get('api');
+const localTestApi = ['localhost', '127.0.0.1'].includes(location.hostname) &&
+  /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/.test(localApiParam || '')
+  ? localApiParam : '';
+const MULTIPLAYER_API = localTestApi ||
+  (location.hostname === 'shapey-audience-preview.hellohuman100.workers.dev'
+    ? location.origin
+    : 'https://shapey-multiplayer-staging.hellohuman100.workers.dev');
 
 const FONT = 'HappySchool';
 const TILE_SIZE = 90;   // every shape tile is drawn at 90 x 90
