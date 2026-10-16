@@ -957,8 +957,8 @@ export class Room extends DurableObject {
     const room = await this.ctx.storage.get("room");
     const game = await this.ctx.storage.get("game");
     const now = Date.now();
-    if (!room || !["tag", "pvp"].includes(room.mode)) {
-      ws.send(JSON.stringify({ type: "error", message: "Audience polls are available in online versus games only." }));
+    if (!room || room.mode !== "tag") {
+      ws.send(JSON.stringify({ type: "error", message: "Audience polls are available in Tag only." }));
       return;
     }
     if (!game || game.status !== "playing" || game.pendingEffect ||
