@@ -1895,12 +1895,31 @@ class GameScene extends Phaser.Scene {
     const previous = this.onlineTilesById || new Map();
     const nextById = new Map();
     const nextGrid = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
+    // Count newly spawned tiles by column so online refills use the same staggered fall as AI vs AI.
+    const newSpawnCountByColumn = new Map();
+    if (!initial && state.status === 'playing' && previous.size > 0) {
+      for (const viewTile of (state.tiles || [])) {
+        if (!previous.has(viewTile.id)) {
+          newSpawnCountByColumn.set(viewTile.col, (newSpawnCountByColumn.get(viewTile.col) || 0) + 1);
+        }
+      }
+    }
     for (const viewTile of (state.tiles || [])) {
       let tile = previous.get(viewTile.id);
       const targetX = this.cellX(viewTile.col);
       const targetY = this.cellY(viewTile.row);
       if (!tile || !tile.active) {
         tile = this.createOnlineTile(viewTile);
+        const isSpawnedTile = !initial && state.status === 'playing' && previous.size > 0 &&
+          !previous.has(viewTile.id);
+        if (isSpawnedTile) {
+          const spawnCount = newSpawnCountByColumn.get(viewTile.col) || 1;
+          const startingRow = viewTile.row - spawnCount;
+          const landingDelay = 40 * Math.max(0, spawnCount - 1 - viewTile.row);
+          // Start above the board, then use the same bounce-and-dust landing as the local game.
+          tile.setPosition(targetX, this.cellY(startingRow));
+          this.fall(tile, targetY, landingDelay, true);
+        }
         if (viewTile.moving) {
           this.addShuffleOutline(tile);
           tile.shuffleBaseDepth = tile.depth;
