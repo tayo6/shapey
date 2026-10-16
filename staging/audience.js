@@ -8,7 +8,7 @@ const SHAPE_FILES = {
   sphere: 'sphere.webp', square: 'square.webp', star: 'star .webp', x: 'x.webp'
 };
 // The game's own mode names (MODES in main.js).
-const MODE_LABELS = { tag: 'TAG: 2 VS 2', pvp: 'PLAYER 1 VS PLAYER 2' };
+const MODE_LABELS = { tag: 'TAG: 2 VS 2', pvp: 'PLAYER 1 VS PLAYER 2', ai: 'AI VS AI' };
 const AVATAR_COLORS = ['#754322', '#8a4f2a', '#5d3a1e', '#9a6a35', '#6b4a2a', '#7c3f1d'];
 
 const $ = (id) => document.getElementById(id);
@@ -65,15 +65,17 @@ function shapeUrl(shape) {
   return new URL('assets/shapes/' + encodeURIComponent(file), document.baseURI).href;
 }
 function text(el, value) { el.textContent = value == null ? '' : String(value); }
-function modeName(mode) { return MODE_LABELS[mode] || MODE_LABELS.pvp; }
+function modeName(mode) { return MODE_LABELS[mode] || (mode ? String(mode).toUpperCase() : MODE_LABELS.pvp); }
+function playerWord(mode) { return mode === 'ai' ? 'AI' : 'Player'; }
+function isDemo(code) { return Boolean(window.ShapeyDemo && window.ShapeyDemo.isDemoCode(code)); }
 function statusName(status) {
   return ({ live: 'Live', starting: 'Starting', ready: 'Ready', waiting: 'Waiting' })[status] || status || 'Unknown';
 }
 function sideOf(mode, playerNumber) { return mode === 'tag' ? (playerNumber <= 2 ? 0 : 1) : playerNumber - 1; }
-function sideNames(mode) { return mode === 'tag' ? ['TEAM 1', 'TEAM 2'] : ['Player 1', 'Player 2']; }
+function sideNames(mode) { return mode === 'tag' ? ['TEAM 1', 'TEAM 2'] : mode === 'ai' ? ['AI 1', 'AI 2'] : ['Player 1', 'Player 2']; }
 // Same wording as the game's turnLabel(): "Team 2: Player 3" in Tag, "Player 1" otherwise.
 function turnLabel(mode, playerNumber) {
-  return mode === 'tag' ? 'Team ' + (sideOf(mode, playerNumber) + 1) + ': Player ' + playerNumber : 'Player ' + playerNumber;
+  return mode === 'tag' ? 'Team ' + (sideOf(mode, playerNumber) + 1) + ': Player ' + playerNumber : playerWord(mode) + ' ' + playerNumber;
 }
 function formatClock(ms) {
   const total = Math.max(0, Math.ceil(ms / 1000));
@@ -228,10 +230,13 @@ function makeRoomCard(room) {
   title.style.setProperty('--fs', 26);
   title.style.setProperty('--st', 6);
   title.style.whiteSpace = 'normal';
-  top.append(title, makePill(room.status));
+  const pills = el('div', 'pills');
+  if (room.demo) pills.append(el('span', 'tag-pill', 'Demo'));
+  pills.append(makePill(room.status));
+  top.append(title, pills);
   card.append(top);
 
-  const names = tag ? ['TEAM 1', 'TEAM 2'] : ['PLAYER 1', 'PLAYER 2'];
+  const names = sideNames(room.mode).map((name) => name.toUpperCase());
   const scores = Array.isArray(room.scores) ? room.scores : [0, 0];
   const row = el('div', 'score-row');
   row.append(el('span', 'side', names[0]), el('b', 'num', Number(scores[0]) || 0), el('span', 'side', '–'),
@@ -248,6 +253,7 @@ function makeRoomCard(room) {
     const minutes = Math.max(0, Math.floor((Date.now() - room.createdAt) / 60000));
     details.push(minutes < 1 ? 'just started' : 'open ' + minutes + ' min');
   }
+  if (room.demo) details.push('two AIs playing, built for testing');
   card.append(el('div', 'sub', details.join(' · ')));
 
   const watch = el('button', 'wood', 'WATCH');
@@ -263,12 +269,15 @@ function updateFilterChips() {
   const matchesMode = (room) => modeFilterValue === 'all' || room.mode === modeFilterValue;
   const byStatus = roomsCache.filter(matchesStatus);
   const byMode = roomsCache.filter(matchesMode);
-  const modeCount = { all: byStatus.length, tag: byStatus.filter((r) => r.mode === 'tag').length, pvp: byStatus.filter((r) => r.mode === 'pvp').length };
+  const modeCount = { all: byStatus.length, tag: byStatus.filter((r) => r.mode === 'tag').length, pvp: byStatus.filter((r) => r.mode === 'pvp').length, ai: byStatus.filter((r) => r.mode === 'ai').length };
+  const hasAi = roomsCache.some((room) => room.mode === 'ai');
+  if (!hasAi && modeFilterValue === 'ai') modeFilterValue = 'all';
   const statusCount = { live: byMode.filter((r) => r.status === 'live').length, waiting: byMode.filter(isWaiting).length, all: byMode.length };
-  const modeNames = { all: 'ALL', tag: MODE_LABELS.tag, pvp: MODE_LABELS.pvp };
+  const modeNames = { all: 'ALL', tag: MODE_LABELS.tag, pvp: MODE_LABELS.pvp, ai: MODE_LABELS.ai };
   const statusNames = { live: 'LIVE', waiting: 'WAITING', all: 'ALL ROOMS' };
   els.modeChips.querySelectorAll('.wood').forEach((chip) => {
     const key = chip.dataset.mode;
+    chip.hidden = key === 'ai' && !hasAi;
     chip.classList.toggle('is-active', key === modeFilterValue);
     chip.setAttribute('aria-pressed', String(key === modeFilterValue));
     text(chip, modeNames[key] + ' (' + modeCount[key] + ')');
@@ -299,6 +308,7 @@ function renderRooms() {
   const noun = filtered.length === 1 ? 'room' : 'rooms';
   setDirectoryStatus(filtered.length + ' ' + noun + ' · updated ' + roomsLoadedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), false);
 }
+function withDemo(rooms) { return window.ShapeyDemo ? [window.ShapeyDemo.summary(), ...rooms] : rooms; }
 async function loadRooms() {
   const seq = ++roomsLoadSeq;
   setDirectoryStatus('Refreshing the room list…', false);
@@ -309,13 +319,20 @@ async function loadRooms() {
     try { data = await response.json(); } catch (_) {}
     if (seq !== roomsLoadSeq) return; // a newer refresh has started; ignore this older answer
     if (!response.ok) throw new Error(data.error || ('Room directory returned HTTP ' + response.status));
-    roomsCache = Array.isArray(data.rooms) ? data.rooms : [];
+    roomsCache = withDemo(Array.isArray(data.rooms) ? data.rooms : []);
     roomsLoadedAt = new Date();
     renderRooms();
   } catch (error) {
     if (seq !== roomsLoadSeq) return;
-    els.rooms.replaceChildren(el('div', 'notice', error.message || 'The live directory is unavailable. Please retry.'));
-    setDirectoryStatus('Could not load live games. The staging Worker may need its latest update.', true);
+    if (window.ShapeyDemo) {
+      // Keep the demo room usable even when the staging worker is unreachable.
+      roomsCache = withDemo([]);
+      roomsLoadedAt = new Date();
+      renderRooms();
+    } else {
+      els.rooms.replaceChildren(el('div', 'notice', error.message || 'The live directory is unavailable. Please retry.'));
+    }
+    setDirectoryStatus('Could not reach the live room service. ' + (window.ShapeyDemo ? 'Only the demo room is shown.' : 'The staging Worker may need its latest update.'), true);
   } finally {
     if (seq === roomsLoadSeq) els.refreshRooms.disabled = false;
   }
@@ -358,6 +375,9 @@ function renderBoard(state) {
     if (!tile) {
       tile = document.createElement('div');
       tile.className = 'tile';
+      // Place it before it is added, so a new tile appears in its cell instead of sliding in from the corner.
+      tile.style.setProperty('--c', tileData.col);
+      tile.style.setProperty('--r', tileData.row);
       const image = document.createElement('img');
       image.draggable = false;
       tile.append(image);
@@ -415,7 +435,7 @@ function renderGameState(state) {
     }
     lastTurnKey = key;
   } else if (state.status === 'finished') {
-    const winner = Number.isInteger(state.winnerPlayerNumber) ? 'Player ' + state.winnerPlayerNumber + ' wins'
+    const winner = Number.isInteger(state.winnerPlayerNumber) ? playerWord(state.mode) + ' ' + state.winnerPlayerNumber + ' wins'
       : (Number.isInteger(state.winnerSide) ? 'Team ' + (state.winnerSide + 1) + ' wins' : '');
     showToast('Game over' + (winner ? ' · ' + winner : ''), 0, false);
   }
@@ -427,7 +447,8 @@ function renderPlayers() {
   const connected = new Set((roomPlayers || []).filter((p) => p && p.connected).map((p) => p.playerNumber));
   for (let number = 1; number <= (tag ? 4 : 2); number++) {
     const row = el('div', 'roster-row');
-    row.append(el('span', '', (tag ? 'Team ' + (sideOf('tag', number) + 1) + ' · ' : '') + 'Player ' + number),+      el('span', 'state' + (connected.has(number) ? ' on' : ''), connected.has(number) ? 'CONNECTED' : 'WAITING'));
+    row.append(el('span', '', (tag ? 'Team ' + (sideOf('tag', number) + 1) + ' · ' : '') + playerWord(activeMode) + ' ' + number),
+      el('span', 'state' + (connected.has(number) ? ' on' : ''), connected.has(number) ? 'CONNECTED' : 'WAITING'));
     els.playersList.append(row);
   }
   text(els.roomSummary, (modeName(activeMode) + ' · Room ' + activeRoomCode + ' · ' + statusName(roomStatus) + ' · ' + roomSpectators + ' watching').toUpperCase());
@@ -553,7 +574,7 @@ function processMessage(message) {
     roomPlayers = message.players || [];
     roomSpectators = Number(message.spectatorCount) || 0;
     connectionLost = false;
-    setWatchStatus('Connected · you are watching', false);
+    setWatchStatus(isDemo(activeRoomCode) ? 'Demo room · two AIs are playing' : 'Connected · you are watching', false);
     if (message.state) renderGameState(message.state);
     else setWatchStatus('Waiting for all players to join…', false);
     renderPlayers();
@@ -620,10 +641,16 @@ async function startWatching(roomCode, hintedMode, pushUrl) {
   els.watch.hidden = false;
   if (pushUrl) enterWatchView(code);
   try {
-    const roomResponse = await fetch(api('/api/rooms/' + code), { cache: 'no-store' });
-    const details = await roomResponse.json();
-    if (token !== watchToken) return; // the viewer left or opened another room while this was loading
-    if (!roomResponse.ok) throw new Error(details.error || 'Room not found.');
+    const demo = isDemo(code);
+    let details;
+    if (demo) {
+      details = window.ShapeyDemo.details();
+    } else {
+      const roomResponse = await fetch(api('/api/rooms/' + code), { cache: 'no-store' });
+      details = await roomResponse.json();
+      if (token !== watchToken) return; // the viewer left or opened another room while this was loading
+      if (!roomResponse.ok) throw new Error(details.error || 'Room not found.');
+    }
     if (!activeMode) activeMode = details.mode;
     if (details.mode !== activeMode) throw new Error('The shared link has a different game mode. Please open the room again from the live games list.');
     applyModeUI();
@@ -631,7 +658,8 @@ async function startWatching(roomCode, hintedMode, pushUrl) {
     roomPlayers = details.players || [];
     renderPlayers();
     const wsBase = MULTIPLAYER_API.replace(/^http/, 'ws');
-    const socket = new WebSocket(wsBase + '/ws/' + code + '?mode=' + encodeURIComponent(activeMode) + '&role=spectator');
+    const socket = demo ? window.ShapeyDemo.createSocket()
+      : new WebSocket(wsBase + '/ws/' + code + '?mode=' + encodeURIComponent(activeMode) + '&role=spectator');
     roomSocket = socket;
     socket.addEventListener('open', () => {
       if (roomSocket === socket) sendSocketMessage({ type: 'spectate' });
