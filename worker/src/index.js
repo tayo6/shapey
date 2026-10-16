@@ -1,0 +1,1150 @@
+import { DurableObject } from "cloudflare:workers";
+import {
+  isAllowedOrigin, isRoomCode, modeDetails, isRoomExpired,
+  roomExpiryDeadline, ROOM_IDLE_TTL_MS, MAX_MESSAGE_BYTES, messageByteLength,
+  nextMessageRateState, nextRoomCreationWindow
+} from "./protocol.js";
+import {
+  createGameState, gameViewForPlayer, gameViewForSpectator, applyGameAction,
+  advanceGameByTime, nextGameDeadline, SHAPE_KEYS
+} from "./game-engine.js";
+
+const MAX_SPECTATORS_PER_ROOM = 100;
+const MAX_CHAT_CHARS = 280;
+const CHAT_HISTORY_LIMIT = 50;
+const AUDIENCE_POLL_MS = 30_000;
+const LIVE_DIRECTORY_OBJECT_NAME = "shapey-live-directory-v1";
+const LIVE_DIRECTORY_PREFIX = "listed-room:";
+const LIVE_DIRECTORY_STALE_MS = 5 * 60_000;
+const LIVE_DIRECTORY_REFRESH_MS = 45_000;
+
+function shortRandomId() {
+  return newSeatToken().slice(0, 12).toUpperCase();
+}
+
+function cleanChatText(value) {
+  if (typeof value !== "string") return "";
+  return value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, MAX_CHAT_CHARS);
+}
+
+function audiencePollSnapshot(poll) {
+  if (!poll) return null;
+  const counts = Object.fromEntries(poll.options.map(option => [option.tileId, 0]));
+  for (const vote of Object.values(poll.votes || {})) {
+    if (Object.prototype.hasOwnProperty.call(counts, vote)) counts[vote] += 1;
+  }
+  return {
+    id: poll.id,
+    startedByPlayer: poll.startedByPlayer,
+    initialShape: poll.initialShape,
+    options: poll.options.map(option => ({ tileId: option.tileId, row: option.row, col: option.col })),
+    counts,
+    totalVotes: Object.values(counts).reduce((sum, value) => sum + value, 0),
+    endsAt: poll.endsAt,
+    closed: Boolean(poll.closed)
+  };
+}
+
+// CORS and WebSocket origin policy share the tested protocol helper.
+
+function corsHeaders(request) {
+  const origin = request.headers.get("Origin") || "";
+  const headers = {
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Vary": "Origin"
+  };
+  if (isAllowedOrigin(origin)) headers["Access-Control-Allow-Origin"] = origin;
+  return headers;
+}
+
+function json(data, status = 200, headers = {}) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json; charset=utf-8", ...headers }
+  });
+}
+
+// Player-seat credentials are generated server-side and stored only as SHA-256 hashes.
+// They let a returning browser reclaim its original seat without putting the secret in a URL.
+function newSeatToken() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function hashSeatToken(token) {
+  const digest = new Uint8Array(await crypto.subtle.digest(
+    "SHA-256", new TextEncoder().encode(token)
+  ));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    const cors = corsHeaders(request);
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+
+    if (url.pathname === "/health" && request.method === "GET") {
+      return json({
+        ok: true,
+        service: "shapey-multiplayer",
+        stage: "authoritative-gameplay-v1",
+        protocolVersion: 1
+      }, 200, cors);
+    }
+
+    if (url.pathname === "/api/rooms" && request.method === "GET") {
+      if (!isAllowedOrigin(request.headers.get("Origin") || "")) {
+        return json({ error: "Origin not allowed." }, 403, cors);
+      }
+      const directory = env.ROOMS.get(env.ROOMS.idFromName(LIVE_DIRECTORY_OBJECT_NAME));
+      const target = new URL("https://directory.internal/directory/list");
+      for (const key of ["mode", "status"]) {
+        const value = url.searchParams.get(key);
+        if (value) target.searchParams.set(key, value);
+      }
+      const response = await directory.fetch(target.toString());
+      const payload = await response.json();
+      return json(payload, response.status, { ...cors, "Cache-Control": "no-store" });
+    }
+
+    if (url.pathname === "/api/rooms" && request.method === "POST") {
+      // Origin is a browser abuse barrier, not authentication. The per-IP limit below also
+      // constrains direct API clients that forge Origin headers.
+      if (!isAllowedOrigin(request.headers.get("Origin") || "")) {
+        return json({ error: "Origin not allowed." }, 403, cors);
+      }
+      const clientAddress = request.headers.get("CF-Connecting-IP") || "unknown";
+      const digest = new Uint8Array(await crypto.subtle.digest(
+        "SHA-256", new TextEncoder().encode(clientAddress)
+      ));
+      const limiterKey = Array.from(digest.slice(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      const limiter = env.ROOMS.get(env.ROOMS.idFromName("create-limit:" + limiterKey));
+      const limited = await limiter.fetch("https://room.internal/rate-limit", { method: "POST" });
+      if (limited.status === 429) {
+        const detail = await limited.json();
+        const retryAfter = limited.headers.get("Retry-After");
+        return json(detail, 429, retryAfter ? { ...cors, "Retry-After": retryAfter } : cors);
+      }
+      if (!limited.ok) return json({ error: "Room creation is temporarily unavailable. Please retry later." }, 503, cors);
+
+      let body;
+      try { body = await request.json(); }
+      catch { return json({ error: "Send a JSON body with mode set to pvp or tag." }, 400, cors); }
+      const details = modeDetails(body?.mode);
+      if (!details) return json({ error: "Choose Player 1 vs Player 2 (pvp), Tag (tag), or AI vs AI demo (demo)." }, 400, cors);
+      const demoControlToken = details.mode === "demo" ? newSeatToken() : null;
+
+      const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const bytes = new Uint8Array(6);
+        crypto.getRandomValues(bytes);
+        const code = Array.from(bytes, b => alphabet[b % alphabet.length]).join("");
+        const stub = env.ROOMS.get(env.ROOMS.idFromName(code));
+        const created = await stub.fetch("https://room.internal/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ roomCode: code, ...details, demoControlToken })
+        });
+        if (created.status === 409) continue;
+        if (!created.ok) return json({ error: "Could not reserve a room. Please try again." }, 503, cors);
+        return json({
+          roomCode: code,
+          websocketUrl: url.origin.replace(/^http/, "ws") + "/ws/" + code,
+          status: details.mode === "demo" ? "starting" : "waiting",
+          ...details,
+          ...(demoControlToken ? { demoControlToken } : {})
+        }, 201, cors);
+      }
+      return json({ error: "Could not create a unique room code. Please try again." }, 503, cors);
+    }
+
+    const infoMatch = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]{6})$/);
+    if (infoMatch && request.method === "GET") {
+      const stub = env.ROOMS.get(env.ROOMS.idFromName(infoMatch[1]));
+      const info = await stub.fetch("https://room.internal/info");
+      const data = await info.json();
+      return json(data, info.status, cors);
+    }
+
+    const match = url.pathname.match(/^\/ws\/([A-Z0-9]{6})$/);
+    if (match && request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
+      // CORS does not protect WebSocket handshakes; validate Origin explicitly.
+      if (!isAllowedOrigin(request.headers.get("Origin") || "")) {
+        return json({ error: "Origin not allowed." }, 403, cors);
+      }
+      return env.ROOMS.get(env.ROOMS.idFromName(match[1])).fetch(request);
+    }
+
+    return json({
+      error: "Not found",
+      endpoints: ["GET /health", "POST /api/rooms", "GET /api/rooms/{ROOMCODE}", "WebSocket /ws/{ROOMCODE}?mode=pvp|tag"]
+    }, 404, cors);
+  }
+};
+
+export class Room extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.ctx = ctx;
+    this.lastDirectorySignature = null;
+    this.lastDirectoryPublishedAt = 0;
+    // Serialize seat claims so simultaneous initial joins cannot claim the same seat.
+    this.joinQueue = Promise.resolve();
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+
+    // A dedicated singleton instance of this class stores lightweight public room cards.
+    // Its internal routes are only reached through the Worker binding, never the public router.
+    if (url.pathname === "/directory/list" && request.method === "GET") {
+      const now = Date.now();
+      const stored = await this.ctx.storage.list({ prefix: LIVE_DIRECTORY_PREFIX });
+      const rooms = [];
+      for (const [key, room] of stored.entries()) {
+        if (!room || !Number.isFinite(room.expiresAt) || room.expiresAt <= now ||
+            !["waiting", "ready", "starting", "live"].includes(room.status)) {
+          await this.ctx.storage.delete(key);
+          continue;
+        }
+        rooms.push(room);
+      }
+      const requestedMode = url.searchParams.get("mode");
+      const requestedStatus = url.searchParams.get("status");
+      const filtered = rooms.filter(room =>
+        (!["pvp", "tag"].includes(requestedMode) || room.mode === requestedMode) &&
+        (!["waiting", "ready", "starting", "live"].includes(requestedStatus) || room.status === requestedStatus));
+      const statusRank = { live: 0, starting: 1, ready: 2, waiting: 3 };
+      filtered.sort((a, b) => statusRank[a.status] - statusRank[b.status] || b.updatedAt - a.updatedAt);
+      return json({ rooms: filtered, count: filtered.length, generatedAt: now }, 200, { "Cache-Control": "no-store" });
+    }
+
+    if (url.pathname === "/directory/upsert" && request.method === "POST") {
+      let data;
+      try { data = await request.json(); }
+      catch { return json({ error: "Invalid directory entry." }, 400); }
+      const details = modeDetails(data?.mode);
+      const statuses = ["waiting", "ready", "starting", "live"];
+      if (!details || !isRoomCode(data?.roomCode) || !statuses.includes(data?.status)) {
+        return json({ error: "Invalid directory entry." }, 400);
+      }
+      const now = Date.now();
+      const scores = Array.isArray(data.scores) && data.scores.length >= 2 &&
+        data.scores.slice(0, 2).every(Number.isFinite) ? data.scores.slice(0, 2) : [0, 0];
+      const activePlayerNumber = Number.isInteger(data.activePlayerNumber) &&
+        data.activePlayerNumber >= 1 && data.activePlayerNumber <= details.maxPlayers
+        ? data.activePlayerNumber : null;
+      const summary = {
+        roomCode: data.roomCode,
+        mode: details.mode,
+        status: data.status,
+        playerCount: Number.isInteger(data.playerCount) ? Math.min(details.maxPlayers, Math.max(0, data.playerCount)) : 0,
+        maxPlayers: details.maxPlayers,
+        spectatorCount: Number.isInteger(data.spectatorCount) ? Math.min(MAX_SPECTATORS_PER_ROOM, Math.max(0, data.spectatorCount)) : 0,
+        scores,
+        activePlayerNumber,
+        targetScore: Number.isFinite(data.targetScore) ? data.targetScore : (details.mode === "tag" ? 200 : 100),
+        createdAt: Number.isFinite(data.createdAt) ? data.createdAt : now,
+        updatedAt: now,
+        expiresAt: now + LIVE_DIRECTORY_STALE_MS
+      };
+      await this.ctx.storage.put(LIVE_DIRECTORY_PREFIX + summary.roomCode, summary);
+      return json({ ok: true });
+    }
+
+    if (url.pathname === "/directory/remove" && request.method === "DELETE") {
+      const roomCode = url.searchParams.get("roomCode");
+      if (!isRoomCode(roomCode)) return json({ error: "Invalid room code." }, 400);
+      await this.ctx.storage.delete(LIVE_DIRECTORY_PREFIX + roomCode);
+      return json({ ok: true });
+    }
+
+    if (url.pathname === "/rate-limit" && request.method === "POST") {
+      const timestamps = await this.ctx.storage.get("roomCreationTimestamps") || [];
+      const result = nextRoomCreationWindow(timestamps, Date.now());
+      await this.ctx.storage.put("roomCreationTimestamps", result.timestamps);
+      if (!result.allowed) {
+        return json(
+          { error: "Too many rooms created from this connection. Please wait before trying again." },
+          429,
+          { "Retry-After": String(Math.ceil(result.retryAfterMs / 1000)) }
+        );
+      }
+      return json({ ok: true });
+    }
+
+    if (url.pathname === "/create" && request.method === "POST") {
+      let data;
+      try { data = await request.json(); }
+      catch { return json({ error: "Invalid room setup." }, 400); }
+      const details = modeDetails(data?.mode);
+      if (!details || data.maxPlayers !== details.maxPlayers || !isRoomCode(data.roomCode) ||
+          (details.mode === "demo" && typeof data.demoControlToken !== "string")) {
+        return json({ error: "Invalid room setup." }, 400);
+      }
+      const existing = await this.ctx.storage.get("room");
+      if (existing) return json({ error: "Room code collision." }, 409);
+      const now = Date.now();
+      // Clear stale state if a random room code is ever reused after an earlier room expired.
+      await this.ctx.storage.delete("game");
+      await this.ctx.storage.delete("seatRegistry");
+      await this.ctx.storage.delete("audiencePoll");
+      await this.ctx.storage.delete("chatHistory");
+      await this.ctx.storage.put("seatRegistry", { seats: [] });
+      await this.ctx.storage.put("room", {
+        roomCode: data.roomCode,
+        mode: details.mode,
+        maxPlayers: details.maxPlayers,
+        demoControlTokenHash: data.demoControlToken ? await hashSeatToken(data.demoControlToken) : null,
+        createdAt: now,
+        lastActivityAt: now
+      });
+      if (details.mode === "demo") {
+        // A demo is an automatically running PvP game whose two player seats are controlled by the Worker.
+        const game = createGameState({ roomCode: data.roomCode, mode: "pvp", playerNumbers: [1, 2], now });
+        // Keep the sample short enough to watch on one device; regular PvP still targets 100.
+        game.targetScore = 10;
+        game.demoNextActionAt = Number(game.reviewEndsAt) + 500;
+        game.demoPickPlan = null;
+        game.demoSubmitAt = null;
+        game.demoCleanupAt = null;
+        await this.ctx.storage.put("game", game);
+      }
+      // Schedule the opening study phase, AI turns, and eventual demo cleanup as well as room expiry.
+      await this.scheduleAlarm();
+      await this.publishRoomSummary(true);
+      return json({ ok: true });
+    }
+
+    const room = await this.ctx.storage.get("room");
+    if (!room) return json({ error: "Room not found. Check the code or create a new room." }, 404);
+
+    if (isRoomExpired(room, Date.now(), this.connectedCount())) {
+      for (const socket of this.ctx.getWebSockets()) {
+        try { socket.close(4000, "Room expired"); } catch {}
+      }
+      await this.removeRoomFromDirectory(room.roomCode);
+      await this.ctx.storage.delete("room");
+      await this.ctx.storage.delete("game");
+      await this.ctx.storage.delete("seatRegistry");
+      await this.ctx.storage.deleteAlarm();
+      return json({ error: "Room expired. Please create a new room." }, 410);
+    }
+
+    if (url.pathname === "/info" && request.method === "GET") {
+      const players = this.playerList();
+      const connected = players.filter(player => player.connected).length;
+      const game = await this.ctx.storage.get("game");
+      const status = game?.status === "finished" ? "finished" : game?.status === "playing" ? "live" :
+        game?.status === "study" ? "starting" : room.mode === "demo" ? "starting" : connected >= room.maxPlayers ? "ready" : "waiting";
+      return json({ roomCode: room.roomCode, mode: room.mode, maxPlayers: room.maxPlayers, status, players });
+    }
+
+    if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+      return new Response("WebSocket upgrade required", { status: 426 });
+    }
+
+    const requestedMode = url.searchParams.get("mode");
+    if (requestedMode !== room.mode) {
+      return json({
+        error: "This room is for " + (room.mode === "tag" ? "Tag (2 vs 2)" : room.mode === "demo" ? "AI vs AI demo" : "Player 1 vs Player 2") + "."
+      }, 409);
+    }
+
+    // Player sockets are capped at room size; spectators have a separate, bounded capacity.
+    const role = url.searchParams.get("role") === "spectator" ? "spectator" : "player";
+    const openSockets = this.ctx.getWebSockets().filter(ws => ws.readyState === WebSocket.OPEN);
+    const roleOf = ws => (ws.deserializeAttachment() || {}).role || "player";
+    if (role === "spectator") {
+      const spectatorCount = openSockets.filter(ws => roleOf(ws) === "spectator").length;
+      if (spectatorCount >= MAX_SPECTATORS_PER_ROOM) {
+        return json({ error: "This room has reached its spectator limit." }, 429);
+      }
+    } else {
+      const playerSockets = openSockets.filter(ws => roleOf(ws) === "player");
+      if (playerSockets.length >= room.maxPlayers) return json({ error: "Room is full." }, 409);
+    }
+
+    const pair = new WebSocketPair();
+    const client = pair[0], server = pair[1];
+    server.serializeAttachment({ playerNumber: null, mode: room.mode, role, spectatorReady: false });
+    this.ctx.acceptWebSocket(server);
+    await this.scheduleAlarm();
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async scheduleAlarm() {
+    const room = await this.ctx.storage.get("room");
+    if (!room) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    const now = Date.now();
+    const roomDeadline = roomExpiryDeadline(room, now, this.connectedCount());
+    const game = await this.ctx.storage.get("game");
+    const gameDeadline = nextGameDeadline(game);
+    const poll = await this.ctx.storage.get("audiencePoll");
+    const pollDeadline = poll && !poll.closed ? poll.endsAt : null;
+    const deadlines = [roomDeadline, gameDeadline, pollDeadline,
+      game?.demoNextActionAt, game?.demoSubmitAt, game?.demoCleanupAt].filter(Number.isFinite);
+    // Keep a room with a connected player but no game on the directory too. Without this
+    // heartbeat, a long lobby wait could outlive its directory listing lease.
+    if (this.connectedCount() > 0 && !game) deadlines.push(now + LIVE_DIRECTORY_REFRESH_MS);
+    if (deadlines.length) await this.ctx.storage.setAlarm(Math.min(...deadlines));
+    else await this.ctx.storage.deleteAlarm();
+    await this.publishRoomSummary();
+  }
+
+  async removeRoomFromDirectory(roomCode) {
+    if (!isRoomCode(roomCode)) return;
+    try {
+      const directory = this.env.ROOMS.get(this.env.ROOMS.idFromName(LIVE_DIRECTORY_OBJECT_NAME));
+      await directory.fetch("https://directory.internal/directory/remove?roomCode=" + roomCode, { method: "DELETE" });
+    } catch (error) {
+      console.error("Could not remove expired Shapey room from live directory:", error);
+    }
+  }
+
+  async publishRoomSummary(force = false) {
+    const room = await this.ctx.storage.get("room");
+    if (!room) return;
+    const game = await this.ctx.storage.get("game");
+    const status = game?.status === "finished" ? "finished" :
+      game?.status === "playing" ? "live" :
+      game?.status === "study" ? "starting" :
+      room.mode === "demo" ? "starting" :
+      this.connectedCount() >= room.maxPlayers ? "ready" : "waiting";
+    if (status === "finished") {
+      await this.removeRoomFromDirectory(room.roomCode);
+      this.lastDirectorySignature = null;
+      this.lastDirectoryPublishedAt = 0;
+      return;
+    }
+    const connectedPlayerNumbers = new Set(this.playerList()
+      .filter(player => player.connected).map(player => player.playerNumber));
+    const summary = {
+      roomCode: room.roomCode,
+      mode: room.mode,
+      status,
+      playerCount: connectedPlayerNumbers.size,
+      maxPlayers: room.maxPlayers,
+      spectatorCount: this.spectatorCount(),
+      scores: Array.isArray(game?.scores) ? game.scores.slice(0, 2) : [0, 0],
+      activePlayerNumber: Number.isInteger(game?.activePlayerNumber) ? game.activePlayerNumber : null,
+      targetScore: Number.isFinite(game?.targetScore) ? game.targetScore : (room.mode === "tag" ? 200 : 100),
+      createdAt: room.createdAt
+    };
+    const signature = JSON.stringify(summary);
+    const now = Date.now();
+    if (!force && signature === this.lastDirectorySignature && now - this.lastDirectoryPublishedAt < LIVE_DIRECTORY_REFRESH_MS) return;
+    try {
+      const directory = this.env.ROOMS.get(this.env.ROOMS.idFromName(LIVE_DIRECTORY_OBJECT_NAME));
+      const response = await directory.fetch("https://directory.internal/directory/upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(summary)
+      });
+      if (!response.ok) throw new Error("Directory returned HTTP " + response.status);
+      this.lastDirectorySignature = signature;
+      this.lastDirectoryPublishedAt = now;
+    } catch (error) {
+      console.error("Could not update Shapey live directory:", error);
+    }
+  }
+
+  async broadcastGameState(type = "game_state") {
+    const game = await this.ctx.storage.get("game");
+    if (!game) return;
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        if (ws.readyState !== WebSocket.OPEN) continue;
+        const attachment = ws.deserializeAttachment() || {};
+        if (Number.isInteger(attachment.playerNumber)) {
+          ws.send(JSON.stringify({ type, state: gameViewForPlayer(game, attachment.playerNumber) }));
+        } else if (attachment.role === "spectator" && attachment.spectatorReady) {
+          const state = gameViewForSpectator(game);
+          const room = await this.ctx.storage.get("room");
+          if (state && room?.mode === "demo") state.mode = "demo";
+          ws.send(JSON.stringify({ type, state }));
+        }
+      } catch {}
+    }
+  }
+
+  connectedCount() {
+    return this.ctx.getWebSockets().filter(ws => {
+      const attachment = ws.deserializeAttachment() || {};
+      return ws.readyState === WebSocket.OPEN && Number.isInteger(attachment.playerNumber);
+    }).length;
+  }
+
+  playerList() {
+    return this.ctx.getWebSockets()
+      .map(ws => {
+        const attachment = ws.deserializeAttachment() || {};
+        return { playerNumber: attachment.playerNumber, connected: ws.readyState === WebSocket.OPEN };
+      })
+      .filter(player => Number.isInteger(player.playerNumber))
+      .sort((a, b) => a.playerNumber - b.playerNumber);
+  }
+
+  spectatorCount() {
+    return this.ctx.getWebSockets().filter(ws => {
+      const attachment = ws.deserializeAttachment() || {};
+      return ws.readyState === WebSocket.OPEN &&
+        attachment.role === "spectator" && attachment.spectatorReady === true;
+    }).length;
+  }
+
+  broadcast(message) {
+    const payload = JSON.stringify(message);
+    for (const ws of this.ctx.getWebSockets()) {
+      try { if (ws.readyState === WebSocket.OPEN) ws.send(payload); } catch {}
+    }
+  }
+
+  async touchRoom() {
+    const room = await this.ctx.storage.get("room");
+    if (!room) return null;
+    room.lastActivityAt = Date.now();
+    await this.ctx.storage.put("room", room);
+    await this.scheduleAlarm();
+    return room;
+  }
+
+  async closeExpiredAudiencePoll(game, now = Date.now()) {
+    const poll = await this.ctx.storage.get("audiencePoll");
+    if (!poll || poll.closed) return;
+    if (poll.endsAt > now && game && game.status !== "finished" &&
+        game.activePlayerNumber === poll.startedByPlayer) return;
+
+    const closed = { ...poll, closed: true, endsAt: Math.min(poll.endsAt, now) };
+    // The audience gets the full 30 seconds. The requesting player's remaining turn time is paused
+    // during the poll and restored when the audience finishes voting.
+    if (game && game.status === "playing" && game.activePlayerNumber === poll.startedByPlayer &&
+        Number.isFinite(poll.remainingTurnMs)) {
+      game.turnEndsAt = now + Math.max(0, poll.remainingTurnMs);
+      game.revision = (Number(game.revision) || 0) + 1;
+
+      // The demo AIs can accept the audience suggestion if the top-voted hidden tile really matches
+      // the first shape. Otherwise they keep their original matching plan.
+      const votes = Object.values(poll.votes || {});
+      const counts = new Map();
+      for (const tileId of votes) counts.set(tileId, (counts.get(tileId) || 0) + 1);
+      const topCount = Math.max(0, ...counts.values());
+      if (topCount > 0 && (await this.ctx.storage.get("room"))?.mode === "demo" &&
+          game.demoPollTurnIndex === game.turnIndex && Array.isArray(game.demoPickPlan)) {
+        const winningIds = [...counts.entries()].filter(([, count]) => count === topCount).map(([tileId]) => tileId);
+        const chosen = winningIds.map(id => game.tiles.find(tile => tile.id === id))
+          .find(tile => tile && tile.shape === poll.initialShape && !tile.faceUp && !tile.moving && !tile.selected);
+        if (chosen) game.demoPickPlan = [chosen.id, ...game.demoPickPlan.filter(id => id !== chosen.id)].slice(0, 2);
+      }
+      if ((await this.ctx.storage.get("room"))?.mode === "demo") game.demoNextActionAt = now + 300;
+      await this.ctx.storage.put("game", game);
+      await this.broadcastGameState("game_state");
+    }
+    await this.ctx.storage.delete("audiencePoll");
+    this.broadcastAudiencePollState(closed);
+  }
+
+  broadcastAudiencePollState(poll) {
+    this.broadcast({ type: "audience_poll_state", poll: audiencePollSnapshot(poll) });
+  }
+
+  async createAudiencePoll(game, playerNumber, now = Date.now()) {
+    if (!game || game.status !== "playing" || game.pendingEffect ||
+        game.activePlayerNumber !== playerNumber ||
+        !Array.isArray(game.selectedTileIds) || game.selectedTileIds.length !== 1 ||
+        typeof game.selectedShape !== "string") {
+      return null;
+    }
+    const candidates = game.tiles.filter(tile =>
+      !tile.faceUp && !tile.selected && !tile.moving &&
+      !game.selectedTileIds.includes(tile.id) && !game.dummyTileIds.includes(tile.id)
+    );
+    if (candidates.length < 4) return null;
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+    }
+    const remainingTurnMs = Number.isFinite(game.turnEndsAt) ? Math.max(0, game.turnEndsAt - now) : 0;
+    return {
+      id: shortRandomId(),
+      startedByPlayer: playerNumber,
+      startedAt: now,
+      endsAt: now + AUDIENCE_POLL_MS,
+      remainingTurnMs,
+      initialShape: game.selectedShape,
+      options: candidates.slice(0, 4).map(tile => ({ tileId: tile.id, row: tile.row, col: tile.col })),
+      votes: {},
+      closed: false
+    };
+  }
+
+  async publishAudiencePoll(poll, game) {
+    // Pause the player's turn timer for the duration of the poll.
+    game.turnEndsAt = poll.endsAt + poll.remainingTurnMs;
+    game.revision = (Number(game.revision) || 0) + 1;
+    await this.ctx.storage.put("game", game);
+    await this.ctx.storage.put("audiencePoll", poll);
+    await this.broadcastGameState("game_state");
+    this.broadcastAudiencePollState(poll);
+    await this.scheduleAlarm();
+    await this.touchRoom();
+  }
+
+  async deleteRoomData(roomCode, reason = "Room ended") {
+    this.broadcast({ type: "demo_ended", message: reason });
+    for (const socket of this.ctx.getWebSockets()) {
+      try { socket.close(4000, reason); } catch {}
+    }
+    await this.removeRoomFromDirectory(roomCode);
+    for (const key of ["room", "game", "seatRegistry", "audiencePoll", "chatHistory"]) {
+      await this.ctx.storage.delete(key);
+    }
+    await this.ctx.storage.deleteAlarm();
+  }
+
+  async runDemoStep(game, now) {
+    if (!game || game.status === "finished") {
+      if (game && !Number.isFinite(game.demoCleanupAt)) {
+        game.demoCleanupAt = now + 8_000;
+        game.demoNextActionAt = null;
+        game.demoSubmitAt = null;
+        game.demoPickPlan = null;
+        await this.ctx.storage.put("game", game);
+      }
+      return game;
+    }
+    if (game.status !== "playing" || !Number.isFinite(game.demoNextActionAt) || game.demoNextActionAt > now) return game;
+
+    // Let the existing reveal and shuffle animations finish before the demo AI picks again.
+    if (game.pendingEffect || game.reveals?.length || game.shuffles?.length) {
+      game.demoNextActionAt = now + 500;
+      await this.ctx.storage.put("game", game);
+      return game;
+    }
+
+    if (Number.isFinite(game.demoSubmitAt) && game.demoSubmitAt > now) {
+      game.demoNextActionAt = game.demoSubmitAt;
+      await this.ctx.storage.put("game", game);
+      return game;
+    }
+
+    if (Number.isFinite(game.demoSubmitAt) && game.demoSubmitAt <= now) {
+      const result = applyGameAction(game, game.activePlayerNumber, { type: "submit" }, now);
+      if (result.accepted) {
+        game = result.state;
+        game.demoPickPlan = null;
+        game.demoSubmitAt = null;
+        game.demoNextActionAt = game.status === "finished" ? null : now + 1_700;
+        if (game.status === "finished") game.demoCleanupAt = now + 8_000;
+        await this.ctx.storage.put("game", game);
+        await this.broadcastGameState("game_state");
+      } else {
+        game.demoPickPlan = null;
+        game.demoSubmitAt = null;
+        game.demoNextActionAt = now + 1_000;
+        await this.ctx.storage.put("game", game);
+      }
+      return game;
+    }
+
+    if (Array.isArray(game.demoPickPlan) && game.demoPickPlan.length) {
+      const tileId = game.demoPickPlan[0];
+      const tile = game.tiles.find(item => item.id === tileId && !item.faceUp && !item.moving && !item.selected);
+      if (!tile) {
+        game.demoPickPlan = null;
+        game.demoNextActionAt = now + 500;
+        await this.ctx.storage.put("game", game);
+        return game;
+      }
+      const result = applyGameAction(game, game.activePlayerNumber, { type: "pick", tileId }, now);
+      if (result.accepted) {
+        game = result.state;
+        game.demoPickPlan = game.demoPickPlan.slice(1);
+        game.demoNextActionAt = now + 650;
+        if (!game.demoPickPlan.length) {
+          game.demoPickPlan = null;
+          game.demoSubmitAt = now + 700;
+          game.demoNextActionAt = game.demoSubmitAt;
+        }
+        // Every second demo turn pauses after the first revealed shape so spectators can test the live poll.
+        if (game.selectedTileIds.length === 1 && game.turnIndex % 2 === 0 &&
+            game.demoPollTurnIndex !== game.turnIndex) {
+          const poll = await this.createAudiencePoll(game, game.activePlayerNumber, now);
+          if (poll) {
+            game.demoPollTurnIndex = game.turnIndex;
+            game.demoSubmitAt = null;
+            game.demoNextActionAt = poll.endsAt;
+            await this.publishAudiencePoll(poll, game);
+            return game;
+          }
+        }
+        await this.ctx.storage.put("game", game);
+        await this.broadcastGameState("game_state");
+      } else {
+        game.demoPickPlan = null;
+        game.demoSubmitAt = null;
+        game.demoNextActionAt = now + 1_000;
+        await this.ctx.storage.put("game", game);
+      }
+      return game;
+    }
+
+    const groups = new Map();
+    for (const tile of game.tiles) {
+      if (tile.faceUp || tile.moving || tile.selected || !SHAPE_KEYS.includes(tile.shape)) continue;
+      if (!groups.has(tile.shape)) groups.set(tile.shape, []);
+      groups.get(tile.shape).push(tile.id);
+    }
+    const matches = [...groups.values()].filter(ids => ids.length >= 3);
+    if (!matches.length) {
+      game.demoSubmitAt = now;
+      game.demoNextActionAt = now;
+      await this.ctx.storage.put("game", game);
+      return game;
+    }
+    const group = matches[Math.floor(Math.random() * matches.length)].slice();
+    for (let i = group.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [group[i], group[j]] = [group[j], group[i]];
+    }
+    game.demoPickPlan = group.slice(0, 3);
+    game.demoNextActionAt = now + 300;
+    await this.ctx.storage.put("game", game);
+    return game;
+  }
+
+  async alarm() {
+    const room = await this.ctx.storage.get("room");
+    if (!room) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    const now = Date.now();
+    const connected = this.connectedCount();
+    if (isRoomExpired(room, now, connected)) {
+      for (const socket of this.ctx.getWebSockets()) {
+        try { socket.close(4000, "Room expired"); } catch {}
+      }
+      await this.removeRoomFromDirectory(room.roomCode);
+      await this.ctx.storage.delete("room");
+      await this.ctx.storage.delete("game");
+      await this.ctx.storage.delete("seatRegistry");
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+
+    let game = await this.ctx.storage.get("game");
+    if (game && advanceGameByTime(game, now)) {
+      await this.ctx.storage.put("game", game);
+      await this.broadcastGameState("game_state");
+      game = await this.ctx.storage.get("game");
+    }
+    // Close a due poll before the demo AI gets another turn, then let the bot respond to the result.
+    await this.closeExpiredAudiencePoll(game, now);
+    game = await this.ctx.storage.get("game");
+    if (room.mode === "demo" && game) {
+      if (Number.isFinite(game.demoCleanupAt) && game.demoCleanupAt <= now) {
+        await this.deleteRoomData(room.roomCode, "AI vs AI demo finished");
+        return;
+      }
+      game = await this.runDemoStep(game, now);
+    }
+    await this.scheduleAlarm();
+  }
+
+  async joinSeat(ws, data) {
+    const rejectJoin = (message) => {
+      try { ws.send(JSON.stringify({ type: "error", message })); } catch {}
+      try { ws.close(1008, "Seat claim rejected"); } catch {}
+    };
+    // The queue protects the persistent seat registry from overlapping WebSocket join messages.
+    let release;
+    const previousJoin = this.joinQueue;
+    this.joinQueue = new Promise(resolve => { release = resolve; });
+    await previousJoin;
+
+    try {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      const attachment = ws.deserializeAttachment() || {};
+      if (Number.isInteger(attachment.playerNumber)) {
+        rejectJoin("This connection already has a player seat.");
+        return;
+      }
+
+      const room = await this.ctx.storage.get("room");
+      if (!room) {
+        rejectJoin("Room not found. Please create a new room.");
+        return;
+      }
+
+      const suppliedToken = data.seatToken;
+      let registry = await this.ctx.storage.get("seatRegistry") || { seats: [] };
+      if (!Array.isArray(registry.seats)) registry = { seats: [] };
+
+      let seat;
+      let seatToken;
+      if (suppliedToken == null || suppliedToken === "") {
+        // A new device can claim only a seat that has never been assigned in this room.
+        // Previously assigned seats remain reserved for their token for the room's lifetime.
+        const reserved = new Set(registry.seats.map(item => item.playerNumber));
+        let playerNumber = 1;
+        while (reserved.has(playerNumber) && playerNumber <= room.maxPlayers) playerNumber++;
+        if (playerNumber > room.maxPlayers) {
+          rejectJoin("Every seat in this room has already been assigned. Reconnect from the device that first claimed your seat, or create a new room.");
+          return;
+        }
+        seatToken = newSeatToken();
+        seat = {
+          playerNumber,
+          tokenHash: await hashSeatToken(seatToken),
+          createdAt: Date.now()
+        };
+        registry.seats.push(seat);
+      } else {
+        if (typeof suppliedToken !== "string" || !/^[a-f0-9]{64}$/.test(suppliedToken)) {
+          rejectJoin("The saved player session is invalid. Create a new room or clear the saved session for this room.");
+          return;
+        }
+        const tokenHash = await hashSeatToken(suppliedToken);
+        seat = registry.seats.find(item => item.tokenHash === tokenHash);
+        if (!seat || !Number.isInteger(seat.playerNumber) ||
+            seat.playerNumber < 1 || seat.playerNumber > room.maxPlayers) {
+          rejectJoin("That player session is not valid for this room. Create a new room.");
+          return;
+        }
+        seatToken = suppliedToken;
+      }
+
+      const playerNumber = seat.playerNumber;
+      const duplicate = this.ctx.getWebSockets().some(other => {
+        if (other === ws || other.readyState !== WebSocket.OPEN) return false;
+        return (other.deserializeAttachment() || {}).playerNumber === playerNumber;
+      });
+      if (duplicate) {
+        rejectJoin("That player seat is already connected on another device.");
+        try { ws.close(1008, "Seat already connected"); } catch {}
+        return;
+      }
+
+      // Commit the seat assignment before any broadcast or game-start decision.
+      ws.serializeAttachment({ ...attachment, playerNumber, mode: room.mode });
+      await this.ctx.storage.put("seatRegistry", registry);
+      await this.touchRoom();
+      ws.send(JSON.stringify({
+        type: "welcome",
+        playerNumber,
+        seatToken,
+        roomCode: room.roomCode,
+        mode: room.mode,
+        maxPlayers: room.maxPlayers
+      }));
+      this.broadcast({
+        type: "room_state",
+        roomCode: room.roomCode,
+        mode: room.mode,
+        maxPlayers: room.maxPlayers,
+        status: this.connectedCount() >= room.maxPlayers ? "ready" : "waiting",
+        players: this.playerList()
+      });
+
+      // Once all assigned seats are connected, create the one canonical game state.
+      const connected = this.connectedCount();
+      const existingGame = await this.ctx.storage.get("game");
+      if (connected >= room.maxPlayers && !existingGame) {
+        const playerNumbers = Array.from({ length: room.maxPlayers }, (_, index) => index + 1);
+        const game = createGameState({ roomCode: room.roomCode, mode: room.mode, playerNumbers });
+        await this.ctx.storage.put("game", game);
+        await this.broadcastGameState("game_started");
+      } else if (existingGame) {
+        // A returning device receives the canonical state for its original seat.
+        try {
+          ws.send(JSON.stringify({
+            type: "game_started",
+            state: gameViewForPlayer(existingGame, playerNumber)
+          }));
+        } catch {}
+      }
+      await this.scheduleAlarm();
+    } finally {
+      release();
+    }
+  }
+
+  async joinSpectator(ws) {
+    const attachment = ws.deserializeAttachment() || {};
+    if (attachment.role !== "spectator") {
+      try { ws.send(JSON.stringify({ type: "error", message: "This connection is not a spectator connection." })); } catch {}
+      return;
+    }
+    if (attachment.spectatorReady) return;
+    const room = await this.ctx.storage.get("room");
+    if (!room) {
+      try { ws.send(JSON.stringify({ type: "error", message: "Room not found. Create a new room or check the code." })); } catch {}
+      return;
+    }
+    attachment.spectatorReady = true;
+    attachment.spectatorId = shortRandomId();
+    ws.serializeAttachment(attachment);
+    const game = await this.ctx.storage.get("game");
+    const history = (await this.ctx.storage.get("chatHistory") || []).slice(-CHAT_HISTORY_LIMIT);
+    const poll = await this.ctx.storage.get("audiencePoll");
+    ws.send(JSON.stringify({
+      type: "spectator_welcome",
+      roomCode: room.roomCode,
+      mode: room.mode,
+      status: game ? game.status : (this.connectedCount() >= room.maxPlayers ? "ready" : "waiting"),
+      players: this.playerList(),
+      spectatorCount: this.spectatorCount(),
+      state: game ? { ...gameViewForSpectator(game), ...(room.mode === "demo" ? { mode: "demo" } : {}) } : null,
+      chatHistory: history,
+      poll: poll && !poll.closed && poll.endsAt > Date.now() ? audiencePollSnapshot(poll) : null
+    }));
+    this.broadcast({ type: "spectator_count", count: this.spectatorCount() });
+    await this.touchRoom();
+  }
+
+  async postChat(ws, data) {
+    const attachment = ws.deserializeAttachment() || {};
+    const isPlayer = Number.isInteger(attachment.playerNumber);
+    const isSpectator = attachment.role === "spectator" && attachment.spectatorReady;
+    if (!isPlayer && !isSpectator) {
+      ws.send(JSON.stringify({ type: "error", message: "Join the room before sending chat." }));
+      return;
+    }
+    const content = cleanChatText(data?.text);
+    if (!content) {
+      ws.send(JSON.stringify({ type: "error", message: "Chat messages cannot be empty." }));
+      return;
+    }
+    const entry = {
+      id: shortRandomId(),
+      sender: isPlayer ? "Player " + attachment.playerNumber : "Spectator " + attachment.spectatorId.slice(-4),
+      role: isPlayer ? "player" : "spectator",
+      text: content,
+      at: Date.now()
+    };
+    const history = await this.ctx.storage.get("chatHistory") || [];
+    history.push(entry);
+    await this.ctx.storage.put("chatHistory", history.slice(-CHAT_HISTORY_LIMIT));
+    this.broadcast({ type: "chat_message", message: entry });
+    await this.touchRoom();
+  }
+
+  async startAudiencePoll(ws) {
+    const attachment = ws.deserializeAttachment() || {};
+    if (!Number.isInteger(attachment.playerNumber)) {
+      ws.send(JSON.stringify({ type: "error", message: "Only players can start an audience poll." }));
+      return;
+    }
+    const room = await this.ctx.storage.get("room");
+    const game = await this.ctx.storage.get("game");
+    const now = Date.now();
+    if (!room || !["tag", "pvp"].includes(room.mode)) {
+      ws.send(JSON.stringify({ type: "error", message: "Audience polls are available in online versus games only." }));
+      return;
+    }
+    if (!game || game.status !== "playing" || game.pendingEffect ||
+        game.activePlayerNumber !== attachment.playerNumber) {
+      ws.send(JSON.stringify({ type: "error", message: "Start a poll only during your active turn." }));
+      return;
+    }
+    const existing = await this.ctx.storage.get("audiencePoll");
+    if (existing && !existing.closed && existing.endsAt > now) {
+      this.broadcastAudiencePollState(existing);
+      return;
+    }
+    const poll = await this.createAudiencePoll(game, attachment.playerNumber, now);
+    if (!poll) {
+      ws.send(JSON.stringify({ type: "error", message: "Pick one first shape before asking the audience to find a match." }));
+      return;
+    }
+    await this.publishAudiencePoll(poll, game);
+  }
+
+  async handlePollVote(ws, data) {
+    const attachment = ws.deserializeAttachment() || {};
+    if (attachment.role !== "spectator" || !attachment.spectatorReady || !attachment.spectatorId) {
+      ws.send(JSON.stringify({ type: "error", message: "Only joined spectators can vote in the audience poll." }));
+      return;
+    }
+    const poll = await this.ctx.storage.get("audiencePoll");
+    if (!poll || poll.closed || poll.endsAt <= Date.now()) {
+      ws.send(JSON.stringify({ type: "error", message: "There is no active audience poll." }));
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(poll.votes || {}, attachment.spectatorId)) {
+      ws.send(JSON.stringify({ type: "error", message: "You have already voted in this poll." }));
+      return;
+    }
+    const tileId = data?.tileId;
+    if (typeof tileId !== "string" || !poll.options.some(option => option.tileId === tileId)) {
+      ws.send(JSON.stringify({ type: "error", message: "Choose one of the hidden tiles listed in the poll." }));
+      return;
+    }
+    poll.votes[attachment.spectatorId] = tileId;
+    await this.ctx.storage.put("audiencePoll", poll);
+    this.broadcastAudiencePollState(poll);
+    await this.touchRoom();
+  }
+
+  async webSocketMessage(ws, message) {
+    const byteLength = messageByteLength(message);
+    if (byteLength > MAX_MESSAGE_BYTES) {
+      try { ws.send(JSON.stringify({ type: "error", message: "Message is too large." })); } catch {}
+      try { ws.close(1009, "Message too large"); } catch {}
+      return;
+    }
+
+    const attachment = ws.deserializeAttachment() || {};
+    const rate = nextMessageRateState(attachment, Date.now());
+    attachment.messageWindowStartedAt = rate.messageWindowStartedAt;
+    attachment.messageCount = rate.messageCount;
+    ws.serializeAttachment(attachment);
+    if (!rate.allowed) {
+      try { ws.send(JSON.stringify({ type: "error", message: "Too many messages. Slow down and reconnect." })); } catch {}
+      try { ws.close(1008, "Message rate exceeded"); } catch {}
+      return;
+    }
+
+    await this.touchRoom();
+    let data;
+    try {
+      data = JSON.parse(typeof message === "string" ? message : new TextDecoder().decode(message));
+    } catch {
+      ws.send(JSON.stringify({ type: "error", message: "Messages must be JSON." }));
+      return;
+    }
+    if (data?.type === "join") {
+      const attachment = ws.deserializeAttachment() || {};
+      if (attachment.role === "spectator") {
+        ws.send(JSON.stringify({ type: "error", message: "Spectators cannot claim a player seat." }));
+        return;
+      }
+      await this.joinSeat(ws, data);
+      return;
+    }
+    if (data?.type === "spectate") {
+      await this.joinSpectator(ws);
+      return;
+    }
+
+    const joinedAttachment = ws.deserializeAttachment() || {};
+    const isSpectator = joinedAttachment.role === "spectator" && joinedAttachment.spectatorReady === true;
+    if (!Number.isInteger(joinedAttachment.playerNumber) && !isSpectator) {
+      ws.send(JSON.stringify({ type: "error", message: "Join a player seat or spectator room first." }));
+      return;
+    }
+
+    if (data?.type === "demo_control") {
+      const room = await this.ctx.storage.get("room");
+      const suppliedHash = typeof data.token === "string" ? await hashSeatToken(data.token) : "";
+      if (room?.mode !== "demo" || !room.demoControlTokenHash || suppliedHash !== room.demoControlTokenHash || attachment.role !== "spectator" || !attachment.spectatorReady) {
+        ws.send(JSON.stringify({ type: "error", message: "This demo-control link is not valid." }));
+        return;
+      }
+      attachment.demoController = true;
+      ws.serializeAttachment(attachment);
+      ws.send(JSON.stringify({ type: "demo_control_ready" }));
+      return;
+    }
+    if (data?.type === "end_demo") {
+      const room = await this.ctx.storage.get("room");
+      if (room?.mode !== "demo" || attachment.demoController !== true) {
+        ws.send(JSON.stringify({ type: "error", message: "Only the person who opened this AI demo can end it." }));
+        return;
+      }
+      await this.deleteRoomData(room.roomCode, "AI vs AI demo ended by its host");
+      return;
+    }
+    if (data?.type === "chat") {
+      await this.postChat(ws, data);
+      return;
+    }
+    if (data?.type === "poll_vote") {
+      await this.handlePollVote(ws, data);
+      return;
+    }
+    if (data?.type === "audience_poll_start") {
+      await this.startAudiencePoll(ws);
+      return;
+    }
+    if (isSpectator && !["ping", "demo_control", "end_demo"].includes(data?.type)) {
+      ws.send(JSON.stringify({ type: "error", message: "Spectators can only chat, vote, or ping." }));
+      return;
+    }
+
+    if (data?.type === "ping") {
+      ws.send(JSON.stringify({ type: "pong", at: Date.now() }));
+      return;
+    }
+    if (data?.type === "ready") {
+      const attachment = ws.deserializeAttachment() || {};
+      this.broadcast({
+        type: "player_ready",
+        playerNumber: attachment.playerNumber,
+        ready: Boolean(data.ready)
+      });
+      return;
+    }
+
+    if (data?.type === "game_action") {
+      const activePoll = await this.ctx.storage.get("audiencePoll");
+      const actor = ws.deserializeAttachment() || {};
+      if (activePoll && !activePoll.closed && activePoll.endsAt > Date.now() &&
+          activePoll.startedByPlayer === actor.playerNumber) {
+        ws.send(JSON.stringify({ type: "error", message: "Wait for the audience poll to finish before continuing your turn." }));
+        return;
+      }
+      const game = await this.ctx.storage.get("game");
+      if (!game) {
+        ws.send(JSON.stringify({ type: "error", message: "Waiting for all players to connect." }));
+        return;
+      }
+      const attachment = ws.deserializeAttachment() || {};
+      const result = applyGameAction(game, attachment.playerNumber, data.action, Date.now());
+      if (result.changed) await this.ctx.storage.put("game", result.state);
+      if (!result.accepted) {
+        ws.send(JSON.stringify({ type: "error", message: result.error || "Action rejected." }));
+      }
+      if (result.accepted || result.changed) {
+        await this.broadcastGameState("game_state");
+        const updatedGame = await this.ctx.storage.get("game");
+        await this.closeExpiredAudiencePoll(updatedGame, Date.now());
+        await this.touchRoom();
+      } else {
+        await this.scheduleAlarm();
+      }
+      return;
+    }
+
+    ws.send(JSON.stringify({ type: "error", message: "Unsupported message type." }));
+  }
+
+  async webSocketClose(ws) {
+    const attachment = ws.deserializeAttachment() || {};
+    await this.touchRoom();
+    if (attachment.role === "spectator") {
+      this.broadcast({ type: "spectator_count", count: this.spectatorCount() });
+      return;
+    }
+    if (!Number.isInteger(attachment.playerNumber)) return;
+    const room = await this.ctx.storage.get("room");
+    this.broadcast({
+      type: "player_disconnected",
+      playerNumber: attachment.playerNumber,
+      mode: room?.mode,
+      maxPlayers: room?.maxPlayers,
+      players: this.playerList()
+    });
+  }
+
+  webSocketError(ws) {
+    try { ws.close(1011, "WebSocket error"); } catch {}
+  }
+}
