@@ -97,6 +97,7 @@ export function createGameState({ roomCode, mode, playerNumbers, boardSize = DEF
   const expected = mode === "pvp" ? 2 : mode === "tag" ? 4 : 0;
   const order = mode === "pvp" ? [1, 2] : mode === "tag" ? [1, 3, 2, 4] : null;
   if (!BOARD_SIZES.includes(boardSize)) throw new Error("Invalid board size.");
+  if (mode === "tag" && boardSize !== DEFAULT_BOARD_SIZE) throw new Error("Tag uses a 7x7 board.");
   if (!expected || !Array.isArray(playerNumbers) || playerNumbers.length !== expected ||
       order.some((number) => !playerNumbers.includes(number))) {
     throw new Error("Invalid player set for online mode.");
