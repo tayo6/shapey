@@ -13,10 +13,16 @@ if (urlParams.get('embed') === '1') document.body.classList.add('audience-embed'
 const MULTIPLAYER_API = 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
 
 const FONT = 'HappySchool';
+const BOARD_SIZES = Object.freeze([5, 6, 7]);
+function normalizeBoardSize(value) {
+  const size = Number(value);
+  return BOARD_SIZES.includes(size) ? size : 7;
+}
 const TILE_SIZE = 90;   // every shape tile is drawn at 90 x 90
 const TILE_PITCH = 91;  // distance between tile centres (90px tile + 1px gap)
-const GRID_COLS = 7;
-const GRID_ROWS = 7;
+// These are set from the chosen staging test size before each board is created.
+let GRID_COLS = normalizeBoardSize(urlParams.get('size'));
+let GRID_ROWS = GRID_COLS;
 
 // ---- Game rules -----------------------------------------------------------
 // For quick testing you can shorten the timers in the URL, e.g. index.html?review=3000&turn=10000
@@ -163,12 +169,15 @@ function shuffle(list) {
   return a;
 }
 
-// Starting board: every shape appears at least 3 times, hazards take about `hazardChance` of the
-// board (out of the free slots), and the rest are random.
+// Starting board: include at least three copies of each chosen scoring shape without
+// overflowing the smaller staging boards. Every board size keeps about 10% hazards.
 function makeInitialBoard(hazardChance = 0) {
   const total = GRID_ROWS * GRID_COLS;
+  const wantedHazards = Math.min(total, Math.round(total * hazardChance));
+  const guaranteedShapeCount = Math.min(SHAPE_KEYS.length, Math.floor((total - wantedHazards) / 3));
+  const startingShapes = shuffle(SHAPE_KEYS).slice(0, guaranteedShapeCount);
   const bag = [];
-  SHAPE_KEYS.forEach((k) => bag.push(k, k, k));
+  startingShapes.forEach((k) => bag.push(k, k, k));
   const hazards = Math.min(total - bag.length, Math.round(total * hazardChance));
   for (let i = 0; i < hazards; i++) bag.push('hazard');
   while (bag.length < total) bag.push(randomBoardShape());
@@ -561,11 +570,7 @@ class MenuScene extends Phaser.Scene {
     this.pickerUI = [];
     Object.entries(MODES).forEach(([mode, cfg], i) => {
       woodButton(this, GAME_WIDTH / 2, 600 + i * 165, 620, 140, cfg.label, 42,
-        () => {
-          if (cfg.ai) this.openDifficulty();
-          else if (mode === 'pvp' || mode === 'tag') this.openOnlineLobby(mode);
-          else this.scene.start('GameScene', { mode });
-        }, 10, cfg.hint);
+        () => this.openBoardSize(mode), 10, cfg.hint);
     });
 
     // Spectating is deliberately separated from playable modes and styled as a watch-only destination.
@@ -576,13 +581,48 @@ class MenuScene extends Phaser.Scene {
     if (audienceButton[2]) audienceButton[2].setColor('#d7f7ff');
   }
 
+  // Every staging mode uses the same three board-size choices. 7×7 remains the default.
+  openBoardSize(mode) {
+    if (this.pickerUI.length) return;
+    const add = (object) => { this.pickerUI.push(object); return object; };
+    add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.82)
+      .setDepth(50).setInteractive());
+    add(this.add.rectangle(GAME_WIDTH / 2, 675, 640, 820, 0x4b2d17, 1)
+      .setStrokeStyle(5, 0xd5ad72).setDepth(51));
+    add(this.add.text(GAME_WIDTH / 2, 365, 'CHOOSE BOARD SIZE', {
+      fontFamily: FONT, fontSize: '44px', color: '#fff2c7', stroke: '#3a2412', strokeThickness: 8,
+    }).setOrigin(0.5).setDepth(52));
+    add(this.add.text(GAME_WIDTH / 2, 430, 'Staging test · choose the number of rows and columns', {
+      fontFamily: FONT, fontSize: '20px', color: '#fff2c7', align: 'center',
+      wordWrap: { width: 540 }, stroke: '#3a2412', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(52));
+    BOARD_SIZES.forEach((size, index) => {
+      woodButton(this, GAME_WIDTH / 2, 555 + index * 145, 520, 112, size + ' × ' + size, 42,
+        () => {
+          this.closeBoardSize();
+          if (mode === 'ai') this.openDifficulty(size);
+          else if (mode === 'pvp' || mode === 'tag') this.openOnlineLobby(mode, size);
+          else this.scene.start('GameScene', { mode, boardSize: size });
+        }, 52, (size * size) + ' tiles on the board').forEach(add);
+    });
+    woodButton(this, GAME_WIDTH / 2, 1030, 520, 82, 'BACK', 34,
+      () => this.closeBoardSize(), 52).forEach(add);
+  }
+
+  closeBoardSize() {
+    this.pickerUI.forEach((object) => object.destroy());
+    this.pickerUI = [];
+  }
+
   // Room creation and joining are attached to Player 1 vs Player 2 and Tag.
-  openOnlineLobby(mode) {
+  openOnlineLobby(mode, boardSize = 7) {
     if (this.onlineUI && this.onlineUI.length) return;
     this.onlineMode = mode || 'pvp';
+    this.onlineBoardSize = normalizeBoardSize(boardSize);
     this.onlineUI = [];
     const add = (object) => { this.onlineUI.push(object); return object; };
-    const modeTitle = this.onlineMode === 'tag' ? 'ONLINE TAG · 2 VS 2' : 'ONLINE PLAYER 1 VS PLAYER 2';
+    const modeTitle = (this.onlineMode === 'tag' ? 'ONLINE TAG · 2 VS 2' : 'ONLINE PLAYER 1 VS PLAYER 2') +
+      ' · ' + this.onlineBoardSize + '×' + this.onlineBoardSize;
     add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.86)
       .setDepth(80).setInteractive());
     add(this.add.rectangle(GAME_WIDTH / 2, 650, 650, 820, 0x4b2d17, 1)
@@ -595,8 +635,9 @@ class MenuScene extends Phaser.Scene {
     const lobbyInstructions = this.onlineMode === 'tag'
       ? 'Four devices. Team 1: Players 1 and 2. Team 2: Players 3 and 4. Invite your teammate first, then invite the other team.'
       : 'Two devices. Take alternating turns; the first player to 100 points wins.';
+    const sizeInstruction = 'Board size: ' + this.onlineBoardSize + '×' + this.onlineBoardSize + '.';
     this.onlineStatus = add(this.add.text(GAME_WIDTH / 2, 415,
-      lobbyInstructions, {
+      lobbyInstructions + '\n' + sizeInstruction, {
         fontFamily: FONT, fontSize: '23px', color: '#fff2c7', align: 'center',
         wordWrap: { width: 560 }, stroke: '#3a2412', strokeThickness: 4,
       }).setOrigin(0.5).setDepth(82));
@@ -754,7 +795,7 @@ class MenuScene extends Phaser.Scene {
       const response = await fetch(MULTIPLAYER_API + '/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: this.onlineMode }),
+        body: JSON.stringify({ mode: this.onlineMode, boardSize: this.onlineBoardSize || 7 }),
       });
       const data = await response.json();
       if (!response.ok || !data.roomCode) throw new Error(data.error || 'Room creation failed.');
@@ -787,6 +828,8 @@ class MenuScene extends Phaser.Scene {
           '. Go back and select that mode to join.');
         return;
       }
+      // A room's server-selected size is authoritative for every device that joins it.
+      this.onlineBoardSize = normalizeBoardSize(room.boardSize);
       this.showOnlineRoomCode(code);
       this.connectOnlineRoom(code,
         MULTIPLAYER_API.replace(/^http/, 'ws') + '/ws/' + code, this.onlineMode);
@@ -905,10 +948,12 @@ class MenuScene extends Phaser.Scene {
     this.onlineCopyLabel = null;
     this.currentRoomCode = null;
     this.onlineMode = null;
+    this.onlineBoardSize = null;
   }
 
   // "Choose difficulty" panel for Player vs AI (Easy / Professional, built from AI_LEVELS).
-  openDifficulty() {
+  openDifficulty(boardSize = 7) {
+    this.chosenBoardSize = normalizeBoardSize(boardSize);
     if (this.pickerUI.length) return;
     const add = (object) => { this.pickerUI.push(object); return object; };
     add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.8)
@@ -919,10 +964,13 @@ class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(52));
     Object.entries(AI_LEVELS).forEach(([difficulty, level], i) => {
       woodButton(this, GAME_WIDTH / 2, 530 + i * 190, 560, 160, level.label, 42,
-        () => this.scene.start('GameScene', { mode: 'ai', difficulty }), 52, level.hint).forEach(add);
+        () => this.scene.start('GameScene', { mode: 'ai', difficulty, boardSize: this.chosenBoardSize }), 52, level.hint).forEach(add);
     });
     woodButton(this, GAME_WIDTH / 2, 530 + Object.keys(AI_LEVELS).length * 190, 560, 90, 'BACK', 36,
-      () => this.closeDifficulty(), 52).forEach(add);
+      () => {
+        this.closeDifficulty();
+        this.openBoardSize('ai');
+      }, 52).forEach(add);
   }
 
   closeDifficulty() {
@@ -945,6 +993,10 @@ class GameScene extends Phaser.Scene {
     this.onlinePlayerNumber = (data && data.onlinePlayerNumber) || null;
     this.onlineRoomCode = (data && data.onlineRoomCode) || null;
     this.onlineState = (data && data.onlineState) || null;
+    this.boardSize = normalizeBoardSize((data && data.boardSize) ||
+      (this.onlineState && this.onlineState.boardSize) || urlParams.get('size'));
+    GRID_COLS = this.boardSize;
+    GRID_ROWS = this.boardSize;
     this.mode = (data && data.mode) || START_MODE || 'pvp';
     this.modeCfg = MODES[this.mode];
     // Player vs AI difficulty comes from the picker (or ?level=pro for testing); Easy is the default.
@@ -1890,7 +1942,7 @@ class GameScene extends Phaser.Scene {
   cellX(col) { return this.gridX0 + col * TILE_PITCH; }
   cellY(row) { return this.gridY0 + row * TILE_PITCH; }
 
-  // 7 x 7 board centred on the tray. Every tile is 90 x 90.
+  // The selected square board is centred on the tray. Every tile is 90 x 90.
   createBoard() {
     this.gridX0 = this.tray.x - ((GRID_COLS - 1) * TILE_PITCH) / 2;
     this.gridY0 = this.tray.y - ((GRID_ROWS - 1) * TILE_PITCH) / 2;
