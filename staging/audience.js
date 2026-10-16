@@ -197,6 +197,8 @@ function resetRoomView() {
   currentState = null;
   currentPoll = null;
   currentVote = null;
+  pollAcceptedId = '';
+  pollDeclinedId = '';
   lastTurnKey = null;
   unreadChat = 0;
   pollLockedId = null;
