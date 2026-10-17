@@ -14,7 +14,7 @@ const AVATAR_COLORS = ['#754322', '#8a4f2a', '#5d3a1e', '#9a6a35', '#6b4a2a', '#
 const $ = (id) => document.getElementById(id);
 const els = {
   directory: $('directoryView'), watch: $('watchView'), rooms: $('roomCards'), directoryStatus: $('directoryStatus'),
-  modeChips: $('modeChips'), statusFilter: $('statusFilter'), refreshRooms: $('refreshRooms'), startDemo: $('startDemo'), navBrowse: $('navBrowse'), gameFrame: $('gameFrame'), muteAudienceSound: $('muteAudienceSound'), endDemo: $('endDemo'),
+  modeChips: $('modeChips'), statusFilter: $('statusFilter'), refreshRooms: $('refreshRooms'), startDemo: $('startDemo'), gameFrame: $('gameFrame'), muteAudienceSound: $('muteAudienceSound'), endDemo: $('endDemo'),
   board: $('board'), veil: $('veil'), veilText: $('veilText'), retryConnection: $('retryConnection'), toast: $('toast'),
   side0: $('side0'), side1: $('side1'), p1Score: $('p1Score'), p2Score: $('p2Score'), p1Name: $('p1Name'), p2Name: $('p2Name'),
   turnClock: $('turnClock'), goalText: $('goalText'), revealText: $('revealText'),
@@ -976,7 +976,6 @@ async function startAiDemo() {
 }
 els.refreshRooms.addEventListener('click', loadRooms);
 els.startDemo.addEventListener('click', startAiDemo);
-els.navBrowse.addEventListener('click', () => showDirectory(true));
 els.gameFrame.addEventListener('load', () => {
   if (latestGameFrameMessage) forwardGameFrameMessage(latestGameFrameMessage);
   syncGameFrameMute();
