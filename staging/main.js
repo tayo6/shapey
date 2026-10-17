@@ -438,6 +438,16 @@ class LoadScene extends Phaser.Scene {
 
   async startAudienceWatch() {
     const code = AUDIENCE_WATCH_CODE;
+    // Audience links must use the audience wrapper so Chat, Polls, Settings and Back to game exist.
+    // Direct ?watch= links otherwise opened the game canvas without audience navigation.
+    if (urlParams.get('embed') !== '1') {
+      const audienceUrl = new URL('audience.html', window.location.href);
+      audienceUrl.searchParams.set('room', code);
+      const hintedMode = urlParams.get('mode');
+      if (hintedMode) audienceUrl.searchParams.set('mode', hintedMode);
+      window.location.replace(audienceUrl.href);
+      return;
+    }
     const showError = (message) => {
       this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, 620, 300, 0x4b2d17, 0.98).setStrokeStyle(5, 0xd5ad72).setDepth(200);
       this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 45, message, {

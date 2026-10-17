@@ -171,7 +171,6 @@ function openChatPage(updateUrl = true) {
   document.body.classList.add('chat-open');
   els.btnChat.classList.add('is-open');
   els.btnChat.setAttribute('aria-expanded', 'true');
-  text(els.chatRoomTitle, modeName(activeMode) + ' · Room ' + activeRoomCode);
   unreadChat = 0;
   updateBadges();
   requestAnimationFrame(() => {
@@ -686,10 +685,19 @@ function appendChat(message, live) {
   avatar.style.setProperty('--bg', avatarColor(sender));
   const main = el('div', 'msg-main');
   const head = el('div', 'msg-head');
-  head.append(el('strong', '', sender));
+  head.append(el('strong', '', sender), el('p', '', message.text));
   const timestamp = message.createdAt || message.at;
-  if (timestamp) head.append(el('time', '', new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
-  main.append(head, el('p', '', message.text));
+  if (timestamp) {
+    const elapsedMs = Math.max(0, Date.now() - new Date(timestamp).getTime());
+    const elapsedMinutes = Math.floor(elapsedMs / 60000);
+    const relative = elapsedMinutes < 1 ? 'now'
+      : elapsedMinutes < 60 ? elapsedMinutes + 'm'
+      : elapsedMinutes < 1440 ? Math.floor(elapsedMinutes / 60) + 'h'
+      : Math.floor(elapsedMinutes / 1440) + 'd';
+    main.append(head, el('time', 'msg-time', relative));
+  } else {
+    main.append(head);
+  }
   item.append(avatar, main);
   const nearBottom = els.chatMessages.scrollHeight - els.chatMessages.scrollTop - els.chatMessages.clientHeight < 80;
   els.chatMessages.append(item);
