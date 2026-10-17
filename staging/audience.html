@@ -12,10 +12,11 @@
     /* Everything is laid out in the game's own 720 x 1280 units (--u = one game pixel), so this page
        scales exactly like the game canvas and uses the same art, font, colours and wood buttons. */
     @font-face { font-family: HappySchool; src: url("assets/fonts/HAPPY%20SCHOOL.TTF") format("truetype"); font-display: swap; }
+    @font-face { font-family: ComicSansMS; src: url("assets/fonts/ComicSansMS3.ttf") format("truetype"); font-style: normal; font-weight: 400; font-display: swap; }
     :root { --gold:#d5ad72; --cream:#fff2c7; --sand:#ffe9b8; --wood:#754322; --panel:#4b2d17; --ink:#3a2412; --dark:#25180f; --cyan:#66e0ff; --star:#ffe36e; }
     * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
     html, body { margin:0; min-height:100%; background:#2a1a0e; }
-    body { background:#2a1a0e url("assets/backgrounds/BG.webp") center / cover fixed; color:#fff; font-family:HappySchool, "Comic Sans MS","Comic Sans",cursive; overflow-x:hidden; }
+    body { background:#2a1a0e url("assets/backgrounds/BG.webp") center / cover fixed; color:#fff; font-family:HappySchool, ComicSansMS, "Comic Sans MS", cursive; overflow-x:hidden; }
     [hidden] { display:none !important; }
     button { font:inherit; color:inherit; border:0; padding:0; background:none; cursor:pointer; }
     a { color:inherit; text-decoration:none; }
@@ -112,7 +113,7 @@
     .tile.is-vote-option img { outline:calc(var(--u) * 2) dashed var(--cyan); outline-offset:calc(var(--u) * -4); }
     .tile.is-voted img { outline:calc(var(--u) * 4) solid #ffd45e; outline-offset:calc(var(--u) * -4); box-shadow:0 0 calc(var(--u) * 10) #ffd45eaa; }
     .tile.is-poll-winner img { outline:calc(var(--u) * 4) solid #ffd45e; outline-offset:calc(var(--u) * -4); box-shadow:0 0 calc(var(--u) * 10) #ffd45eaa; }
-    .tile-vote-count { position:absolute; right:calc(var(--u) * 2); bottom:calc(var(--u) * 2); z-index:8; padding:calc(var(--u) * 1) calc(var(--u) * 4); border:calc(var(--u) * 1) solid #ffd45e; border-radius:calc(var(--u) * 5); background:#201208e8; color:#ffdf75; font:bold max(8px,calc(var(--u) * 14)) "Comic Sans MS","Comic Sans",cursive; pointer-events:none; }
+    .tile-vote-count { position:absolute; right:calc(var(--u) * 2); bottom:calc(var(--u) * 2); z-index:8; padding:calc(var(--u) * 1) calc(var(--u) * 4); border:calc(var(--u) * 1) solid #ffd45e; border-radius:calc(var(--u) * 5); background:#201208e8; color:#ffdf75; font:bold max(8px,calc(var(--u) * 14)) ComicSansMS, "Comic Sans MS", cursive; pointer-events:none; }
     .tile.is-selected { outline:calc(var(--u) * 4) solid var(--star); outline-offset:calc(var(--u) * -1); }
     .board-fx { position:absolute; z-index:10; pointer-events:none; background-repeat:no-repeat; }
     .destroy-fx { left:calc(var(--u) * (6.5 + var(--tile-pitch, 91) * var(--c))); top:calc(var(--u) * (6.5 + var(--tile-pitch, 91) * var(--r))); width:calc(var(--u) * var(--tile-size, 90)); height:calc(var(--u) * var(--tile-size, 90));
@@ -156,26 +157,26 @@
     .chat .hint { min-height:1.2em; }
 
     /* Full-page audience chat follows the clean, light Clubhouse reference. */
-    .chat-page { --u:1px; position:fixed; inset:0; z-index:300; display:flex; flex-direction:column; gap:8px; padding:calc(16px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); color:#46352a; background:#fff7ed; font-family:"Comic Sans MS","Comic Sans",cursive; }
+    .chat-page { --u:1px; position:fixed; inset:0; z-index:300; display:flex; flex-direction:column; gap:8px; padding:calc(16px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); color:#46352a; background:#fff7ed; font-family:ComicSansMS, "Comic Sans MS", cursive; }
     body.chat-open .stage-banner, body.chat-open .topbar { display:none; }
     .chat-page-header { display:flex; align-items:center; justify-content:flex-end; flex:0 0 auto; padding:4px 0 12px; border:0; }
-    .chat-back { flex:none; display:inline-flex; align-items:center; justify-content:center; padding:6px 0 6px 10px; border:0; color:#b7634d; background:transparent; font:600 15px/1.3 "Comic Sans MS","Comic Sans",cursive; white-space:nowrap; }
+    .chat-back { flex:none; display:inline-flex; align-items:center; justify-content:center; padding:6px 0 6px 10px; border:0; color:#b7634d; background:transparent; font:600 15px/1.3 ComicSansMS, "Comic Sans MS", cursive; white-space:nowrap; }
     .chat-back:focus-visible { outline:2px solid #b7634d; outline-offset:3px; border-radius:5px; }
-    .chat-count { color:#9a7c68; font:12px/1.3 "Comic Sans MS","Comic Sans",cursive; text-align:right; }
-    .chat-status { flex:0 0 auto; min-height:0; color:#ad604b; font:13px/1.3 "Comic Sans MS","Comic Sans",cursive; }
+    .chat-count { color:#9a7c68; font:12px/1.3 ComicSansMS, "Comic Sans MS", cursive; text-align:right; }
+    .chat-status { flex:0 0 auto; min-height:0; color:#ad604b; font:13px/1.3 ComicSansMS, "Comic Sans MS", cursive; }
     .chat-page-messages { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:0 2px 12px; border:0; background:#fff7ed; }
-    .chat-page-messages .empty { color:#9a7c68; font:15px/1.4 "Comic Sans MS","Comic Sans",cursive; padding:12px 0; }
+    .chat-page-messages .empty { color:#9a7c68; font:15px/1.4 ComicSansMS, "Comic Sans MS", cursive; padding:12px 0; }
     .chat-page-messages .msg { display:flex; align-items:flex-start; gap:10px; padding:10px 0; color:#46352a; }
-    .chat-page-messages .msg .avatar { flex:0 0 42px; width:42px; height:42px; border-radius:50%; font:600 17px "Comic Sans MS","Comic Sans",cursive; color:#fff; }
+    .chat-page-messages .msg .avatar { flex:0 0 42px; width:42px; height:42px; border-radius:50%; font:600 17px ComicSansMS, "Comic Sans MS", cursive; color:#fff; }
     .chat-page-messages .msg-main { flex:1; min-width:0; padding-top:1px; }
     .chat-page-messages .msg-head { display:flex; align-items:baseline; flex-wrap:wrap; gap:5px; }
-    .chat-page-messages .msg-head strong { color:#98765f; font:400 14px/1.3 "Comic Sans MS","Comic Sans",cursive; }
-    .chat-page-messages .msg-head p { display:inline; margin:0; color:#46352a; font:16px/1.35 "Comic Sans MS","Comic Sans",cursive; white-space:pre-wrap; overflow-wrap:anywhere; }
-    .chat-page-messages .msg-time { display:block; margin-top:4px; color:#a18a78; font:12px/1.2 "Comic Sans MS","Comic Sans",cursive; }
+    .chat-page-messages .msg-head strong { color:#98765f; font:400 14px/1.3 ComicSansMS, "Comic Sans MS", cursive; }
+    .chat-page-messages .msg-head p { display:inline; margin:0; color:#46352a; font:16px/1.35 ComicSansMS, "Comic Sans MS", cursive; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .chat-page-messages .msg-time { display:block; margin-top:4px; color:#a18a78; font:12px/1.2 ComicSansMS, "Comic Sans MS", cursive; }
     .chat-page .composer { flex:0 0 auto; grid-template-columns:minmax(0,1fr) auto; gap:10px; padding-top:5px; align-items:center; }
-    .chat-page .composer input { height:46px; font:16px "Comic Sans MS","Comic Sans",cursive; color:#48372b; background:#f4e6d6; border:0; border-radius:26px; padding:0 16px; }
+    .chat-page .composer input { height:46px; font:16px ComicSansMS, "Comic Sans MS", cursive; color:#48372b; background:#f4e6d6; border:0; border-radius:26px; padding:0 16px; }
     .chat-page .composer input::placeholder { color:#aa8c77; }
-    .chat-page .composer .wood { --h:46; --fs:16; min-height:46px; padding:0 5px; border:0; border-radius:0; color:#ad604b; background:transparent; box-shadow:none; font:600 15px "Comic Sans MS","Comic Sans",cursive; }
+    .chat-page .composer .wood { --h:46; --fs:16; min-height:46px; padding:0 5px; border:0; border-radius:0; color:#ad604b; background:transparent; box-shadow:none; font:600 15px ComicSansMS, "Comic Sans MS", cursive; }
     .chat-page .composer .wood:active { transform:scale(.97); }
     @media (max-width:520px) {
       .chat-page { gap:7px; padding-left:16px; padding-right:16px; }
@@ -201,9 +202,9 @@
     @media (prefers-reduced-motion:reduce) { .tile { transition:none; } }
 
     /* Clubhouse-inspired public lobby from the approved staging design. */
-    .stage-banner { text-align:center; font:11px/1.4 "Comic Sans MS","Comic Sans",cursive; letter-spacing:.08em; color:#fff; background:#8b2424; padding:4px 8px; }
+    .stage-banner { text-align:center; font:11px/1.4 ComicSansMS, "Comic Sans MS", cursive; letter-spacing:.08em; color:#fff; background:#8b2424; padding:4px 8px; }
     .topbar { display:flex; gap:14px; justify-content:flex-end; align-items:center; padding:15px clamp(14px,4vw,38px); border-bottom:2px solid #7b512e; background:#1b100af0; }
-    .topbar button { color:var(--cream); border:1px solid #8c6a45; border-radius:10px; padding:9px 12px; background:linear-gradient(#754a27,#4a2b16); box-shadow:none; font:14px "Comic Sans MS","Comic Sans",cursive; }
+    .topbar button { color:var(--cream); border:1px solid #8c6a45; border-radius:10px; padding:9px 12px; background:linear-gradient(#754a27,#4a2b16); box-shadow:none; font:14px ComicSansMS, "Comic Sans MS", cursive; }
     .brand { display:flex; align-items:center; gap:10px; color:var(--cream); text-decoration:none; font-size:1.55rem; min-width:0; }
     .brand img { width:40px;height:40px;object-fit:contain; }
     .top-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
@@ -211,34 +212,34 @@
     .lobby { --u:1px; width:min(1280px,100%); margin:0 auto; padding:clamp(14px,3vw,30px); }
     .hero { display:flex; justify-content:space-between; gap:18px; align-items:end; margin-bottom:20px; }
     .hero h1 { margin-bottom:6px; font-size:clamp(1.8rem,4vw,3rem); }
-    .subcopy { color:var(--muted); font-family:"Comic Sans MS","Comic Sans",cursive; line-height:1.5; max-width:710px; margin:0; }
+    .subcopy { color:var(--muted); font-family:ComicSansMS, "Comic Sans MS", cursive; line-height:1.5; max-width:710px; margin:0; }
     .panel { background:linear-gradient(155deg,#4b2e1b,#2f1d12); border:2px solid #8b623a; border-radius:16px; padding:16px; box-shadow:0 8px 25px #0005; }
     .filters { display:flex; align-items:end; flex-wrap:wrap; gap:18px; margin-bottom:18px; }
     .filters-group { display:grid; gap:8px; min-width:0; }
-    .filters-label { font:13px "Comic Sans MS","Comic Sans",cursive; color:var(--muted); }
+    .filters-label { font:13px ComicSansMS, "Comic Sans MS", cursive; color:var(--muted); }
     .chips { display:flex; gap:8px; flex-wrap:wrap; }
-    .chip { padding:8px 13px; border:1px solid #8c6a45; border-radius:999px; box-shadow:none; font:14px "Comic Sans MS","Comic Sans",cursive; background:#21140c; min-height:42px; }
+    .chip { padding:8px 13px; border:1px solid #8c6a45; border-radius:999px; box-shadow:none; font:14px ComicSansMS, "Comic Sans MS", cursive; background:#21140c; min-height:42px; }
     .chip.is-active { background:linear-gradient(#754a27,#4a2b16); border-color:var(--cyan); color:#fff; }
-    .lobby .room-card .sub { font:14px/1.5 "Comic Sans MS","Comic Sans",cursive; color:var(--muted); text-transform:none; }
-    .lobby .room-card .tag-pill { padding:4px 9px; border:1px solid #9c754d; border-radius:999px; font:11px/1.3 "Comic Sans MS","Comic Sans",cursive; white-space:nowrap; }
+    .lobby .room-card .sub { font:14px/1.5 ComicSansMS, "Comic Sans MS", cursive; color:var(--muted); text-transform:none; }
+    .lobby .room-card .tag-pill { padding:4px 9px; border:1px solid #9c754d; border-radius:999px; font:11px/1.3 ComicSansMS, "Comic Sans MS", cursive; white-space:nowrap; }
     .lobby .room-card .score-row { gap:10px; padding:3px 0; }
-    .lobby .room-card .score-row .num { font:700 1.35rem/1.1 "Comic Sans MS","Comic Sans",cursive; -webkit-text-stroke:0; }
-    .lobby .room-card .score-row .side { font:12px/1.3 "Comic Sans MS","Comic Sans",cursive; }
-    .lobby .room-card .wood { --h:46; --fs:18; min-height:46px; padding:8px 14px; border-width:2px; font:14px "Comic Sans MS","Comic Sans",cursive; }
-    .lobby .notice { padding:16px; font:14px/1.5 "Comic Sans MS","Comic Sans",cursive; text-transform:none; }
-    .field { display:flex; flex-direction:column; gap:6px; color:var(--muted); font:13px "Comic Sans MS","Comic Sans",cursive; }
+    .lobby .room-card .score-row .num { font:700 1.35rem/1.1 ComicSansMS, "Comic Sans MS", cursive; -webkit-text-stroke:0; }
+    .lobby .room-card .score-row .side { font:12px/1.3 ComicSansMS, "Comic Sans MS", cursive; }
+    .lobby .room-card .wood { --h:46; --fs:18; min-height:46px; padding:8px 14px; border-width:2px; font:14px ComicSansMS, "Comic Sans MS", cursive; }
+    .lobby .notice { padding:16px; font:14px/1.5 ComicSansMS, "Comic Sans MS", cursive; text-transform:none; }
+    .field { display:flex; flex-direction:column; gap:6px; color:var(--muted); font:13px ComicSansMS, "Comic Sans MS", cursive; }
     .field select { background:#21140c; color:var(--cream); border:1px solid #99704a; border-radius:9px; padding:10px; min-height:42px; min-width:200px; }
     .hero-actions { display:flex; gap:8px; flex-wrap:wrap; }
-    .hero-actions button { min-height:46px; padding:10px 16px; border:2px solid var(--gold); border-radius:10px; background:linear-gradient(#754a27,#4a2b16); color:var(--cream); box-shadow:0 3px 0 #1b1009; font:14px "Comic Sans MS","Comic Sans",cursive; }
+    .hero-actions button { min-height:46px; padding:10px 16px; border:2px solid var(--gold); border-radius:10px; background:linear-gradient(#754a27,#4a2b16); color:var(--cream); box-shadow:0 3px 0 #1b1009; font:14px ComicSansMS, "Comic Sans MS", cursive; }
     .room-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:14px; }
     .room-card { display:flex; flex-direction:column; gap:11px; min-height:210px; text-transform:none; }
     .room-card h3 { font-size:1.3rem; margin:0; overflow-wrap:anywhere; white-space:normal; }
     .room-card .top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
     .room-card .wood { width:auto; min-width:100px; }
-    .room-meta { color:var(--muted); font:14px/1.5 "Comic Sans MS","Comic Sans",cursive; }
+    .room-meta { color:var(--muted); font:14px/1.5 ComicSansMS, "Comic Sans MS", cursive; }
     .card-bottom { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:auto; }
     .tag-pill.demo { color:#d7f7ff; border-color:#66e0ff; background:#12303b; }
-    .statusline { min-height:24px; color:var(--muted); font:14px/1.5 "Comic Sans MS","Comic Sans",cursive; margin:0 0 14px; }
+    .statusline { min-height:24px; color:var(--muted); font:14px/1.5 ComicSansMS, "Comic Sans MS", cursive; margin:0 0 14px; }
     .statusline.error { color:#ffb4a8; }
     .game-frame { position:absolute; inset:0; z-index:8; display:block; width:100%; height:100%; border:0; background:#2a1a0e; }
     .game-frame[hidden] { display:none; }
