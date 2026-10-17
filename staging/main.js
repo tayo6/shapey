@@ -1087,7 +1087,11 @@ class GameScene extends Phaser.Scene {
     this.createFx();
     this.createBoard();
     if (this.spectator && urlParams.get('embed') === '1') {
-      try { window.parent.postMessage({ type: 'shapey-game-ready' }, window.location.origin); } catch {}
+      // Wait two animation frames so the first real board frame is painted before the parent
+      // reveals Chat / Polls / Settings navigation.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        try { window.parent.postMessage({ type: 'shapey-game-ready' }, window.location.origin); } catch {}
+      }));
     }
     if (this.online) {
       this.attachOnlineSocket();

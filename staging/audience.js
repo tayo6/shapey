@@ -166,7 +166,9 @@ function openChatPage(updateUrl = true) {
   if (!activeRoomCode || chatPageOpen) return;
   closePanels();
   chatPageOpen = true;
-  els.watch.hidden = true;
+  // Keep the game iframe visible and running under the chat overlay. Hiding it with display:none
+  // can make mobile browsers resize/suspend Phaser, leaving only outer navigation on return.
+  els.watch.hidden = false;
   els.chatPage.hidden = false;
   document.body.classList.add('chat-open');
   els.btnChat.classList.add('is-open');
@@ -1003,10 +1005,7 @@ els.modeChips.addEventListener('click', (event) => {
 });
 els.statusFilter.addEventListener('change', () => { statusFilterValue = els.statusFilter.value; renderRooms(); });
 els.btnChat.addEventListener('click', () => openChatPage());
-els.backToGame.addEventListener('click', () => {
-  if (window.location.hash === '#chat') window.history.back();
-  else closeChatPage(false);
-});
+els.backToGame.addEventListener('click', () => closeChatPage(true));
 els.btnPolls.addEventListener('click', () => openPanel('polls'));
 els.btnSettings.addEventListener('click', () => openPanel('settings'));
 els.muteAudienceSound.checked = soundMuted;
@@ -1024,10 +1023,8 @@ els.endDemo.addEventListener('click', () => {
 els.backdrop.addEventListener('click', closePanels);
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
-  if (chatPageOpen) {
-    if (window.location.hash === '#chat') window.history.back();
-    else closeChatPage(false);
-  } else if (activePanel) closePanels();
+  if (chatPageOpen) closeChatPage(true);
+  else if (activePanel) closePanels();
 });
 $('backToDirectory').addEventListener('click', () => showDirectory(true));
 els.shareRoom.addEventListener('click', shareWatchLink);

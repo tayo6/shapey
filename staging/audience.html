@@ -90,6 +90,9 @@
     /* Transparent board tiles sit above the actual game iframe only to receive audience votes. */
     .stage.has-game-frame #board { border:0; background:transparent; box-shadow:none; }
     .stage.has-game-frame:not(.game-ready) #board { visibility:hidden; pointer-events:none; }
+    /* Show audience controls only after the embedded game has painted its real board. */
+    .stage.has-game-frame:not(.game-ready) .audience-bottom-nav,
+    .stage.has-game-frame:not(.game-ready) .nav-icon { visibility:hidden !important; pointer-events:none !important; }
     .stage.has-game-frame .nav-icon { z-index:32; }
     .stage.has-game-frame #board .tile > img { opacity:0; }
     .stage.has-game-frame #board .tile.is-vote-option { outline:calc(var(--u) * 3) dashed var(--cyan); outline-offset:calc(var(--u) * -4); filter:drop-shadow(0 0 calc(var(--u) * 7) #66e0ffb8); }
@@ -337,7 +340,7 @@
       <button id="retryConnection" type="button" class="wood" style="--fs:32" hidden>RETRY</button>
     </div>
 
-    <img class="fill" style="bottom:0" src="assets/backgrounds/bottom%20navigation.webp" alt="" draggable="false">
+    <img class="fill audience-bottom-nav" style="bottom:0" src="assets/backgrounds/bottom%20navigation.webp" alt="" draggable="false">
     <button id="btnChat" class="nav-icon" style="--x:175" aria-label="Chat" aria-expanded="false"><img src="assets/ui/chat.webp" alt=""><span id="chatBadge" class="badge" hidden>0</span></button>
     <button id="btnPolls" class="nav-icon" style="--x:360" aria-label="Polls" aria-expanded="false"><img src="assets/ui/polls.webp" alt=""><span id="pollBadge" class="badge" hidden>!</span></button>
     <button id="btnSettings" class="nav-icon" style="--x:545" aria-label="Settings" aria-expanded="false"><img src="assets/ui/settings.webp" alt=""></button>
