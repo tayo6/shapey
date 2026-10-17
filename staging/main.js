@@ -40,9 +40,9 @@ const SHUFFLE_ARC_PX = 28;        // sideways bow of a swap path, so the two til
 const MIN_MATCH = 3;          // smallest scoring match; points are calculated in src/rules.js
 
 // ---- Turn clock and inventory limits ----------------------------------------
-// Every turn lasts 45 seconds. The turn clock and each newly spawned tile's SPAWN_REVEAL_MS reveal
-// run on their own absolute deadline, so they always tick side by side: a new batch
-// being revealed never pauses, resets or extends the turn, and the turn ending never cuts a reveal short.
+// Opening board reveal: 15 seconds. Newly spawned tiles: 5 seconds.
+// Pick clocks start after the opening reveal. Player vs AI: human gets 45s Easy / 30s Hard, AI gets 5s.
+// Player 1 vs Player 2: 45s per player. Tag: 30s per player. Play Alone has no pick clock.
 // Test overrides: ?turn=10000 (turn length) and ?invwindow=20000 (inventory window), in milliseconds.
 const TURN_MS = Number(urlParams.get('turn')) || 45000;
 const AI_TURN_MS = 5000; // every AI pick-turn has a fixed 5-second limit
@@ -1026,10 +1026,12 @@ class GameScene extends Phaser.Scene {
     const level = (data && data.difficulty) || urlParams.get('level');
     this.difficulty = AI_LEVELS[level] ? level : 'easy';
     this.ai = AI_LEVELS[this.difficulty];
+    const hardHumanTurnMs = urlParams.has('turn') ? TURN_MS : 30000;
     const tagTurnMs = urlParams.has('turn') ? TURN_MS : 30000;
-    // Human turns: 45 seconds in AI-vs-Player and Player 1 vs Player 2; Tag: 30 seconds.
-    // Difficulty changes AI decisions, not the human's turn length.
-    this.turnDurationMs = this.mode === 'tag' ? tagTurnMs : TURN_MS;
+    this.turnDurationMs = this.mode === 'tag' ? tagTurnMs
+      : this.mode === 'ai'
+        ? RULES.turnDurationForMode('ai', this.difficulty, TURN_MS, hardHumanTurnMs)
+        : TURN_MS;
   }
 
   create() {
@@ -1278,27 +1280,46 @@ class GameScene extends Phaser.Scene {
 
   // Both clocks are redrawn from their own deadlines, so they can never hold each other up.
   refreshClocks() {
+    const now = Date.now();
+    const openingStudyLeft = this.online && this.onlineState
+      ? Math.max(0, Number(this.onlineState.reviewEndsAt) - now)
+      : Number.isFinite(this.openingReviewEndsAt)
+        ? Math.max(0, this.openingReviewEndsAt - now) : 0;
     const openingStudy = this.online
       ? Boolean(this.onlineState && this.onlineState.status === 'study')
-      : Number.isFinite(this.openingReviewEndsAt) && Date.now() < this.openingReviewEndsAt;
+      : openingStudyLeft > 0;
     const turnLeft = this.modeCfg.turnClock
       ? formatClock(Math.min(this.currentTurnDurationMs || this.turnDurationMs, this.turnClock.remaining())) : '';
-    if (this.modeCfg.turnClock) this.setClockText(this.timerText, openingStudy ? '--:--' : turnLeft);
+
+    // Every mode shows the opening reveal countdown on the timer plank. Once it ends,
+    // timed modes switch to the active player's pick countdown; Play Alone returns to Tries.
+    if (openingStudy) {
+      this.timerText.setFontSize(46);
+      this.setClockText(this.timerText, formatClock(openingStudyLeft));
+    } else if (this.modeCfg.turnClock) {
+      this.timerText.setFontSize(46);
+      this.setClockText(this.timerText, turnLeft);
+    } else {
+      this.timerText.setFontSize(23);
+      this.setClockText(this.timerText, 'TRIES: ' + this.totalAttempts);
+    }
 
     const revealLeft = this.online && this.onlineState
-      ? Math.max(0, ...((this.onlineState.reveals || []).map((batch) => batch.endsAt - Date.now())),
+      ? Math.max(0, ...((this.onlineState.reveals || []).map((batch) => batch.endsAt - now)),
           this.onlineState.status === 'study' && Number.isFinite(this.onlineState.reviewEndsAt)
-            ? this.onlineState.reviewEndsAt - Date.now() : 0)
+            ? this.onlineState.reviewEndsAt - now : 0)
       : this.reveals.remaining();
     const onlineShuffling = Boolean(this.online && this.onlineState && this.onlineState.shuffling);
     this.revealText.setVisible(revealLeft > 0 || this.shuffling > 0 || onlineShuffling);
-    // Play alone has no countdown at all: the cue stays, the numbers go.
-    if (revealLeft > 0) this.setClockText(this.revealText, this.modeCfg.turnClock ? 'MEMORIZE ' + formatClock(revealLeft) : 'MEMORIZE');
+    // The spawned-tile reveal has a visible numeric countdown in every mode, including Play Alone.
+    if (revealLeft > 0) this.setClockText(this.revealText, 'MEMORIZE ' + formatClock(revealLeft));
     else if (this.shuffling > 0 || onlineShuffling) this.setClockText(this.revealText, 'SHUFFLING');
 
-    // The shop covers the header, so it shows the turn clock too: opening it never stops the clock.
+    // The shop covers the header, so it shows the same current timer without pausing it.
     if (this.inventoryTimerText && this.inventoryTimerText.active) {
-      this.setClockText(this.inventoryTimerText, 'TURN\n' + (openingStudy ? '--:--' : turnLeft));
+      const shopClock = openingStudy ? 'REVEAL\n' + formatClock(openingStudyLeft)
+        : this.modeCfg.turnClock ? 'TURN\n' + turnLeft : 'TRIES\n' + this.totalAttempts;
+      this.setClockText(this.inventoryTimerText, shopClock);
     }
   }
 
@@ -1319,8 +1340,11 @@ class GameScene extends Phaser.Scene {
     const duration = this.mode === 'ai' && player === 1 ? AI_TURN_MS : this.turnDurationMs;
     this.currentTurnDurationMs = duration;
     if (this.modeCfg.turnClock) {
-      // The opening 15-second study phase is separate; never add it to a pick timer.
-      this.turnClock.start(duration);
+      // Give the first player the entire pick allowance after the opening reveal has ended.
+      // The visible timer plank counts down the reveal separately while this deadline waits.
+      const openingStudyRemaining = !bonus && Number.isFinite(this.openingReviewEndsAt)
+        ? Math.max(0, this.openingReviewEndsAt - Date.now()) : 0;
+      this.turnClock.start(duration + openingStudyRemaining);
     } else this.turnClock.endsAt = Infinity;
     this.updateActivePlayerUI();
     if (this.modeCfg.teams) this.goalText.setText(this.turnLabel().toUpperCase());
