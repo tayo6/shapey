@@ -76,14 +76,9 @@ const TEAM_PLAYERS = [['Player 1', 'Player 2'], ['Player 3', 'Player 4']]; // Ta
 const AUDIENCE_WATCH_CODE = /^[A-Z0-9]{6}$/.test(urlParams.get('watch') || '') ? urlParams.get('watch').toUpperCase() : '';
 const START_MODE = ['alone', 'ai'].includes(urlParams.get('mode')) ? urlParams.get('mode') : null; // only local modes may skip the menu; online modes must use their room lobby
 const HAZARD_OVERRIDE = RULES.parseProbabilityOverride(urlParams.get('hazard'), urlParams.has('hazard'));
-// A hazard tile has two effects (see hazardHit / hazardBlast):
-// - two-player modes (Player vs AI, Player vs Player, Tag): picked first it does no damage and flips back; picked
-//   after other shapes it costs HAZARD_BLAST_PENALTY point(s) and destroys itself and every picked tile, no reward;
-// - Play alone: it never costs anything. It always destroys itself and every picked tile, whether it is picked
-//   first or after other shapes.
+// Hazards are bombs: they always destroy themselves and every picked shape.
+// Only Play Alone loses 1 point for a Hazard; versus modes never subtract score for it.
 const HAZARD_BLAST_PENALTY = 1;
-// Spec: a hazard picked after other shapes always costs 1 point, even at 0, so a two-player score may go negative.
-// Set this to 0 to stop two-player scores dropping below zero (Play alone has its own floor, ALONE_SCORE_FLOOR).
 const TWO_PLAYER_SCORE_FLOOR = -Infinity;
 
 // Play Alone attempts are tracked for statistics only. Hazards and wooden dummies are not attempts.
@@ -137,6 +132,8 @@ const SHAPE_FILES = {
   x:       'x.webp',
 };
 const SHAPE_KEYS = Object.keys(SHAPE_FILES).filter((k) => !['mystery', 'dummy', 'hazard'].includes(k));
+// Cancel remains a spawnable special tile, but it is never a scoring/matchable shape.
+const MATCH_SHAPE_KEYS = SHAPE_KEYS.filter((shape) => shape !== 'cancel');
 const DUMMY_SPAWN_CHANCE = 0.08; // blank wooden tiles are occasional neutral decoys
 
 function randomBoardShape() {
@@ -178,8 +175,8 @@ function shuffle(list) {
 function makeInitialBoard(hazardChance = 0) {
   const total = GRID_ROWS * GRID_COLS;
   const wantedHazards = Math.min(total, Math.round(total * hazardChance));
-  const guaranteedShapeCount = Math.min(SHAPE_KEYS.length, Math.floor((total - wantedHazards) / 3));
-  const startingShapes = shuffle(SHAPE_KEYS).slice(0, guaranteedShapeCount);
+  const guaranteedShapeCount = Math.min(MATCH_SHAPE_KEYS.length, Math.floor((total - wantedHazards) / 3));
+  const startingShapes = shuffle(MATCH_SHAPE_KEYS).slice(0, guaranteedShapeCount);
   const bag = [];
   startingShapes.forEach((k) => bag.push(k, k, k));
   const hazards = Math.min(total - bag.length, Math.round(total * hazardChance));
@@ -2526,12 +2523,10 @@ class GameScene extends Phaser.Scene {
 
     this.aiSee(tile, fromAI); // the AI sees every tile that gets flipped over (certainly its own, only partly the human's)
 
-    // A hazard flipped while other shapes are picked destroys them all (no reward); on its own it costs points.
+    // Hazard is a bomb in every mode: destroy it and every shape already picked.
+    // Only Play Alone loses one point; versus modes never lose points from Hazard.
     if (tile.shape === 'hazard') {
-      // Dummies do not count as shapes or penalties. In versus, Dummy + Hazard destroys both for free;
-      // only a previously picked real shape makes the Hazard a penalized blast.
-      if (!this.modeCfg.twoPlayers || this.selection.length > 0 || this.dummySelection.length > 0) this.hazardBlast(tile);
-      else this.hazardHit(tile);
+      this.hazardBlast(tile);
       return;
     }
 
@@ -2545,9 +2540,9 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
-    // Cancel + one or more Dummies is a neutral cancelled attempt: reveal Cancel, then flip both
-    // it and the Dummies down without awarding or deducting points.
-    if (tile.shape === 'cancel' && this.selection.length === 0 && this.dummySelection.length > 0) {
+    // Cancel picked first cancels the current selection (including any Dummies), flips back down,
+    // and never scores or subtracts points. It does not consume the turn.
+    if (tile.shape === 'cancel' && this.selection.length === 0) {
       this.busy = true;
       tile.selected = true;
       this.selection.push(tile);
@@ -2590,50 +2585,37 @@ class GameScene extends Phaser.Scene {
     if (this.modeCfg.twoPlayers && !this.gameOver) this.endTurn('mismatch');
   }
 
-  // A hazard (skull) flipped after other shapes are picked: it costs HAZARD_BLAST_PENALTY point(s) (two-player
-  // modes may go below 0, see TWO_PLAYER_SCORE_FLOOR) and the hazard and every picked tile are destroyed, with no reward. It never joins the
-  // selection. Like a submitted match it spends the turn: the board falls and refills, the new tiles are
-  // revealed and shuffled as usual, and play passes on. Play alone does not count it as an attempt.
+  // Hazards always detonate, destroying the bomb and all shapes/Dummies currently picked.
+  // Play Alone loses one point per explosion; versus modes receive no Hazard penalty.
   async hazardBlast(hazard) {
     this.busy = true;
-    this.cancelShuffles(); // the board is about to change: stop any shuffle and settle the swap in progress
-    const hadRealShapes = this.selection.length > 0;
+    this.cancelShuffles();
     const tiles = [...this.selection, ...this.dummySelection, hazard];
     this.selection = [];
     this.dummySelection = [];
     this.selectedShape = null;
-    hazard.selected = true; // nothing else may pick it while it is being destroyed
+    hazard.selected = true;
     await this.flipTile(hazard, true);
-    const lost = this.modeCfg.twoPlayers && hadRealShapes ? this.applyPenalty(HAZARD_BLAST_PENALTY) : 0; // Dummies alone never trigger the penalty
-    this.showToast('Hazard! It destroys everything you picked.\n' +
+    const lost = this.modeCfg.twoPlayers ? 0 : this.applyPenalty(HAZARD_BLAST_PENALTY);
+    this.showToast('Hazard! It destroys everything you picked.\\n' +
       (lost > 0 ? '−' + lost + ' point, no reward.' : 'No reward.'));
     this.tweens.add({ targets: hazard, angle: { from: -8, to: 8 }, duration: 70, yoyo: true, repeat: 3,
       onComplete: () => { if (hazard.active) hazard.setAngle(0); } });
     await this.sleep(900);
-    await Promise.all(tiles.map((t) => t.flipChain)); // let any flips finish
+    await Promise.all(tiles.map((tile) => tile.flipChain));
     await this.destroyTiles(tiles);
     await this.cascade();
     this.busy = false;
-    // A hazard is not an attempt: in Play Alone it costs nothing and does not increment the attempt statistic.
+    if (!this.modeCfg.twoPlayers && RULES.hasReachedScoreFloor(this.scores[0], ALONE_SCORE_FLOOR)) {
+      this.endGame('Your score reached ' + ALONE_SCORE_FLOOR + '.');
+      return;
+    }
     this.endTurn('hazard');
   }
 
-  // A hazard (skull) flipped first, with nothing picked: no damage. It is revealed, shakes and flips back, and
-  // the turn goes on. (Play alone does not count it as an attempt.)
+  // Legacy internal alias retained for any existing callback: a standalone Hazard also detonates.
   async hazardHit(tile) {
-    this.busy = true;
-    await this.flipTile(tile, true);
-    this.showToast('Hazard! Nothing was picked, so no damage.');
-    this.tweens.add({ targets: tile, angle: { from: -8, to: 8 }, duration: 70, yoyo: true, repeat: 3,
-      onComplete: () => { if (tile.active) tile.setAngle(0); } });
-    await this.sleep(900);
-    await this.resetSelection();
-    if (tile.active) await this.flipTile(tile, false);
-    this.busy = false;
-    // In versus modes, a standalone Hazard is harmless but still uses up this player's turn.
-    // Play Alone keeps the existing rule: the player may continue after a standalone Hazard.
-    if (this.modeCfg.twoPlayers) this.endTurn('hazard');
-    // A standalone Hazard never applies a score penalty.
+    return this.hazardBlast(tile);
   }
 
   // Play alone: a wrong shape costs a point (a too-small submit is free). (Two-player modes keep failed attempts free.)
@@ -2729,6 +2711,14 @@ class GameScene extends Phaser.Scene {
         this.recordAttempt();
         this.breakLocalMatchStreak();
       }
+      return;
+    }
+
+    const matchShape = tiles[0] && tiles[0].shape;
+    if (!MATCH_SHAPE_KEYS.includes(matchShape) || !tiles.every((tile) => tile.shape === matchShape)) {
+      // Safety net: Cancel/Hazard/Dummy can never be submitted as a scoring match.
+      await this.resetSelection();
+      this.busy = false;
       return;
     }
 
@@ -2890,15 +2880,17 @@ class GameScene extends Phaser.Scene {
   // shape so the board never becomes unplayable.
   ensureMatchPossible(fresh) {
     const counts = {};
-    for (const row of this.tiles) for (const t of row) if (t && SHAPE_KEYS.includes(t.shape)) counts[t.shape] = (counts[t.shape] || 0) + 1;
-    if (Object.values(counts).some((n) => n >= MIN_MATCH)) return;
-    const best = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || SHAPE_KEYS[0];
+    for (const row of this.tiles) for (const tile of row) {
+      if (tile && MATCH_SHAPE_KEYS.includes(tile.shape)) counts[tile.shape] = (counts[tile.shape] || 0) + 1;
+    }
+    if (Object.values(counts).some((count) => count >= MIN_MATCH)) return;
+    const best = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || MATCH_SHAPE_KEYS[0];
     let need = MIN_MATCH - (counts[best] || 0);
     for (const tile of fresh) {
       if (need <= 0) break;
-      if (tile.shape === best || tile.shape === 'hazard') continue; // never turn a hazard into a shape: default hazard chance is 10%
+      if (tile.shape === best || ['hazard', 'dummy', 'cancel'].includes(tile.shape)) continue;
       tile.shape = best;
-      tile.setTexture('shape_' + best); // still face-up at this point
+      tile.setTexture('shape_' + best);
       need--;
     }
   }
@@ -2962,7 +2954,7 @@ class GameScene extends Phaser.Scene {
     const groups = {};
     for (const [tile, shape] of this.aiMemory) {
       if (!tile.active) { this.aiMemory.delete(tile); continue; }
-      if (shape === 'dummy' || shape === 'hazard' || !this.aiCanTap(tile)) continue;
+      if (shape === 'dummy' || shape === 'hazard' || shape === 'cancel' || !this.aiCanTap(tile)) continue;
       (groups[shape] = groups[shape] || []).push(tile);
     }
     return Object.values(groups);
@@ -2984,7 +2976,7 @@ class GameScene extends Phaser.Scene {
       for (const tile of row) {
         if (!tile || !this.aiCanTap(tile)) continue;
         const remembered = this.aiMemory.get(tile);
-        if (remembered === 'dummy' || remembered === 'hazard') continue;
+        if (remembered === 'dummy' || remembered === 'hazard' || remembered === 'cancel') continue;
         if (shape && remembered && remembered !== shape) continue;
         pool.push(tile);
       }
@@ -3052,8 +3044,8 @@ class GameScene extends Phaser.Scene {
     const alive = () => turnId === this.turnId && !this.turnEnding &&
       !this.timeoutHandling && !this.gameOver && !this.turnClock.expired();
     await this.sleep(this.ai.thinkMs);
-    // Keep participating until the AI submits a match, makes a genuine mismatch, or its clock expires.
-    // Neutral first-pick hazards and Dummy-only attempts do not prematurely consume its turn.
+    // Keep participating until a match, mismatch, Hazard explosion, or clock expiry.
+    // Cancel-first and Dummy-only picks never award points.
     while (alive()) {
       await this.aiIdle(alive);
       if (!alive()) return;
