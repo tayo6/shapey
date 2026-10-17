@@ -61,16 +61,18 @@ const ALONE_MISS_PENALTY = 1;   // a wrong shape costs this much (a too-small su
 // ---- Game modes --------------------------------------------------------------
 // hazard = chance that a tile is a hazard (skull) tile: the same ~10% in every mode. Test override: ?hazard=0.5
 const HAZARD_CHANCE = 0.1;
+// Staging win targets: first to 50 for Play Alone / PvAI / PvP; first team to 100 for Tag.
+const MODE_TARGET_SCORE = Object.freeze({ alone: 50, ai: 50, pvp: 50, tag: 100 });
 // teams = Tag mode: two teams of two share the device, and each team's partners take turns (see turnLabel()).
 const MODES = {
-  alone: { label: 'PLAY ALONE', hint: 'Reach 100 points to win. Lose when your score reaches ' + ALONE_SCORE_FLOOR + '.',
-           targetScore: 100, hazard: HAZARD_CHANCE, twoPlayers: false, turnClock: false, ai: false },
-  ai:    { label: 'PLAYER VS AI', hint: 'First to ' + RULES.targetScoreForMode('ai') + ' points wins. Choose Easy or Professional.',
-           targetScore: RULES.targetScoreForMode('ai'), hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: true },
-  pvp:   { label: 'PLAYER 1 VS PLAYER 2', hint: 'Online 2-player match. First to ' + RULES.targetScoreForMode('pvp') + ' points wins.',
-           targetScore: RULES.targetScoreForMode('pvp'), hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false },
-  tag:   { label: 'TAG: 2 VS 2', hint: 'Online team match · 2 vs 2. First team to ' + RULES.targetScoreForMode('tag') + ' points wins.',
-           targetScore: RULES.targetScoreForMode('tag'), hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false, teams: true },
+  alone: { label: 'PLAY ALONE', hint: 'Reach ' + MODE_TARGET_SCORE.alone + ' points to win. Lose when your score reaches ' + ALONE_SCORE_FLOOR + '.',
+           targetScore: MODE_TARGET_SCORE.alone, hazard: HAZARD_CHANCE, twoPlayers: false, turnClock: false, ai: false },
+  ai:    { label: 'PLAYER VS AI', hint: 'First to ' + MODE_TARGET_SCORE.ai + ' points wins. Choose Easy or Professional.',
+           targetScore: MODE_TARGET_SCORE.ai, hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: true },
+  pvp:   { label: 'PLAYER 1 VS PLAYER 2', hint: 'Online 2-player match. First to ' + MODE_TARGET_SCORE.pvp + ' points wins.',
+           targetScore: MODE_TARGET_SCORE.pvp, hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false },
+  tag:   { label: 'TAG: 2 VS 2', hint: 'Online team match · 2 vs 2. First team to ' + MODE_TARGET_SCORE.tag + ' points wins.',
+           targetScore: MODE_TARGET_SCORE.tag, hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false, teams: true },
 };
 const TEAM_PLAYERS = [['Player 1', 'Player 2'], ['Player 3', 'Player 4']]; // Tag: Team 1 and Team 2
 const AUDIENCE_WATCH_CODE = /^[A-Z0-9]{6}$/.test(urlParams.get('watch') || '') ? urlParams.get('watch').toUpperCase() : '';
@@ -1231,7 +1233,7 @@ class GameScene extends Phaser.Scene {
     if (this.modeCfg.twoPlayers) return;
     this.timerText.setFontSize(23); // "TRIES: 17" must fit the timer plank; half the previous 46px size.
     this.timerText.setText('TRIES: ' + this.totalAttempts);
-    this.goalText.setText('WIN 100 · LOSE AT ' + ALONE_SCORE_FLOOR);
+    this.goalText.setText('WIN ' + MODE_TARGET_SCORE.alone + ' · LOSE AT ' + ALONE_SCORE_FLOOR);
   }
 
   updateActivePlayerUI() {
@@ -1378,9 +1380,9 @@ class GameScene extends Phaser.Scene {
   }
 
   createStars(startX, y, count) {
-    // One star icon plus a multiplier keeps the score plank uncluttered: ⭐*5, ⭐*2, etc.
+    // Show the Star icon followed by its count, without a multiplier asterisk.
     const star = this.add.image(startX, y, 'starIcon').setDisplaySize(30, 30).setDepth(10);
-    const multiplier = this.numberText(startX + 33, y, '*' + count, 23).setColor('#ffe36e');
+    const multiplier = this.numberText(startX + 33, y, String(count), 23).setColor('#ffe36e');
     return [star, multiplier];
   }
 
@@ -1526,10 +1528,10 @@ class GameScene extends Phaser.Scene {
 
   updateStarDisplays() {
     if (this.p1Stars && this.p1Stars[1] && this.p1Stars[1].active) {
-      this.p1Stars[1].setText('*' + this.starBalance);
+      this.p1Stars[1].setText(String(this.starBalance));
     }
     if (this.p2Stars && this.p2Stars[1] && this.p2Stars[1].active) {
-      this.p2Stars[1].setText('*' + (this.modeCfg.ai ? 0 : this.starBalance));
+      this.p2Stars[1].setText(String(this.modeCfg.ai ? 0 : this.starBalance));
     }
   }
 
@@ -1602,7 +1604,7 @@ class GameScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.addInventoryUI(title);
 
-    const balance = this.add.text(GAME_WIDTH / 2, 128, 'YOUR STARS: *' + this.starBalance, {
+    const balance = this.add.text(GAME_WIDTH / 2, 128, 'YOUR STARS: ' + this.starBalance, {
       fontFamily: FONT, fontSize: '31px', color: '#ffe36e',
       stroke: '#4a2814', strokeThickness: 5,
     }).setOrigin(0.5);
