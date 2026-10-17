@@ -261,6 +261,7 @@ function resetRoomView() {
   closePanels();
 }
 function showDirectory(updateUrl) {
+  document.body.classList.remove('watching-room');
   if (chatPageOpen) closeChatPage(false);
   explicitLeave = true;
   watchToken++;
@@ -274,6 +275,7 @@ function showDirectory(updateUrl) {
   loadRooms();
 }
 function enterWatchView(code) {
+  document.body.classList.add('watching-room');
   els.directory.hidden = true;
   els.watch.hidden = false;
   const url = directoryUrl();
@@ -861,6 +863,7 @@ async function startWatching(roomCode, hintedMode, pushUrl) {
   setWatchStatus('Connecting to the room…', false);
   els.directory.hidden = true;
   els.watch.hidden = false;
+  document.body.classList.add('watching-room');
   if (pushUrl) enterWatchView(code);
   try {
     const roomResponse = await fetch(api('/api/rooms/' + code), { cache: 'no-store' });

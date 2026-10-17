@@ -70,6 +70,11 @@
     .notice { background:var(--panel); border:calc(var(--u) * 5) solid var(--gold); padding:calc(var(--u) * 26); text-align:center; color:var(--sand); font-size:max(13px, calc(var(--u) * 24)); line-height:1.4; }
 
     /* --------------------------------------------------------------- watch stage */
+    /* When a room is open, reclaim the whole phone viewport for the game canvas and audience nav. */
+    body.watching-room { height:100vh; height:100dvh; overflow:hidden; }
+    body.watching-room > .stage-banner,
+    body.watching-room > .topbar { display:none !important; }
+    body.watching-room #watchView.stage { height:100vh; height:100dvh; min-height:100vh; min-height:100dvh; overflow:hidden; }
     .stage { --u:calc(min(100vw, 720px) / 720); display:grid; place-items:center; min-height:100vh; }
     @supports (height:1dvh) { .stage { --u:calc(min(100vw, 56.25dvh, 720px) / 720); min-height:100dvh; } }
     .canvas { position:relative; width:calc(var(--u) * 720); height:calc(var(--u) * 1280); overflow:hidden; background:#2a1a0e; }
