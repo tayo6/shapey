@@ -6,6 +6,9 @@ if (!RULES) throw new Error('Load src/rules.js before src/main.js.');
 const GAME_WIDTH = 720;
 const GAME_HEIGHT = 1280;
 
+// Move game messages into the free strip above the bottom navigation while a GIF is visible.
+const MEME_TOAST_Y = 1015;
+
 const urlParams = new URLSearchParams(window.location.search);
 if (urlParams.get('embed') === '1') document.body.classList.add('audience-embed');
 // This file is published only under /staging/ and is pinned to the isolated test Worker.
@@ -1220,6 +1223,11 @@ class GameScene extends Phaser.Scene {
   update() {
     if (!this.turnClock) return;
     if (this.memes) this.memes.tick();
+    // GIFs are attached only after loading, so reposition an existing message every frame too.
+    if (this.toast) {
+      const toastY = this.memes && this.memes.visualVisible() ? MEME_TOAST_Y : 256;
+      if (this.toast.y !== toastY) this.toast.setY(toastY);
+    }
     if (!this.online) {
       this.hideFinishedReveals();
       this.healStuckTiles();
@@ -1339,8 +1347,8 @@ class GameScene extends Phaser.Scene {
   showToast(message, holdMs = 2600) {
     if (this.toastTween) this.toastTween.stop();
     if (this.toast) this.toast.destroy();
-    // While a meme picture fills the strip under the header, the message moves down onto the tray's top edge.
-    const toastY = this.memes && this.memes.visualVisible() ? 300 : 256;
+    // Keep text below the tray and above the bottom navigation while a GIF is visible.
+    const toastY = this.memes && this.memes.visualVisible() ? MEME_TOAST_Y : 256;
     const toast = this.add.text(GAME_WIDTH / 2, toastY, message, {
       fontFamily: FONT, fontSize: '24px', color: '#fff2c7',
       stroke: '#3a2412', strokeThickness: 5, align: 'center', wordWrap: { width: 660 },
