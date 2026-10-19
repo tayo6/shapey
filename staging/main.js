@@ -1214,7 +1214,7 @@ class GameScene extends Phaser.Scene {
         this.updateAloneHUD();
         this.showToast('No timer. You lose when your score reaches ' + ALONE_SCORE_FLOOR + '.', 4000);
       } else if (this.modeCfg.teams) {
-        this.showToast('Tag: partners tag in on every other turn.\\n' + this.turnLabel() + ' starts.', 4000);
+        this.showToast('Tag: partners tag in on every other turn.\n' + this.turnLabel() + ' starts.', 4000);
       }
     }
   }
@@ -1815,7 +1815,7 @@ class GameScene extends Phaser.Scene {
       this.addInventoryUI(owned);
 
       if (this.online && !['extraTime', 'doublePlay'].includes(offer.key)) {
-        const notice = this.add.text(554, y - 5, 'COMING SOON\\nONLINE', {
+        const notice = this.add.text(554, y - 5, 'COMING SOON\nONLINE', {
           fontFamily: FONT, fontSize: '18px', color: '#fff0c7', align: 'center',
         }).setOrigin(0.5);
         this.addInventoryUI(notice);
@@ -2783,7 +2783,7 @@ class GameScene extends Phaser.Scene {
     hazard.selected = true;
     await this.flipTile(hazard, true);
     const lost = this.modeCfg.twoPlayers ? 0 : this.applyPenalty(HAZARD_BLAST_PENALTY);
-    this.showToast('Hazard! It destroys everything you picked.\\n' +
+    this.showToast('Hazard! It destroys everything you picked.\n' +
       (lost > 0 ? '−' + lost + ' point, no reward.' : 'No reward.'));
     this.tweens.add({ targets: hazard, angle: { from: -8, to: 8 }, duration: 70, yoyo: true, repeat: 3,
       onComplete: () => { if (hazard.active) hazard.setAngle(0); } });
