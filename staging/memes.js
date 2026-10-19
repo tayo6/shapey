@@ -34,8 +34,10 @@
     audioChance: 0.5,    // when a pool has both audio and pictures: audio this often, picture otherwise
     visualMs: 3500,      // how long a picture / GIF stays up
     stage: Object.freeze({ width: 720, height: 1280 }),
-    // Free strip between the header and the tray, in game (720 x 1280) coordinates.
-    slot: Object.freeze({ x: 360, y: 206, w: 330, h: 78 }),
+    // The strip from just under the header planks (the timer plank ends near y=155) down to the tray's top edge
+    // (about y=285), in game (720 x 1280) coordinates. It stays between the two score planks (x 210-510).
+    slot: Object.freeze({ x: 360, y: 162, w: 300, h: 122 }),
+    maxUpscale: 1.5,     // small GIFs may be enlarged this much to fill the slot
   });
 
   // Meme kinds -> the manifest folders (normalised: lower case, spaces / dashes / slashes become "_") that feed them.
@@ -196,7 +198,7 @@
       const naturalW = img.naturalWidth || 1;
       const naturalH = img.naturalHeight || 1;
       const slot = CONFIG.slot;
-      const fit = Math.min(slot.w / naturalW, slot.h / naturalH, 1);
+      const fit = Math.min(slot.w / naturalW, slot.h / naturalH, CONFIG.maxUpscale);
       const w = naturalW * fit;
       const h = naturalH * fit;
       img.style.width = (w * scale) + 'px';
