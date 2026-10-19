@@ -210,6 +210,29 @@ class ShapeBag {
   }
 }
 
+// Styles for the room-code entry panel (MenuScene.askRoomCode). Same colours as the game's popups and wooden buttons:
+// panel 0x4b2d17 with a gold border, dark slot 0x25180f, wood buttons 0x754322 with a sand border, outlined Happy School text.
+const JOIN_MODAL_CSS = `
+#shapey-join-modal { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center;
+  padding: 16px; box-sizing: border-box; background: rgba(18, 10, 5, .84); font-family: ${FONT}, 'Comic Sans MS', cursive; }
+#shapey-join-modal .panel { box-sizing: border-box; width: min(100%, 460px); padding: 26px 22px 22px; background: #4b2d17;
+  border: 5px solid #d5ad72; display: flex; flex-direction: column; gap: 14px; text-align: center; }
+#shapey-join-modal h2 { margin: 0; font-weight: normal; font-size: 34px; line-height: 1.1; color: #fff2c7;
+  -webkit-text-stroke: .17em #3a2412; paint-order: stroke fill; stroke-linejoin: round; }
+#shapey-join-modal p { margin: 0; font-size: 19px; line-height: 1.3; color: #ffe9b8; }
+#shapey-join-modal input { box-sizing: border-box; width: 100%; height: 66px; padding: 0 12px; text-align: center; text-indent: .22em;
+  font: inherit; font-size: 36px; letter-spacing: .22em; text-transform: uppercase; color: #ffe36e; background: #25180f;
+  border: 4px solid #8b623a; border-radius: 0; outline: none; }
+#shapey-join-modal input:focus { border-color: #ffe36e; }
+#shapey-join-modal .err { min-height: 22px; font-size: 17px; line-height: 1.3; color: #ffb09e; }
+#shapey-join-modal .row { display: flex; gap: 12px; }
+#shapey-join-modal button { flex: 1; min-height: 58px; font: inherit; font-size: 26px; line-height: 1; color: #fff; background: #754322;
+  border: 4px solid #f3d29a; border-radius: 0; cursor: pointer; -webkit-text-stroke: .17em #3a2412; paint-order: stroke fill;
+  stroke-linejoin: round; transition: transform .07s; }
+#shapey-join-modal button:active { transform: scale(.96); }
+#shapey-join-modal button:focus-visible { outline: 3px solid #ffe36e; outline-offset: 2px; }
+`;
+
 // A wooden button used by the menu, the in-game panel and the game-over screen.
 function woodButton(scene, x, y, w, h, label, fontSize, onTap, depth = 0, sub = null) {
   const bg = scene.add.rectangle(x, y, w, h, 0x754322, 1).setStrokeStyle(4, 0xf3d29a)
@@ -586,12 +609,12 @@ class MenuScene extends Phaser.Scene {
         () => this.openBoardSize(mode), 10, cfg.hint);
     });
 
-    // Spectating is deliberately separated from playable modes and styled as a watch-only destination.
+    // Spectating is deliberately separated from playable modes: it is a darker, secondary panel (the same brown fill
+    // and gold border the game's popups use) instead of the bright wood of the four playable modes.
     const audienceButton = woodButton(this, GAME_WIDTH / 2, 1228, 620, 76, 'WATCH LIVE GAMES', 32,
       () => this.openAudienceDirectory(), 10, 'SPECTATOR AREA · WATCH ONLY · NO GAME MOVES');
-    audienceButton[0].setFillStyle(0x12303b, 1).setStrokeStyle(4, 0x66e0ff);
-    audienceButton[1].setColor('#a9e8ff').setStroke('#10252c', 6);
-    if (audienceButton[2]) audienceButton[2].setColor('#d7f7ff');
+    audienceButton[0].setFillStyle(0x4b2d17, 1).setStrokeStyle(4, 0xd5ad72);
+    audienceButton[1].setColor('#fff2c7');
   }
 
   // Every staging mode uses the same three board-size choices. 7×7 remains the default.
@@ -825,8 +848,70 @@ class MenuScene extends Phaser.Scene {
     }
   }
 
+  // Room-code entry that looks like the rest of the menu (wood panel, gold border, Happy School text, wooden buttons)
+  // instead of the browser's own prompt box. Resolves with the code on JOIN / Enter, or null on CANCEL / Escape.
+  askRoomCode() {
+    return new Promise((resolve) => {
+      if (document.getElementById('shapey-join-modal')) { resolve(null); return; }
+      if (!document.getElementById('shapey-join-style')) {
+        const style = document.createElement('style');
+        style.id = 'shapey-join-style';
+        style.textContent = JOIN_MODAL_CSS;
+        document.head.appendChild(style);
+      }
+      const make = (tag, props, parent) => {
+        const node = document.createElement(tag);
+        Object.assign(node, props);
+        if (parent) parent.appendChild(node);
+        return node;
+      };
+      const overlay = make('div', { id: 'shapey-join-modal' });
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-labelledby', 'shapey-join-title');
+      const panel = make('div', { className: 'panel' }, overlay);
+      make('h2', { id: 'shapey-join-title', textContent: 'ENTER ROOM CODE' }, panel);
+      make('p', { textContent: 'Ask your friend for their room code.' }, panel);
+      const input = make('input', { type: 'text', autocomplete: 'off', spellcheck: false }, panel);
+      input.setAttribute('aria-label', 'Room code');
+      input.setAttribute('autocapitalize', 'characters');
+      input.setAttribute('autocorrect', 'off');
+      input.setAttribute('enterkeyhint', 'go');
+      const error = make('div', { className: 'err' }, panel);
+      error.setAttribute('role', 'alert');
+      const row = make('div', { className: 'row' }, panel);
+      const cancel = make('button', { type: 'button', textContent: 'CANCEL' }, row);
+      const join = make('button', { type: 'button', textContent: 'JOIN' }, row);
+
+      const onKey = (event) => {
+        if (event.key === 'Escape') { event.preventDefault(); close(null); }
+        else if (event.key === 'Enter' && event.target === input) { event.preventDefault(); submit(); }
+      };
+      const close = (value) => {
+        document.removeEventListener('keydown', onKey, true);
+        overlay.remove();
+        resolve(value);
+      };
+      const submit = () => {
+        const code = input.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (!/^[A-Z0-9]{6}$/.test(code)) {
+          error.textContent = 'Room codes have 6 letters or numbers.';
+          input.focus();
+          return;
+        }
+        close(code);
+      };
+      input.addEventListener('input', () => { error.textContent = ''; });
+      cancel.addEventListener('click', () => close(null));
+      join.addEventListener('click', submit);
+      document.addEventListener('keydown', onKey, true);
+      document.body.appendChild(overlay);
+      input.focus();
+    });
+  }
+
   async promptJoinRoom() {
-    const entered = window.prompt('Enter your friend’s 6-character room code:');
+    const entered = await this.askRoomCode();
     if (entered == null) return;
     const code = entered.toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (!/^[A-Z0-9]{6}$/.test(code)) {
