@@ -373,10 +373,11 @@ class BootScene extends Phaser.Scene {
   preload() {
     this.load.setPath('assets');
     this.load.image('logo', 'ui/shapey logo.webp');
-    this.load.image('loadRect', 'ui/load rectangle staging.webp');
   }
 
   create() {
+    // Reuse the already-cleaned transparent canvas instead of loading the old corrupted WebP.
+    this.textures.addCanvas('loadRect', window.ShapeyLoadingBar.canvas);
     this.scene.start('LoadScene');
   }
 }
@@ -3245,17 +3246,20 @@ class GameScene extends Phaser.Scene {
   }
 }
 
-// The game starts immediately (the font and art load behind a progress bar), instead of waiting for the font first.
-window.game = new Phaser.Game({
-  type: Phaser.AUTO,
-  parent: 'game',
-  width: GAME_WIDTH,
-  height: GAME_HEIGHT,
-  backgroundColor: '#2b1a0f',
-  banner: false,
-  scale: {
-    mode: Phaser.Scale.FIT,
-    autoCenter: Phaser.Scale.CENTER_BOTH,
-  },
-  scene: [BootScene, LoadScene, MenuScene, GameScene],
+// Start Phaser once the clean loading-bar image is ready. The HTML placeholder remains visible
+// while its checkerboard background is removed, so both loading screens use the same clean artwork.
+window.ShapeyLoadingBar.ready.then(() => {
+  window.game = new Phaser.Game({
+    type: Phaser.AUTO,
+    parent: 'game',
+    width: GAME_WIDTH,
+    height: GAME_HEIGHT,
+    backgroundColor: '#2b1a0f',
+    banner: false,
+    scale: {
+      mode: Phaser.Scale.FIT,
+      autoCenter: Phaser.Scale.CENTER_BOTH,
+    },
+    scene: [BootScene, LoadScene, MenuScene, GameScene],
+  });
 });
