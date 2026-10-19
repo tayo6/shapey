@@ -54,12 +54,20 @@ jobs:
       - name: Run local Worker integration and browser tests (no deployment)
         run: |
           BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"; if [ "$BRANCH" = "staging/audience-room-ui-0003" ] || [ "$BRANCH" = "integration/staging-audience-board-sizes-2026-10-19" ]; then CONFIG=wrangler.staging.jsonc; else CONFIG=wrangler.jsonc; fi
-          setsid npx --yes wrangler@4.151.0 dev --config "$CONFIG" --local --ip 127.0.0.1 --port 8787 > /tmp/shapey-local-worker.log 2>&1 &
-          WORKER_PID=$!
+          # Isolate persistence per smoke suite so each test exercises the same production limits
+          # from a clean simulated-IP window instead of competing with other suites' room creations.
+          setsid npx --yes wrangler@4.151.0 dev --config "$CONFIG" --local --ip 127.0.0.1 --port 8787 --persist-to /tmp/shapey-worker-integration-state > /tmp/shapey-worker-integration.log 2>&1 &
+          INTEGRATION_WORKER_PID=$!
+          setsid npx --yes wrangler@4.151.0 dev --config "$CONFIG" --local --ip 127.0.0.1 --port 8788 --persist-to /tmp/shapey-worker-pvp-state > /tmp/shapey-worker-pvp.log 2>&1 &
+          PVP_WORKER_PID=$!
+          setsid npx --yes wrangler@4.151.0 dev --config "$CONFIG" --local --ip 127.0.0.1 --port 8789 --persist-to /tmp/shapey-worker-tag-state > /tmp/shapey-worker-tag.log 2>&1 &
+          TAG_WORKER_PID=$!
           setsid python3 -m http.server 8080 --bind 127.0.0.1 --directory .. > /tmp/shapey-local-pages.log 2>&1 &
           PAGES_PID=$!
           cleanup() {
-            kill -- "-$WORKER_PID" 2>/dev/null || true
+            kill -- "-$INTEGRATION_WORKER_PID" 2>/dev/null || true
+            kill -- "-$PVP_WORKER_PID" 2>/dev/null || true
+            kill -- "-$TAG_WORKER_PID" 2>/dev/null || true
             kill -- "-$PAGES_PID" 2>/dev/null || true
           }
           trap cleanup EXIT
@@ -67,35 +75,37 @@ jobs:
           READY=0
           for attempt in $(seq 1 120); do
             if curl -fsS http://127.0.0.1:8787/health | grep -q 'authoritative-gameplay-v1' &&
-               curl -fsS http://127.0.0.1:8080/index.html >/dev/null; then
+               curl -fsS http://127.0.0.1:8788/health | grep -q 'authoritative-gameplay-v1' &&
+               curl -fsS http://127.0.0.1:8789/health | grep -q 'authoritative-gameplay-v1' &&
+               curl -fsS http://127.0.0.1:8080/staging/index.html >/dev/null; then
               READY=1
               break
             fi
             sleep 0.25
           done
           if [ "$READY" != "1" ]; then
-            echo "---- Local Worker log ----"
-            cat /tmp/shapey-local-worker.log
+            echo "---- Local Worker logs ----"
+            cat /tmp/shapey-worker-integration.log /tmp/shapey-worker-pvp.log /tmp/shapey-worker-tag.log
             echo "---- Static Pages log ----"
             cat /tmp/shapey-local-pages.log
             exit 1
           fi
 
-          node integration-smoke.mjs || {
+          SHAPEY_TEST_URL=http://127.0.0.1:8787 node integration-smoke.mjs || {
             echo "---- Local Worker log after integration failure ----"
-            cat /tmp/shapey-local-worker.log
+            cat /tmp/shapey-worker-integration.log
             exit 1
           }
-          node browser-smoke.mjs || {
+          SHAPEY_BROWSER_URL="http://127.0.0.1:8080/staging/index.html?api=http://127.0.0.1:8788" node browser-smoke.mjs || {
             echo "---- Local Worker log after PvP browser failure ----"
-            cat /tmp/shapey-local-worker.log
+            cat /tmp/shapey-worker-pvp.log
             echo "---- Static Pages log after PvP browser failure ----"
             cat /tmp/shapey-local-pages.log
             exit 1
           }
-          node tag-browser-smoke.mjs || {
+          SHAPEY_BROWSER_URL="http://127.0.0.1:8080/staging/index.html?api=http://127.0.0.1:8789" node tag-browser-smoke.mjs || {
             echo "---- Local Worker log after Tag browser failure ----"
-            cat /tmp/shapey-local-worker.log
+            cat /tmp/shapey-worker-tag.log
             echo "---- Static Pages log after Tag browser failure ----"
             cat /tmp/shapey-local-pages.log
             exit 1

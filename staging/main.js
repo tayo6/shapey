@@ -71,8 +71,8 @@ const ALONE_MISS_PENALTY = 1;   // a wrong shape costs this much (a too-small su
 // ---- Game modes --------------------------------------------------------------
 // hazard = chance that a tile is a hazard (skull) tile: the same ~10% in every mode. Test override: ?hazard=0.5
 const HAZARD_CHANCE = 0.1;
-// Staging win targets: first to 50 for Play Alone / PvAI / PvP; first team to 100 for Tag.
-const MODE_TARGET_SCORE = Object.freeze({ alone: 50, ai: 50, pvp: 50, tag: 100 });
+// Final game win targets: first to 100 for solo / AI / PvP; first team to 200 for Tag.
+const MODE_TARGET_SCORE = Object.freeze({ alone: 100, ai: 100, pvp: 100, tag: 200 });
 // teams = Tag mode: two teams of two share the device, and each team's partners take turns (see turnLabel()).
 const MODES = {
   alone: { label: 'PLAY ALONE', hint: 'Reach ' + MODE_TARGET_SCORE.alone + ' points to win. Lose when your score reaches ' + ALONE_SCORE_FLOOR + '.',
