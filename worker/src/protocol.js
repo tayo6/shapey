@@ -19,9 +19,11 @@ export function isBoardSize(value) {
 
 export function isAllowedOrigin(origin, extraOrigins = "") {
   // Extra origins are opt-in per deployment; only the staging Worker config supplies its preview host.
-  const extras = Array.isArray(extraOrigins)
+  const extras = (Array.isArray(extraOrigins)
     ? extraOrigins
-    : typeof extraOrigins === "string" ? extraOrigins.split(",") : [];
+    : typeof extraOrigins === "string" ? extraOrigins.split(",") : [])
+    .map(value => typeof value === "string" ? value.trim() : "")
+    .filter(Boolean);
   return typeof origin === "string" && (
     ALLOWED_ORIGINS.includes(origin) ||
     extras.some(value => typeof value === "string" && value.trim() === origin)
