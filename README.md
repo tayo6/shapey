@@ -4,12 +4,12 @@
 
 A memory-and-matching game built with Phaser 3. Play it at https://tayo6.github.io/shapey/
 
-Pick a mode on the opening menu:
+Pick a mode on the opening menu. The test build is available at https://tayo6.github.io/shapey/staging/; it uses a separate staging multiplayer service:
 
 - **Play alone** - no timer or attempt limit. You lose only when your score reaches -15.
 - **Player vs AI** - take turns against the computer; first to **100 points** wins. Choose **Easy** or **Professional** first.
-- **Player 1 vs Player 2** - two players on one device, 45 seconds per turn; first to **100 points** wins.
-- **Tag: 2 vs 2** - two teams share one device and one score per team; partners alternate turns (Player 1, Player 3, Player 2, Player 4, ...). First team to **200 points** wins.
+- **Player 1 vs Player 2** - online multiplayer on **two different devices**, 45 seconds per turn; first to **100 points** wins.
+- **Tag: 2 vs 2** - online multiplayer on **four different devices**. Team A is Players 1 and 2; Team B is Players 3 and 4. The four players take turns in sequence, with one shared score per team; first team to **200 points** wins.
 
 Hazard (skull) tiles have a 10% spawn chance in every mode. In Player vs AI, Player vs Player and Tag, a hazard picked first does no damage and flips back; picked after other shapes it costs 1 point and destroys itself and the shapes picked before it, with no reward. In Play alone a hazard never costs anything: it always destroys itself and any picked shapes.
 
