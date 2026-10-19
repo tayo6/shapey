@@ -140,14 +140,22 @@
       const clean = cleanAndCrop(source);
       const url = clean.canvas.toDataURL('image/webp', 0.95);
       window.ShapeyLoadingBar.url = url;
+      window.ShapeyLoadingBar.canvas = clean.canvas;
       await showImage(url, clean.width, clean.height);
-      return { url, width: clean.width, height: clean.height };
+      return { url, width: clean.width, height: clean.height, canvas: clean.canvas };
     } catch (error) {
       console.warn('Could not clean the loading-bar source; using the staging fallback.', error);
       const fallback = await loadImage(fallbackUrl);
+      const fallbackCanvas = document.createElement('canvas');
+      fallbackCanvas.width = fallback.naturalWidth;
+      fallbackCanvas.height = fallback.naturalHeight;
+      const fallbackContext = fallbackCanvas.getContext('2d');
+      if (!fallbackContext) throw new Error('Canvas is unavailable for the fallback image');
+      fallbackContext.drawImage(fallback, 0, 0);
       window.ShapeyLoadingBar.url = fallbackUrl;
+      window.ShapeyLoadingBar.canvas = fallbackCanvas;
       await showImage(fallbackUrl, fallback.naturalWidth, fallback.naturalHeight);
-      return { url: fallbackUrl, width: fallback.naturalWidth, height: fallback.naturalHeight, fallback: true };
+      return { url: fallbackUrl, width: fallback.naturalWidth, height: fallback.naturalHeight, canvas: fallbackCanvas, fallback: true };
     }
   })();
 })();
