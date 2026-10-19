@@ -32,6 +32,12 @@ async function choosePvp(page) {
     Boolean(window.game?.scene?.getScenes(true).some((scene) => scene.scene.key === "MenuScene")),
     "mode menu");
   await clickWorld(page, 360, 930);
+  // The current staging menu asks for a board size after mode selection. Wait for that
+  // picker, then choose 7×7 (the existing default) before expecting the online lobby.
+  await waitForScene(page, () =>
+    (window.game?.scene?.getScene("MenuScene")?.pickerUI?.length || 0) > 0,
+    "board-size picker");
+  await clickWorld(page, 360, 845);
   await waitForScene(page, () =>
     window.game?.scene?.getScene("MenuScene")?.onlineMode === "pvp",
     "PvP room lobby");

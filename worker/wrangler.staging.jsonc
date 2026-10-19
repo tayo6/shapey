@@ -4,6 +4,9 @@
   "main": "src/index.js",
   "compatibility_date": "2026-10-13",
   "compatibility_flags": [],
+  "vars": {
+    "STAGING_ALLOWED_ORIGINS": "https://shapey-audience-preview.hellohuman100.workers.dev"
+  },
   "durable_objects": {
     "bindings": [
       {

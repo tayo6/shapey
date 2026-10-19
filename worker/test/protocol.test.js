@@ -8,8 +8,13 @@ import {
   ROOM_CREATE_RATE_WINDOW_MS, ROOM_CREATE_RATE_LIMIT, nextRoomCreationWindow,
 } from "../src/protocol.js";
 
-test("only the production site and documented local origins are allowed", () => {
+test("known site origins are allowed and the audience preview is staging-only", () => {
   for (const origin of ALLOWED_ORIGINS) assert.equal(isAllowedOrigin(origin), true);
+  const previewOrigin = "https://shapey-audience-preview.hellohuman100.workers.dev";
+  assert.equal(isAllowedOrigin(previewOrigin), false);
+  assert.equal(isAllowedOrigin(previewOrigin, previewOrigin), true);
+  assert.equal(isAllowedOrigin("https://evil.example", previewOrigin), false);
+  assert.equal(isAllowedOrigin(previewOrigin, "https://evil.example"), false);
   for (const origin of ["", null, "https://evil.example", "https://tayo6.github.io.evil.example"]) {
     assert.equal(isAllowedOrigin(origin), false);
   }

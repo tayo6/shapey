@@ -50,14 +50,14 @@ function audiencePollSnapshot(poll) {
 
 // CORS and WebSocket origin policy share the tested protocol helper.
 
-function corsHeaders(request) {
+function corsHeaders(request, env) {
   const origin = request.headers.get("Origin") || "";
   const headers = {
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Vary": "Origin"
   };
-  if (isAllowedOrigin(origin)) headers["Access-Control-Allow-Origin"] = origin;
+  if (isAllowedOrigin(origin, env?.STAGING_ALLOWED_ORIGINS || "")) headers["Access-Control-Allow-Origin"] = origin;
   return headers;
 }
 
@@ -86,7 +86,7 @@ async function hashSeatToken(token) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const cors = corsHeaders(request);
+    const cors = corsHeaders(request, env);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
 
     if (url.pathname === "/health" && request.method === "GET") {
@@ -101,7 +101,7 @@ export default {
     }
 
     if (url.pathname === "/api/rooms" && request.method === "GET") {
-      if (!isAllowedOrigin(request.headers.get("Origin") || "")) {
+      if (!isAllowedOrigin(request.headers.get("Origin") || "", env?.STAGING_ALLOWED_ORIGINS || "")) {
         return json({ error: "Origin not allowed." }, 403, cors);
       }
       const directory = env.ROOMS.get(env.ROOMS.idFromName(LIVE_DIRECTORY_OBJECT_NAME));
@@ -118,7 +118,7 @@ export default {
     if (url.pathname === "/api/rooms" && request.method === "POST") {
       // Origin is a browser abuse barrier, not authentication. The per-IP limit below also
       // constrains direct API clients that forge Origin headers.
-      if (!isAllowedOrigin(request.headers.get("Origin") || "")) {
+      if (!isAllowedOrigin(request.headers.get("Origin") || "", env?.STAGING_ALLOWED_ORIGINS || "")) {
         return json({ error: "Origin not allowed." }, 403, cors);
       }
       const clientAddress = request.headers.get("CF-Connecting-IP") || "unknown";
@@ -185,7 +185,7 @@ export default {
     const match = url.pathname.match(/^\/ws\/([A-Z0-9]{6})$/);
     if (match && request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
       // CORS does not protect WebSocket handshakes; validate Origin explicitly.
-      if (!isAllowedOrigin(request.headers.get("Origin") || "")) {
+      if (!isAllowedOrigin(request.headers.get("Origin") || "", env?.STAGING_ALLOWED_ORIGINS || "")) {
         return json({ error: "Origin not allowed." }, 403, cors);
       }
       return env.ROOMS.get(env.ROOMS.idFromName(match[1])).fetch(request);

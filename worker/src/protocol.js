@@ -17,8 +17,15 @@ export function isBoardSize(value) {
   return Number.isInteger(value) && SUPPORTED_BOARD_SIZES.includes(value);
 }
 
-export function isAllowedOrigin(origin) {
-  return typeof origin === "string" && ALLOWED_ORIGINS.includes(origin);
+export function isAllowedOrigin(origin, extraOrigins = "") {
+  // Extra origins are opt-in per deployment; only the staging Worker config supplies its preview host.
+  const extras = Array.isArray(extraOrigins)
+    ? extraOrigins
+    : typeof extraOrigins === "string" ? extraOrigins.split(",") : [];
+  return typeof origin === "string" && (
+    ALLOWED_ORIGINS.includes(origin) ||
+    extras.some(value => typeof value === "string" && value.trim() === origin)
+  );
 }
 
 export function modeDetails(mode) {
