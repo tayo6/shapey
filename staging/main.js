@@ -160,8 +160,8 @@ const DUST_FRAME_RATE = 10;
 // Shapey logo and the loading bar. index.html draws the same layout while Phaser is still downloading.
 const LOGO_W = 520, LOGO_Y = 470;
 const LOAD_BAR_W = 560, LOAD_BAR_Y = 720;
-// The dark slot of "load rectangle.webp", as fractions of the image: the progress fill goes inside it.
-const LOAD_TRACK = { x0: 0.0745, x1: 0.9255, y0: 0.302, y1: 0.698 };
+// The dark slot of "load rectangle staging.webp", as fractions of the image: the progress fill goes inside it.
+const LOAD_TRACK = { x0: 0.0664, x1: 0.9326, y0: 0.283, y1: 0.7123 };
 const LOAD_MIN_FILL = 0.06; // share of the slot that is already filled at 0%, so the bar never looks empty
 
 const randomItem = (list) => list[Math.floor(Math.random() * list.length)];
@@ -373,7 +373,7 @@ class BootScene extends Phaser.Scene {
   preload() {
     this.load.setPath('assets');
     this.load.image('logo', 'ui/shapey logo.webp');
-    this.load.image('loadRect', 'ui/load rectangle.webp');
+    this.load.image('loadRect', 'ui/load rectangle staging.webp');
   }
 
   create() {
