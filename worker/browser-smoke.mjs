@@ -68,15 +68,15 @@ async function run() {
     const roomCode = await page1.evaluate(() =>
       window.game.scene.getScene("MenuScene").currentRoomCode);
 
-    // Return the known room code from inside the second browser instead of using a native
-    // prompt dialog. This keeps the test deterministic while still clicking the real JOIN ROOM UI.
-    await page2.evaluate((code) => {
-      window.prompt = () => code;
-    }, roomCode);
+    // Use the current branded in-game join dialog rather than overriding the old native prompt.
     await clickWorld(page2, 360, 810);
+    const joinDialog = page2.locator("#shapey-join-modal");
+    await joinDialog.waitFor({ state: "visible", timeout: 5_000 });
+    await joinDialog.locator("input[aria-label='Room code']").fill(roomCode);
+    await joinDialog.locator("button").nth(1).click();
     await waitForScene(page2, () =>
-      window.game?.scene?.getScene("MenuScene")?.onlineStatus?.text?.includes("Room connected as Player 2"),
-      "second browser joined as Player 2", 15_000);
+      window.game?.scene?.getScene("MenuScene")?.currentRoomCode === roomCode,
+      "second browser accepted the room code", 15_000);
 
     await Promise.all([
       waitForScene(page1, () => window.game?.scene?.getScene("GameScene")?.online === true &&
