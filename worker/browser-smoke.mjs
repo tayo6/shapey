@@ -74,9 +74,9 @@ async function run() {
     await joinDialog.waitFor({ state: "visible", timeout: 5_000 });
     await joinDialog.locator("input[aria-label='Room code']").fill(roomCode);
     await joinDialog.locator("button").nth(1).click();
-    await waitForScene(page2, () =>
-      window.game?.scene?.getScene("MenuScene")?.currentRoomCode === roomCode,
-      "second browser accepted the room code", 15_000);
+    await waitForScene(page2, (code) =>
+      window.game?.scene?.getScene("MenuScene")?.currentRoomCode === code,
+      "second browser accepted the room code", 15_000, roomCode);
 
     await Promise.all([
       waitForScene(page1, () => window.game?.scene?.getScene("GameScene")?.online === true &&
