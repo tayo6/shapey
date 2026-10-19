@@ -373,10 +373,11 @@ class BootScene extends Phaser.Scene {
   preload() {
     this.load.setPath('assets');
     this.load.image('logo', 'ui/shapey logo.webp');
-    this.load.image('loadRect', window.ShapeyLoadingBar.url);
   }
 
   create() {
+    // Reuse the already-cleaned transparent canvas instead of loading the old corrupted WebP.
+    this.textures.addCanvas('loadRect', window.ShapeyLoadingBar.canvas);
     this.scene.start('LoadScene');
   }
 }
