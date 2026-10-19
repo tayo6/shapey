@@ -68,13 +68,15 @@ test('Double Play grants exactly one bonus turn and cannot chain', () => {
   assert.equal(rules.shouldGrantDoublePlay(false, null, 0), false);
 });
 
-test('turn durations follow the versus mode and AI difficulty', () => {
+test('turn durations follow AI difficulty and Tag has a 30-second pick timer', () => {
   assert.equal(rules.turnDurationForMode('ai', 'easy'), 45000);
   assert.equal(rules.turnDurationForMode('ai', 'pro'), 30000);
   assert.equal(rules.turnDurationForMode('pvp', 'pro'), 45000);
-  assert.equal(rules.turnDurationForMode('tag', 'pro'), 45000);
-  // Explicit test/development overrides are honored for both AI levels.
+  assert.equal(rules.turnDurationForMode('tag', 'easy'), 30000);
+  assert.equal(rules.turnDurationForMode('tag', 'pro'), 30000);
+  // Explicit test/development overrides are honored for every timed mode.
   assert.equal(rules.turnDurationForMode('ai', 'pro', 10000, 10000), 10000);
+  assert.equal(rules.turnDurationForMode('tag', 'easy', 10000, 10000, 10000), 10000);
 });
 
 test('a new profile gets exactly one starter Star but saved balances are preserved', () => {
@@ -85,12 +87,19 @@ test('a new profile gets exactly one starter Star but saved balances are preserv
   assert.equal(rules.initialStarBalance('4'), 4);
 });
 
-test('versus mode targets are fixed by mode', () => {
-  assert.equal(rules.targetScoreForMode('alone'), null);
+test('score targets are fixed by mode', () => {
+  assert.equal(rules.targetScoreForMode('alone'), 100);
   assert.equal(rules.targetScoreForMode('ai'), 100);
   assert.equal(rules.targetScoreForMode('pvp'), 100);
   assert.equal(rules.targetScoreForMode('tag'), 200);
   assert.equal(rules.targetScoreForMode('unknown'), null);
+});
+
+test('mode navigation only exposes the actions allowed by each mode', () => {
+  assert.deepEqual(rules.navigationForMode('alone'), ['settings', 'submit']);
+  assert.deepEqual(rules.navigationForMode('ai'), ['settings', 'submit', 'inventory']);
+  assert.deepEqual(rules.navigationForMode('pvp'), ['settings', 'submit', 'inventory']);
+  assert.deepEqual(rules.navigationForMode('tag'), ['settings', 'submit', 'polls', 'inventory']);
 });
 
 test('a side wins as soon as its score reaches or exceeds its target', () => {

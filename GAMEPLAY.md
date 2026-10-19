@@ -5,14 +5,14 @@ This document describes the recommended rules for turning the current Phaser pro
 ## 1. Core loop
 
 - The board is 7 × 7. At the beginning of a game, all normal shapes are visible for 15 seconds, then turn face-down. Face-up tiles can't be picked while they are showing (a shape is only revealed by the player flipping it), and the first turn's clock starts after this study phase.
-- Versus turns alternate. Player vs AI Easy, Player 1 vs Player 2, and Tag use **45 seconds per turn**; Player vs AI Professional uses **30 seconds per turn**. The opening study phase is not charged to the first turn.
+- Versus turns alternate. Player vs AI Easy and Player 1 vs Player 2 use **45 seconds per turn**; Player vs AI Professional and each Tag pick use **30 seconds per turn**. The opening study phase is not charged to the first turn.
 - On a turn, the player taps hidden tiles to reveal their shapes and tries to collect 3 or more of the same normal shape. Matches do not need to be adjacent.
 - A valid submitted match awards points, removes the matched shapes, causes the board to cascade, and ends the turn. Newly spawned tiles are shown for 5 seconds, flip face-down, and are then shuffled (see "New-tile shuffle" below).
 - In versus modes, picking a different normal shape resets the selection and ends the turn immediately. Submitting fewer than 3 shapes awards no points but still ends the turn. Play Alone is different: a wrong normal shape costs 1 point and play continues.
 - When a versus clock expires, a selected group of 3 or more matching shapes is **auto-submitted**. If there is no valid group, the selection is cleared and the turn passes without a reward.
 - **Two clocks run at the same time.** The turn clock and the 5-second "memorize" reveal of newly spawned tiles (followed by their shuffle) are independent; a reveal or shuffle never pauses, resets, or extends a turn.
 - The Submit button ends the active versus turn even if the player still has time or selected fewer than 3 shapes. **Double Play** is the sole exception: using it grants that same player one extra 45-second turn; it cannot chain. The turn deadline auto-submits any valid selected match.
-- **Versus targets are fixed by mode:** Player vs AI and Player 1 vs Player 2 end when a side first reaches or exceeds **100 points**; Tag ends when a team first reaches or exceeds **200 points**. Play Alone is survival mode: there is no attempt-based checkpoint, and the game ends only when the score reaches **−15**. Online, the server—not the browser—must authoritatively resolve scores and winners.
+- **Versus targets are fixed by mode:** Player vs AI and Player 1 vs Player 2 end when a side first reaches or exceeds **100 points**; Tag ends when a team first reaches or exceeds **200 points**. Play Alone wins at **100 points** and loses at **−15 points**; it has no attempt-based checkpoint or turn countdown. Online, the server—not the browser—must authoritatively resolve scores and winners.
 
 ### Which shapes spawn (shuffle bag)
 
@@ -44,11 +44,11 @@ Keep these existing values initially so the new mechanics can be tested without 
 
 ### Mode menu (implemented)
 
-The game has four modes: **Play Alone**, **Player vs AI**, **Player 1 vs Player 2**, and **Tag: 2 vs 2**. Player vs AI opens a **Choose difficulty** panel (Easy / Professional / Back). Product requirement: Player 1 vs Player 2 and Tag are online-only; the room lobby exists, but synchronized online board actions and authoritative turn/scoring resolution remain incomplete. For testing, `?mode=alone`, `?mode=ai`, `?mode=pvp` or `?mode=tag` skips the menu; `?mode=ai` starts on Easy unless `?level=pro` is added.
+The game has four modes: **Play Alone**, **Player vs AI**, **Player 1 vs Player 2**, and **Tag: 2 vs 2**. Player vs AI opens a **Choose difficulty** panel (Easy / Professional / Back). Product requirement: Player 1 vs Player 2 and Tag are online-only. In the authoritative-gameplay development branch, the Worker and Phaser client are wired together and CI tests a local two-browser PvP match plus local Worker integration for two-player PvP and four-player Tag. Real-device and staging validation remain outstanding. For local-mode testing, `?mode=alone` or `?mode=ai` skips the menu; online-only Player 1 vs Player 2 and Tag must go through the room lobby. `?mode=ai` starts on Easy unless `?level=pro` is added.
 
-### Tag: 2 vs 2 (implemented)
+### Tag: 2 vs 2 (authoritative engine integrated in development branch; validation outstanding)
 
-Tag is the online 2-vs-2 mode. Team 1 is Player 1 and Player 2; Team 2 is Player 3 and Player 4. The gameplay scene currently models team turns locally; online turn synchronization remains future work.
+Tag is the online 2-vs-2 mode. Team 1 is Player 1 and Player 2; Team 2 is Player 3 and Player 4. The server-side engine enforces the turn order P1 → P3 → P2 → P4 and keeps one shared score per team. Local Worker integration verifies all four player seats and their turn sequence, but the browser presentation and physical four-device flow still require staging/end-to-end testing.
 
 - **Turn order:** the teams alternate, and each team's partners take turns, so the sequence is Player 1 → Player 3 → Player 2 → Player 4 → Player 1 → ... A partner "tags in" every other turn.
 - **One score per team.** A match scores for the team of whoever played it, so partners add to the same score. The header planks read TEAM 1 / TEAM 2, and a line under the timer names the team and partner whose turn it is (for example "TEAM 1: PLAYER 2"). The turn toast says the same.
@@ -116,16 +116,16 @@ Both difficulties use the same board, scoring, hazards, and match rules. The Pro
 
 ### Play online
 
-Online Human-vs-Human needs a shared real-time game service. GitHub Pages can host the client, but it cannot by itself coordinate live rooms, protect scores and inventory from browser tampering, or collect live audience votes. Use a service such as **Supabase Realtime** or **Firebase** for room codes, presence, turn state, server-side deadlines, inventory, match results, and fan votes.
+Online Human-vs-Human uses a Cloudflare Worker with Durable Objects; GitHub Pages hosts the Phaser client. The authoritative-gameplay development branch contains the server-side board, turn/scoring/hazard/timeout rules and client message integration for PvP and Tag. The live deployed Worker is still the earlier lobby prototype until a separately reviewed deployment is completed. Do not consider online matches release-ready before a real two-device PvP test, a four-device Tag test, security/reconnect checks and a verified non-destructive Cloudflare migration/deployment plan. Online Audience Polls, Score Strike, Cancel Counter, spectator access and chat remain unimplemented. Supabase is not required for live room/gameplay state; a database may be added later for persistent accounts, match history, or analytics.
 
 Recommended lobby flow:
 1. Choose **Play Online** and create a private room or enter a room code.
 2. Wait for the second player; show both names and a ready state.
 3. Start with a shared board seed/state and randomly choose who goes first.
 4. Send each valid move to the backend and broadcast the accepted result to both clients.
-5. Reconnect gracefully after a network drop; a short reconnection grace period is better than instantly awarding a win.
+5. Reconnect with the same per-room seat token and restore the latest server state after a network drop. The current draft reserves that seat for the room's lifetime; a polished reconnect/abandoned-player grace policy still needs design and real-device testing.
 
-A same-device **Pass & Play** mode is a useful interim option while the online service is being connected. Hide the board during hand-off so the next human cannot see the previous player's picks.
+**Product decision:** Player 1 vs Player 2 and Tag are online-only modes. Do not add a same-device Pass & Play alternative. Each participant must use their own device; keep the room lobby status clear until synchronized gameplay is available.
 
 ## 3. Stars, streaks, and the inventory
 
@@ -322,11 +322,11 @@ Every turn should pass through one explicit state machine:
 
 ## 6. Code review findings in the current prototype
 
-- `src/main.js` implements local turn handling for Player vs AI and the underlying versus engine: submit, mismatch, timeout, AI participation, and Tag partner rotation. Player 1 vs Player 2 and Tag now open the online room lobby only, but synchronized online board actions, scoring, and deadlines are not implemented.
+- `src/main.js` retains local turn handling for Player vs AI and Play Alone. In the authoritative-gameplay development branch, Player 1 vs Player 2 and Tag open the online lobby and are wired to server snapshots/actions. The Worker is the source of truth for the board, hidden shapes, scores, active turn, hazard resolution, timeout deadlines, and match result. The live deployed Worker is still the older lobby-only version, so this branch's online gameplay is not enabled in production.
 - Player vs AI Easy uses 45-second turns; Professional uses 30 seconds. Versus submit and real mismatches end turns; a valid selection auto-submits at timeout. Extra Time (+45s) adds to the current deadline. Server-authoritative deadlines remain unimplemented.
 - The score-plank star display uses one star icon and the current local balance multiplier. A new local browser profile receives 1 Star and one free Practice Audience Poll; local consecutive-match Star rewards are implemented; account-based wallets are not implemented.
 - Inventory opens a working shop panel. Audience Pick works as an explicitly simulated Practice Audience; Extra Time and Double Play have use actions. Other power-up effects and real audience votes remain unimplemented.
-- The online room lobby supports room creation/joining and connection status, but there is no synchronized online game session or live audience/poll service.
+- The live deployed Worker still supports only the lobby/room prototype. The development branch contains a synchronized authoritative online game session, including a per-room seat token that restores a reconnecting player's seat and current state. A real-device/staging run is still required. There is no live audience/poll service.
 - The blank wooden dummy has its own `dummy.webp` asset and neutral behavior. Cancel Counter pickup, per-player item storage in an online match, and its counter-use flow still need implementation.
 - The old idle auto-submit was removed. A valid versus selection is auto-submitted at the turn deadline, rather than waiting beyond the timer for a manual Submit.
 - Player mode, scoring, turn deadline, inventory, streak, and board resolution should be owned by a small game-state layer instead of being scattered across animation callbacks. UI animations should react to resolved state, not decide the result themselves.
@@ -337,7 +337,7 @@ Every turn should pass through one explicit state machine:
 2. **AI modes:** Easy and Hard (Professional) using only information each player could reasonably observe. *(Done, except power-up use.)*
 3. **Stars and inventory:** 1 starting Star plus one free Practice Audience Pick per new local profile, account wallets for online players, successful-match streak rewards, Extra Time (+45s), Double Play, Score Strike, and the rare Counter Shield.
 4. **Audience Pick:** begin with a clearly labelled practice audience; replace it with real voting only after a live backend exists.
-5. **Online play:** room codes, presence, authoritative turn/move validation, persistent accounts and inventory, reconnect handling, and spectator voting.
+5. **Online play:** complete real-device/staging validation of the authoritative PvP and Tag game, Cloudflare migration safety, reconnect and abandoned-player policy; then implement the remaining online inventory effects, polls, spectator voting, chat, and optional persistent accounts/history.
 6. **Polish:** short tutorial, sound toggle, reduced-motion option, turn hand-off screen, match history, streak celebration, and a post-match rematch button.
 
 The order matters: the power-ups depend on reliable turn and score rules, and real online polls depend on the backend. Building those in the reverse order would create features that appear to work but can be exploited or desynchronise between clients.
