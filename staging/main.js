@@ -1084,6 +1084,9 @@ class GameScene extends Phaser.Scene {
     // Limits are per player: two players normally, four in Tag.
     this.inventoryLimiter = new InventoryLimiter(INVENTORY_OPEN_LIMIT, INVENTORY_WINDOW_MS, this.modeCfg.teams ? 4 : PLAYER_NAMES.length);
 
+    // Meme commentary (staging/memes.js). Optional: the game plays the same without it.
+    this.memes = window.ShapeyMemes ? window.ShapeyMemes.attach(this) : null;
+
     this.createBackground();
     this.createHeader();
     this.createBottomButtons();
@@ -1131,6 +1134,7 @@ class GameScene extends Phaser.Scene {
   // Runs every frame: flips tiles whose reveal is over, redraws both clocks, and ends the turn on timeout.
   update() {
     if (!this.turnClock) return;
+    if (this.memes) this.memes.tick();
     if (!this.online) {
       this.hideFinishedReveals();
       this.healStuckTiles();
@@ -1250,7 +1254,9 @@ class GameScene extends Phaser.Scene {
   showToast(message, holdMs = 2600) {
     if (this.toastTween) this.toastTween.stop();
     if (this.toast) this.toast.destroy();
-    const toast = this.add.text(GAME_WIDTH / 2, 256, message, {
+    // While a meme picture fills the strip under the header, the message moves down onto the tray's top edge.
+    const toastY = this.memes && this.memes.visualVisible() ? 300 : 256;
+    const toast = this.add.text(GAME_WIDTH / 2, toastY, message, {
       fontFamily: FONT, fontSize: '24px', color: '#fff2c7',
       stroke: '#3a2412', strokeThickness: 5, align: 'center', wordWrap: { width: 660 },
     }).setOrigin(0.5).setDepth(200);
@@ -1370,6 +1376,7 @@ class GameScene extends Phaser.Scene {
   async endTurn(reason) {
     if (this.turnEnding || this.gameOver) return;
     this.turnEnding = true; // from here on, late taps and submits are ignored
+    if (this.memes) this.memes.turnResult(reason); // win / lose commentary for the human who just played
     if (reason !== 'match') this.breakLocalMatchStreak();
     if (this.inventoryOpen) this.closeInventory();
     if (this.panelOpen) this.closePanel();
@@ -2376,6 +2383,7 @@ class GameScene extends Phaser.Scene {
         oldInventorySignature !== (this.onlineInventorySignature || '')) {
       this.renderInventory();
     }
+    if (this.memes) this.memes.onlineState(previousOnlineState, state); // win / lose commentary from the server's turn changes
     if (state.status === 'finished' && !this.gameOver) {
       this.activePlayer = Number.isInteger(state.winnerSide) ? state.winnerSide : this.activePlayer;
       this.endGame('First to ' + state.targetScore + ' points wins.');
@@ -2594,7 +2602,7 @@ class GameScene extends Phaser.Scene {
     if (this.online) {
       if (!tile || !tile.active || !tile.serverId || this.gameOver ||
           tile.faceUp || tile.selected || tile.moving || tile.swapping) return;
-      this.sendOnlineAction({ type: 'pick', tileId: tile.serverId });
+      if (this.sendOnlineAction({ type: 'pick', tileId: tile.serverId }) && this.memes) this.memes.noteActivity();
       return;
     }
     // Taps are ignored during hand-over, once the turn clock has run out, after game over and while a
@@ -2602,6 +2610,7 @@ class GameScene extends Phaser.Scene {
     if (this.busy || this.turnEnding || this.gameOver || this.turnClock.expired() || !tile.active || tile.selected || tile.swapping || tile.faceUp) return; // a face-up tile can't be picked: a shape is only revealed by the player's own flip
     if (!fromAI && (this.panelOpen || this.isAITurn())) return;
 
+    if (!fromAI && this.memes) this.memes.noteActivity(); // the human is taking part in this turn
     this.aiSee(tile, fromAI); // the AI sees every tile that gets flipped over (certainly its own, only partly the human's)
 
     // Hazard is a bomb in every mode: destroy it and every shape already picked.
@@ -2661,7 +2670,10 @@ class GameScene extends Phaser.Scene {
     this.penalizeMiss();
     this.busy = false;
     this.recordAttempt(0);
-    if (!this.modeCfg.twoPlayers) this.breakLocalMatchStreak();
+    if (!this.modeCfg.twoPlayers) {
+      this.breakLocalMatchStreak();
+      if (this.memes && !this.gameOver) this.memes.attemptResult('lose'); // Play Alone has no turn hand-over to report this
+    }
     // In versus modes a wrong pair ends the turn immediately. Play Alone remains continuous.
     if (this.modeCfg.twoPlayers && !this.gameOver) this.endTurn('mismatch');
   }
@@ -2791,6 +2803,7 @@ class GameScene extends Phaser.Scene {
       } else {
         this.recordAttempt();
         this.breakLocalMatchStreak();
+        if (this.memes && !this.gameOver) this.memes.attemptResult('lose'); // too few shapes in Play Alone
       }
       return;
     }
@@ -2873,6 +2886,7 @@ class GameScene extends Phaser.Scene {
   endGame(reason) {
     if (this.gameOver) return;
     this.gameOver = true;
+    if (this.memes) this.memes.hide(); // the end screen covers the canvas; a picture on top of it would hide the buttons
     if (this.inventoryOpen) this.closeInventory();
     this.closePanel();
     const text = (y, message, size, color = '#ffffff') => this.add.text(GAME_WIDTH / 2, y, message, {

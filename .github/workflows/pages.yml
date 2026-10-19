@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Test extracted game rules
-        run: node --test tests/rules.test.js
+        run: node --test tests/rules.test.js tests/memes.test.js
 
       - name: Check game JavaScript syntax
         run: |
@@ -35,7 +35,11 @@ jobs:
       - name: Check staging UI JavaScript syntax
         run: |
           node --check staging/main.js
+          node --check staging/memes.js
           node --check staging/audience.js
+
+      - name: Check the meme manifest lists every meme file
+        run: node tools/build-memes-manifest.js --check
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

@@ -6,7 +6,11 @@ on:
       - "src/main.js"
       - "src/rules.js"
       - "staging/main.js"
+      - "staging/memes.js"
+      - "tools/build-memes-manifest.js"
+      - "assets/memes/**"
       - "tests/rules.test.js"
+      - "tests/memes.test.js"
       - ".github/workflows/local-gameplay-tests.yml"
 
 permissions:
@@ -25,10 +29,18 @@ jobs:
           node-version: 22
 
       - name: Test pure game rules including Star streak rewards
-        run: node --test tests/rules.test.js
+        run: node --test tests/rules.test.js tests/memes.test.js
 
       - name: Check live frontend JavaScript syntax
         run: node --check src/main.js
 
       - name: Check staging frontend JavaScript syntax
         run: node --check staging/main.js
+
+      - name: Check staging meme commentary JavaScript syntax
+        run: |
+          node --check staging/memes.js
+          node --check tools/build-memes-manifest.js
+
+      - name: Check the meme manifest lists every meme file
+        run: node tools/build-memes-manifest.js --check
