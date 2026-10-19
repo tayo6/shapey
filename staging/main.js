@@ -13,7 +13,14 @@ const urlParams = new URLSearchParams(window.location.search);
 if (urlParams.get('embed') === '1') document.body.classList.add('audience-embed');
 // This file is published only under /staging/ and is pinned to the isolated test Worker.
 // Keep the live site's src/main.js pointed at the production service until staging is approved.
-const MULTIPLAYER_API = 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
+// Automated local-browser tests may target their isolated Wrangler instance, but deployed
+// staging pages always use the dedicated staging Worker and cannot be redirected by a URL parameter.
+const requestedLocalApi = urlParams.get('api') || '';
+const localTestHost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+const isLocalTestApi = /^https?:\/\/(?:localhost|127\.0\.0\.1):8787$/.test(requestedLocalApi);
+const MULTIPLAYER_API = localTestHost && isLocalTestApi
+  ? requestedLocalApi
+  : 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
 
 const FONT = 'HappySchool';
 const BOARD_SIZES = Object.freeze([5, 6, 7]);
