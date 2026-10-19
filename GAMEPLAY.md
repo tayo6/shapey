@@ -5,7 +5,7 @@ This document describes the recommended rules for turning the current Phaser pro
 ## 1. Core loop
 
 - The board is 7 × 7. At the beginning of a game, all normal shapes are visible for 15 seconds, then turn face-down. Face-up tiles can't be picked while they are showing (a shape is only revealed by the player flipping it), and the first turn's clock starts after this study phase.
-- Versus turns alternate. Player vs AI Easy, Player 1 vs Player 2, and Tag use **45 seconds per turn**; Player vs AI Professional uses **30 seconds per turn**. The opening study phase is not charged to the first turn.
+- Versus turns alternate. Player vs AI Easy and Player 1 vs Player 2 use **45 seconds per turn**; Player vs AI Professional and each Tag pick use **30 seconds per turn**. The opening study phase is not charged to the first turn.
 - On a turn, the player taps hidden tiles to reveal their shapes and tries to collect 3 or more of the same normal shape. Matches do not need to be adjacent.
 - A valid submitted match awards points, removes the matched shapes, causes the board to cascade, and ends the turn. Newly spawned tiles are shown for 5 seconds, flip face-down, and are then shuffled (see "New-tile shuffle" below).
 - In versus modes, picking a different normal shape resets the selection and ends the turn immediately. Submitting fewer than 3 shapes awards no points but still ends the turn. Play Alone is different: a wrong normal shape costs 1 point and play continues.
@@ -322,11 +322,11 @@ Every turn should pass through one explicit state machine:
 
 ## 6. Code review findings in the current prototype
 
-- `src/main.js` implements local turn handling for Player vs AI and the underlying versus engine: submit, mismatch, timeout, AI participation, and Tag partner rotation. Player 1 vs Player 2 and Tag now open the online room lobby only, but synchronized online board actions, scoring, and deadlines are not implemented.
+- The live root game (`src/main.js`) remains on the production lobby flow for online modes until the production Worker is upgraded. The staging game (`staging/main.js`) uses the isolated staging Worker for server-authoritative Player 1 vs Player 2 and four-player Tag, including synchronized board, score, turn, and deadline state.
 - Player vs AI Easy uses 45-second turns; Professional uses 30 seconds. Versus submit and real mismatches end turns; a valid selection auto-submits at timeout. Extra Time (+45s) adds to the current deadline. Server-authoritative deadlines remain unimplemented.
 - The score-plank star display uses one star icon and the current local balance multiplier. A new local browser profile receives 1 Star and one free Practice Audience Poll; local consecutive-match Star rewards are implemented; account-based wallets are not implemented.
 - Inventory opens a working shop panel. Audience Pick works as an explicitly simulated Practice Audience; Extra Time and Double Play have use actions. Other power-up effects and real audience votes remain unimplemented.
-- The online room lobby supports room creation/joining and connection status, but there is no synchronized online game session or live audience/poll service.
+- The isolated staging Worker supports authoritative game sessions, spectator snapshots, room chat, and Tag polls. The production `shapey-multiplayer` Worker remains separate; do not deploy the staging configuration to production.
 - The blank wooden dummy has its own `dummy.webp` asset and neutral behavior. Cancel Counter pickup, per-player item storage in an online match, and its counter-use flow still need implementation.
 - The old idle auto-submit was removed. A valid versus selection is auto-submitted at the turn deadline, rather than waiting beyond the timer for a manual Submit.
 - Player mode, scoring, turn deadline, inventory, streak, and board resolution should be owned by a small game-state layer instead of being scattered across animation callbacks. UI animations should react to resolved state, not decide the result themselves.

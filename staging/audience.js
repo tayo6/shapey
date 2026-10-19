@@ -14,17 +14,17 @@ const AVATAR_COLORS = ['#754322', '#8a4f2a', '#5d3a1e', '#9a6a35', '#6b4a2a', '#
 const $ = (id) => document.getElementById(id);
 const els = {
   directory: $('directoryView'), watch: $('watchView'), rooms: $('roomCards'), directoryStatus: $('directoryStatus'),
-  modeChips: $('modeChips'), statusFilter: $('statusFilter'), refreshRooms: $('refreshRooms'), startDemo: $('startDemo'), gameFrame: $('gameFrame'), muteAudienceSound: $('muteAudienceSound'), endDemo: $('endDemo'),
+  modeChips: $('modeChips'), statusFilter: $('statusFilter'), refreshRooms: $('refreshRooms'), startDemo: $('startDemo'), navBrowse: $('navBrowse'), gameFrame: $('gameFrame'), muteAudienceSound: $('muteAudienceSound'), endDemo: $('endDemo'),
   board: $('board'), veil: $('veil'), veilText: $('veilText'), retryConnection: $('retryConnection'), toast: $('toast'),
   side0: $('side0'), side1: $('side1'), p1Score: $('p1Score'), p2Score: $('p2Score'), p1Name: $('p1Name'), p2Name: $('p2Name'),
   turnClock: $('turnClock'), goalText: $('goalText'), revealText: $('revealText'),
   btnChat: $('btnChat'), btnPolls: $('btnPolls'), btnSettings: $('btnSettings'), chatBadge: $('chatBadge'), pollBadge: $('pollBadge'),
-  backdrop: $('backdrop'), pollPanel: $('pollPanel'), settingsPanel: $('settingsPanel'),
-  chatPage: $('chatPage'), backToGame: $('backToGame'), chatRoomTitle: $('chatRoomTitle'),
+  backdrop: $('backdrop'), chatPanel: $('chatPanel'), pollPanel: $('pollPanel'), settingsPanel: $('settingsPanel'),
   chatMessages: $('chatMessages'), chatStatus: $('chatStatus'), chatCount: $('chatCount'), chatForm: $('chatForm'), chatInput: $('chatInput'),
   pollIntro: $('pollIntro'), pollOptions: $('pollOptions'), roomSummary: $('roomSummary'), playersList: $('playersList'), shareRoom: $('shareRoom')
 };
 const PANELS = {
+  chat: { panel: els.chatPanel, button: els.btnChat },
   polls: { panel: els.pollPanel, button: els.btnPolls },
   settings: { panel: els.settingsPanel, button: els.btnSettings }
 };
@@ -46,7 +46,6 @@ let tileNodes = new Map();
 let explicitLeave = false;
 let connectionLost = false;
 let activePanel = null;
-let chatPageOpen = false;
 let statusMessage = '';
 let statusIsError = false;
 let toastTimer = null;
@@ -162,39 +161,6 @@ function closePanels() {
   });
   updateBadges();
 }
-function openChatPage(updateUrl = true) {
-  if (!activeRoomCode || chatPageOpen) return;
-  closePanels();
-  chatPageOpen = true;
-  // Keep the game iframe visible and running under the chat overlay. Hiding it with display:none
-  // can make mobile browsers resize/suspend Phaser, leaving only outer navigation on return.
-  els.watch.hidden = false;
-  els.chatPage.hidden = false;
-  document.body.classList.add('chat-open');
-  els.btnChat.classList.add('is-open');
-  els.btnChat.setAttribute('aria-expanded', 'true');
-  unreadChat = 0;
-  updateBadges();
-  requestAnimationFrame(() => {
-    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
-    els.chatInput.focus({ preventScroll: true });
-  });
-  if (updateUrl && window.location.hash !== '#chat') {
-    window.history.pushState({ shapeyAudienceChat: true }, '', window.location.pathname + window.location.search + '#chat');
-  }
-}
-function closeChatPage(updateUrl = true) {
-  if (!chatPageOpen) return;
-  chatPageOpen = false;
-  els.chatPage.hidden = true;
-  document.body.classList.remove('chat-open');
-  els.btnChat.classList.remove('is-open');
-  els.btnChat.setAttribute('aria-expanded', 'false');
-  if (activeRoomCode) els.watch.hidden = false;
-  if (updateUrl && window.location.hash === '#chat') {
-    window.history.replaceState(window.history.state || {}, '', window.location.pathname + window.location.search);
-  }
-}
 function openPanel(name) {
   if (activePanel === name) { closePanels(); return; }
   closePanels();
@@ -208,6 +174,10 @@ function openPanel(name) {
   PANELS[name].panel.hidden = false;
   PANELS[name].button.classList.add('is-open');
   PANELS[name].button.setAttribute('aria-expanded', 'true');
+  if (name === 'chat') {
+    unreadChat = 0;
+    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+  }
   if (name === 'settings') renderPlayers();
   if (name === 'polls') renderPoll(currentPoll);
   updateBadges();
@@ -234,10 +204,6 @@ function closeSocket() {
   }
 }
 function resetRoomView() {
-  if (chatPageOpen) closeChatPage(false);
-  els.chatPage.hidden = true;
-  document.body.classList.remove('chat-open');
-  chatPageOpen = false;
   currentState = null;
   latestGameFrameMessage = null;
   currentPoll = null;
@@ -254,7 +220,6 @@ function resetRoomView() {
   tileNodes.clear();
   els.board.replaceChildren();
   if (els.gameFrame) { els.gameFrame.hidden = true; els.gameFrame.src = 'about:blank'; }
-  els.watch.classList.remove('has-game-frame', 'game-ready');
   els.pollOptions.replaceChildren();
   els.chatMessages.replaceChildren();
   chatIds = new Set();
@@ -263,8 +228,6 @@ function resetRoomView() {
   closePanels();
 }
 function showDirectory(updateUrl) {
-  document.body.classList.remove('watching-room');
-  if (chatPageOpen) closeChatPage(false);
   explicitLeave = true;
   watchToken++;
   closeSocket();
@@ -277,7 +240,6 @@ function showDirectory(updateUrl) {
   loadRooms();
 }
 function enterWatchView(code) {
-  document.body.classList.add('watching-room');
   els.directory.hidden = true;
   els.watch.hidden = false;
   const url = directoryUrl();
@@ -321,8 +283,7 @@ function makeRoomCard(room) {
   card.append(el('div', 'sub', 'Room ' + room.roomCode + ' · ' + (Number(room.playerCount) || 0) + '/' + max + ' players · ' +
     (Number(room.spectatorCount) || 0) + ' watching'));
 
-  const boardSize = [5, 6, 7].includes(Number(room.boardSize)) ? Number(room.boardSize) : 7;
-  const details = ['Board ' + boardSize + '×' + boardSize, 'First to ' + (Number(room.targetScore) || (tag ? 200 : 100))];
+  const details = ['First to ' + (Number(room.targetScore) || (tag ? 200 : 100))];
   if (room.status === 'live' && room.activePlayerNumber) details.push(turnLabel(room.mode, room.activePlayerNumber) + ' to play');
   if (Number.isFinite(room.createdAt)) {
     const minutes = Math.max(0, Math.floor((Date.now() - room.createdAt) / 60000));
@@ -431,23 +392,14 @@ function renderScores(state) {
 function renderBoard(state, previousState = null, animate = false) {
   if (!state || !Array.isArray(state.tiles)) {
     els.board.replaceChildren();
+    els.board.style.setProperty('--board-offset', '0');
     tileNodes.clear();
     return;
   }
-  const requestedSize = [5, 6, 7].includes(Number(state.boardSize)) ? Number(state.boardSize) : 7;
-  // Tag remains 7×7. Other modes scale tile size and spacing to fill the same fixed tray area.
-  const boardSize = state.mode === 'tag' ? 7 : requestedSize;
-  const boardScale = 7 / boardSize;
-  const tilePitch = 91 * boardScale;
-  const tileSize = tilePitch - 1; // preserve the original 1px gap and 636px tray footprint
-  const tileScale = tileSize / 90;
-  els.board.style.setProperty('--board-offset', '0');
-  els.board.style.setProperty('--tile-size', String(tileSize));
-  els.board.style.setProperty('--tile-pitch', String(tilePitch));
-  els.board.style.setProperty('--dust-offset-x', String(36 * tileScale));
-  els.board.style.setProperty('--dust-offset-y', String(9 * tileScale));
-  els.board.style.setProperty('--dust-width', String(162 * tileScale));
-  els.board.style.setProperty('--dust-height', String(81 * tileScale));
+  const boardSize = Number.isInteger(state.boardSize) && [5, 6, 7].includes(state.boardSize) ? state.boardSize : 7;
+  const boardOffset = (7 - boardSize) * 91 / 2;
+  els.board.style.setProperty('--board-offset', String(boardOffset));
+  const cell = 100 / boardSize;
   const canAnimate = Boolean(animate && previousState && Array.isArray(previousState.tiles) && previousState.status === 'playing');
   const previousTiles = canAnimate ? new Map(previousState.tiles.map((tile) => [String(tile.id), tile])) : new Map();
   const newCountByColumn = new Map();
@@ -497,6 +449,8 @@ function renderBoard(state, previousState = null, animate = false) {
         if (event.propertyName === 'top') finishSpawnDust(tile);
       });
       animateSpawn = canAnimate && !previousTiles.has(id) && state.status !== 'study';
+      const left = (tileData.col * cell) + '%';
+      const top = (tileData.row * cell) + '%';
       if (animateSpawn) {
         const spawnCount = newCountByColumn.get(tileData.col) || 1;
         const startingRow = tileData.row - spawnCount;
@@ -579,7 +533,6 @@ function finishSpawnDust(tile) {
   playBoardEffect('dust', Number(tile.dataset.dustRow), Number(tile.dataset.dustCol));
 }
 function playBoardEffect(kind, row, col) {
-  if (els.gameFrame && !els.gameFrame.hidden) return;
   if (!Number.isInteger(row) || !Number.isInteger(col) || row < 0 || row > 6 || col < 0 || col > 6) return;
   const effect = document.createElement('div');
   effect.className = 'board-fx ' + (kind === 'dust' ? 'dust-fx' : 'destroy-fx');
@@ -615,10 +568,9 @@ function updateHud() {
   if (!state) { text(els.turnClock, '--:--'); text(els.revealText, ''); return; }
   const now = Date.now();
   let clock;
-  if (state.status === 'study') clock = '--:--';
-  else if (state.status === 'playing' && Number.isFinite(state.turnEndsAt)) clock = formatClock(state.turnEndsAt - now);
+  if (state.status === 'playing' && Number.isFinite(state.turnEndsAt)) clock = formatClock(state.turnEndsAt - now);
   else if (state.status === 'finished') clock = formatClock(0);
-  else clock = '--:--';
+  else clock = formatClock(Number(state.turnDurationMs) || 0);
   text(els.turnClock, clock);
   let left = state.status === 'study' && Number.isFinite(state.reviewEndsAt) ? state.reviewEndsAt - now : 0;
   (state.reveals || []).forEach((batch) => { left = Math.max(left, batch.endsAt - now); });
@@ -689,25 +641,16 @@ function appendChat(message, live) {
   avatar.style.setProperty('--bg', avatarColor(sender));
   const main = el('div', 'msg-main');
   const head = el('div', 'msg-head');
-  head.append(el('strong', '', sender), el('p', '', message.text));
+  head.append(el('strong', '', sender));
   const timestamp = message.createdAt || message.at;
-  if (timestamp) {
-    const elapsedMs = Math.max(0, Date.now() - new Date(timestamp).getTime());
-    const elapsedMinutes = Math.floor(elapsedMs / 60000);
-    const relative = elapsedMinutes < 1 ? 'now'
-      : elapsedMinutes < 60 ? elapsedMinutes + 'm'
-      : elapsedMinutes < 1440 ? Math.floor(elapsedMinutes / 60) + 'h'
-      : Math.floor(elapsedMinutes / 1440) + 'd';
-    main.append(head, el('time', 'msg-time', relative));
-  } else {
-    main.append(head);
-  }
+  if (timestamp) head.append(el('time', '', new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
+  main.append(head, el('p', '', message.text));
   item.append(avatar, main);
   const nearBottom = els.chatMessages.scrollHeight - els.chatMessages.scrollTop - els.chatMessages.clientHeight < 80;
   els.chatMessages.append(item);
   while (els.chatMessages.querySelectorAll('.msg').length > 100) els.chatMessages.querySelector('.msg').remove();
   if (nearBottom || !live) els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
-  if (live && !chatPageOpen) { unreadChat++; updateBadges(); }
+  if (live && activePanel !== 'chat') { unreadChat++; updateBadges(); }
 }
 
 // ------------------------------------------------------------------ polls ("Ask the Audience")
@@ -851,7 +794,6 @@ async function startWatching(roomCode, hintedMode, pushUrl) {
   closeSocket();
   activeRoomCode = code;
   activeMode = hintedMode || '';
-  if (chatPageOpen) closeChatPage(false);
   resetRoomView();
   applyModeUI();
   ensureChatEmpty();
@@ -865,7 +807,6 @@ async function startWatching(roomCode, hintedMode, pushUrl) {
   setWatchStatus('Connecting to the room…', false);
   els.directory.hidden = true;
   els.watch.hidden = false;
-  document.body.classList.add('watching-room');
   if (pushUrl) enterWatchView(code);
   try {
     const roomResponse = await fetch(api('/api/rooms/' + code), { cache: 'no-store' });
@@ -881,8 +822,6 @@ async function startWatching(roomCode, hintedMode, pushUrl) {
     const wsBase = MULTIPLAYER_API.replace(/^http/, 'ws');
     const socket = new WebSocket(wsBase + '/ws/' + code + '?mode=' + encodeURIComponent(activeMode) + '&role=spectator');
     els.gameFrame.hidden = false;
-    els.watch.classList.add('has-game-frame');
-    els.watch.classList.remove('game-ready');
     const frameUrl = new URL('staging/index.html', document.baseURI);
     frameUrl.searchParams.set('watch', code);
     frameUrl.searchParams.set('mode', activeMode);
@@ -976,25 +915,10 @@ async function startAiDemo() {
 }
 els.refreshRooms.addEventListener('click', loadRooms);
 els.startDemo.addEventListener('click', startAiDemo);
+els.navBrowse.addEventListener('click', () => showDirectory(true));
 els.gameFrame.addEventListener('load', () => {
   if (latestGameFrameMessage) forwardGameFrameMessage(latestGameFrameMessage);
   syncGameFrameMute();
-});
-window.addEventListener('message', (event) => {
-  if (event.origin !== window.location.origin || event.source !== els.gameFrame.contentWindow) return;
-  const message = event.data;
-  if (!message || typeof message.type !== 'string') return;
-  if (message.type === 'shapey-audience-ready') {
-    // The iframe may finish loading after the room's first snapshot; resend it now that the
-    // embedded receiver exists, so a first room-open never remains on the loading screen.
-    if (latestGameFrameMessage) forwardGameFrameMessage(latestGameFrameMessage);
-    syncGameFrameMute();
-  } else if (message.type === 'shapey-game-ready') {
-    els.watch.classList.add('game-ready');
-  } else if (message.type === 'shapey-audience-socket-send' &&
-             message.data && typeof message.data.type === 'string') {
-    sendSocketMessage(message.data);
-  }
 });
 els.modeChips.addEventListener('click', (event) => {
   const chip = event.target.closest('.chip');
@@ -1003,8 +927,7 @@ els.modeChips.addEventListener('click', (event) => {
   renderRooms();
 });
 els.statusFilter.addEventListener('change', () => { statusFilterValue = els.statusFilter.value; renderRooms(); });
-els.btnChat.addEventListener('click', () => openChatPage());
-els.backToGame.addEventListener('click', () => closeChatPage(true));
+els.btnChat.addEventListener('click', () => openPanel('chat'));
 els.btnPolls.addEventListener('click', () => openPanel('polls'));
 els.btnSettings.addEventListener('click', () => openPanel('settings'));
 els.muteAudienceSound.checked = soundMuted;
@@ -1014,17 +937,13 @@ els.muteAudienceSound.addEventListener('change', () => {
   syncGameFrameMute();
   if (!soundMuted) playAudienceTone(520);
 });
-['closePoll', 'closeSettings', 'resumeWatch'].forEach((id) => $(id).addEventListener('click', closePanels));
+['closeChat', 'closePoll', 'closeSettings', 'resumeWatch'].forEach((id) => $(id).addEventListener('click', closePanels));
 els.endDemo.addEventListener('click', () => {
   if (activeMode !== 'demo' || demoControlRoomCode !== activeRoomCode || !demoControlReady) return;
   sendSocketMessage({ type: 'end_demo' });
 });
 els.backdrop.addEventListener('click', closePanels);
-document.addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape') return;
-  if (chatPageOpen) closeChatPage(true);
-  else if (activePanel) closePanels();
-});
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && activePanel) closePanels(); });
 $('backToDirectory').addEventListener('click', () => showDirectory(true));
 els.shareRoom.addEventListener('click', shareWatchLink);
 els.retryConnection.addEventListener('click', () => {
@@ -1041,7 +960,6 @@ els.chatForm.addEventListener('submit', (event) => {
   }
 });
 window.addEventListener('popstate', () => {
-  if (chatPageOpen) { closeChatPage(false); return; }
   const params = new URLSearchParams(window.location.search);
   const code = params.get('room');
   if (code) startWatching(code, params.get('mode') || '', false);
@@ -1064,7 +982,5 @@ turnTimer = window.setInterval(() => {
   updateBadges();
 }, 250);
 const initialParams = new URLSearchParams(window.location.search);
-if (initialParams.get('room')) {
-  startWatching(initialParams.get('room'), initialParams.get('mode') || '', false);
-  if (window.location.hash === '#chat') openChatPage(false);
-} else loadRooms();
+if (initialParams.get('room')) startWatching(initialParams.get('room'), initialParams.get('mode') || '', false);
+else loadRooms();
