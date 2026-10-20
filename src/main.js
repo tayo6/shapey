@@ -15,10 +15,19 @@ const MULTIPLAYER_API = ['localhost', '127.0.0.1'].includes(window.location.host
   : 'https://shapey-multiplayer.hellohuman100.workers.dev';
 
 const FONT = 'HappySchool';
-const TILE_SIZE = 90;   // every shape tile is drawn at 90 x 90
-const TILE_PITCH = 91;  // distance between tile centres (90px tile + 1px gap)
-const GRID_COLS = 7;
-const GRID_ROWS = 7;
+const BOARD_SIZES = Object.freeze([5, 6, 7]);
+function normalizeBoardSize(value) {
+  const size = Number(value);
+  return BOARD_SIZES.includes(size) ? size : 7;
+}
+const BASE_BOARD_SIZE = 7;
+const BASE_TILE_SIZE = 90;
+const BASE_TILE_PITCH = 91;
+// Smaller boards fill the same tray width while preserving a 1px gap between tiles.
+let TILE_SIZE = BASE_TILE_SIZE;
+let TILE_PITCH = BASE_TILE_PITCH;
+let GRID_COLS = BASE_BOARD_SIZE;
+let GRID_ROWS = BASE_BOARD_SIZE;
 
 // ---- Game rules -----------------------------------------------------------
 // For quick testing you can shorten the timers in the URL, e.g. index.html?review=3000&turn=10000
@@ -127,6 +136,29 @@ const SHAPE_FILES = {
   x:       'x.webp',
 };
 const SHAPE_KEYS = Object.keys(SHAPE_FILES).filter((k) => !['mystery', 'dummy', 'hazard'].includes(k));
+// Cancel is a special tile, not a shape that can form a scoring match.
+const MATCH_SHAPE_KEYS = SHAPE_KEYS.filter((shape) => shape !== 'cancel');
+
+const JOIN_MODAL_CSS = `
+#shapey-join-modal { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center;
+  padding: 16px; box-sizing: border-box; background: rgba(18, 10, 5, .84); font-family: ${FONT}, 'Comic Sans MS', cursive; }
+#shapey-join-modal .panel { box-sizing: border-box; width: min(100%, 460px); padding: 26px 22px 22px; background: #4b2d17;
+  border: 5px solid #d5ad72; display: flex; flex-direction: column; gap: 14px; text-align: center; }
+#shapey-join-modal h2 { margin: 0; font-weight: normal; font-size: 34px; line-height: 1.1; color: #fff2c7;
+  -webkit-text-stroke: .17em #3a2412; paint-order: stroke fill; stroke-linejoin: round; }
+#shapey-join-modal p { margin: 0; font-size: 19px; line-height: 1.3; color: #ffe9b8; }
+#shapey-join-modal input { box-sizing: border-box; width: 100%; height: 66px; padding: 0 12px; text-align: center; text-indent: .22em;
+  font: inherit; font-size: 36px; letter-spacing: .22em; text-transform: uppercase; color: #ffe36e; background: #25180f;
+  border: 4px solid #8b623a; border-radius: 0; outline: none; }
+#shapey-join-modal input:focus { border-color: #ffe36e; }
+#shapey-join-modal .err { min-height: 22px; font-size: 17px; line-height: 1.3; color: #ffb09e; }
+#shapey-join-modal .row { display: flex; gap: 12px; }
+#shapey-join-modal button { flex: 1; min-height: 58px; font: inherit; font-size: 26px; line-height: 1; color: #fff; background: #754322;
+  border: 4px solid #f3d29a; border-radius: 0; cursor: pointer; -webkit-text-stroke: .17em #3a2412; paint-order: stroke fill;
+  stroke-linejoin: round; transition: transform .07s; }
+#shapey-join-modal button:active { transform: scale(.96); }
+#shapey-join-modal button:focus-visible { outline: 3px solid #ffe36e; outline-offset: 2px; }
+`;
 const DUMMY_SPAWN_CHANCE = 0.08; // blank wooden tiles are occasional neutral decoys
 
 function randomBoardShape() {
@@ -148,8 +180,8 @@ const DUST_FRAME_RATE = 10;
 // Shapey logo and the loading bar. index.html draws the same layout while Phaser is still downloading.
 const LOGO_W = 520, LOGO_Y = 470;
 const LOAD_BAR_W = 560, LOAD_BAR_Y = 720;
-// The dark slot of "load rectangle.webp", as fractions of the image: the progress fill goes inside it.
-const LOAD_TRACK = { x0: 0.0745, x1: 0.9255, y0: 0.302, y1: 0.698 };
+// Slot coordinates for the cleaned/cropped loading-bar canvas.
+const LOAD_TRACK = { x0: 0.0664, x1: 0.9326, y0: 0.283, y1: 0.7123 };
 const LOAD_MIN_FILL = 0.06; // share of the slot that is already filled at 0%, so the bar never looks empty
 
 const randomItem = (list) => list[Math.floor(Math.random() * list.length)];
@@ -163,12 +195,15 @@ function shuffle(list) {
   return a;
 }
 
-// Starting board: every shape appears at least 3 times, hazards take about `hazardChance` of the
-// board (out of the free slots), and the rest are random.
+// Starting board: guarantee groups of three where the selected board size allows it.
+// This avoids overflowing 5×5 boards while keeping every board size matchable.
 function makeInitialBoard(hazardChance = 0) {
   const total = GRID_ROWS * GRID_COLS;
+  const wantedHazards = Math.min(total, Math.round(total * hazardChance));
+  const guaranteedShapeCount = Math.min(MATCH_SHAPE_KEYS.length, Math.floor((total - wantedHazards) / 3));
+  const startingShapes = shuffle(MATCH_SHAPE_KEYS).slice(0, guaranteedShapeCount);
   const bag = [];
-  SHAPE_KEYS.forEach((k) => bag.push(k, k, k));
+  startingShapes.forEach((k) => bag.push(k, k, k));
   const hazards = Math.min(total - bag.length, Math.round(total * hazardChance));
   for (let i = 0; i < hazards; i++) bag.push('hazard');
   while (bag.length < total) bag.push(randomBoardShape());
@@ -335,10 +370,10 @@ class BootScene extends Phaser.Scene {
   preload() {
     this.load.setPath('assets');
     this.load.image('logo', 'ui/shapey logo.webp');
-    this.load.image('loadRect', 'ui/load rectangle.webp');
   }
 
   create() {
+    this.textures.addCanvas('loadRect', window.ShapeyLoadingBar.canvas);
     this.scene.start('LoadScene');
   }
 }
@@ -442,25 +477,60 @@ class MenuScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '38px', color: '#ffe36e', stroke: '#3a2412', strokeThickness: 7,
     }).setOrigin(0.5);
 
-    // Four modes: 140px buttons every 165px. Player vs AI first asks for a difficulty.
+    // Four modes: choose a board size first; Tag remains at its established 7×7 size.
     this.pickerUI = [];
     Object.entries(MODES).forEach(([mode, cfg], i) => {
       woodButton(this, GAME_WIDTH / 2, 600 + i * 165, 620, 140, cfg.label, 42,
-        () => {
-          if (cfg.ai) this.openDifficulty();
-          else if (mode === 'pvp' || mode === 'tag') this.openOnlineLobby(mode);
-          else this.scene.start('GameScene', { mode });
-        }, 10, cfg.hint);
+        () => this.openBoardSize(mode), 10, cfg.hint);
     });
   }
 
+  // 5×5 and 6×6 use the same tray footprint as 7×7. Tag is kept at its established 7×7 size.
+  openBoardSize(mode) {
+    if (this.pickerUI.length) return;
+    if (mode === 'tag') {
+      this.openOnlineLobby('tag', BASE_BOARD_SIZE);
+      return;
+    }
+    const add = (object) => { this.pickerUI.push(object); return object; };
+    add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.82)
+      .setDepth(50).setInteractive());
+    add(this.add.rectangle(GAME_WIDTH / 2, 675, 640, 820, 0x4b2d17, 1)
+      .setStrokeStyle(5, 0xd5ad72).setDepth(51));
+    add(this.add.text(GAME_WIDTH / 2, 365, 'CHOOSE BOARD SIZE', {
+      fontFamily: FONT, fontSize: '44px', color: '#fff2c7', stroke: '#3a2412', strokeThickness: 8,
+    }).setOrigin(0.5).setDepth(52));
+    add(this.add.text(GAME_WIDTH / 2, 430, 'Choose the number of rows and columns', {
+      fontFamily: FONT, fontSize: '22px', color: '#fff2c7', align: 'center',
+      wordWrap: { width: 540 }, stroke: '#3a2412', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(52));
+    BOARD_SIZES.forEach((size, index) => {
+      woodButton(this, GAME_WIDTH / 2, 555 + index * 145, 520, 112, size + ' × ' + size, 42,
+        () => {
+          this.closeBoardSize();
+          if (mode === 'ai') this.openDifficulty(size);
+          else if (mode === 'pvp') this.openOnlineLobby(mode, size);
+          else this.scene.start('GameScene', { mode, boardSize: size });
+        }, 52, (size * size) + ' tiles on the board').forEach(add);
+    });
+    woodButton(this, GAME_WIDTH / 2, 1030, 520, 82, 'BACK', 34,
+      () => this.closeBoardSize(), 52).forEach(add);
+  }
+
+  closeBoardSize() {
+    this.pickerUI.forEach((object) => object.destroy());
+    this.pickerUI = [];
+  }
+
   // Room creation and joining are attached to Player 1 vs Player 2 and Tag.
-  openOnlineLobby(mode) {
+  openOnlineLobby(mode, boardSize = BASE_BOARD_SIZE) {
     if (this.onlineUI && this.onlineUI.length) return;
     this.onlineMode = mode || 'pvp';
+    this.onlineBoardSize = this.onlineMode === 'tag' ? BASE_BOARD_SIZE : normalizeBoardSize(boardSize);
     this.onlineUI = [];
     const add = (object) => { this.onlineUI.push(object); return object; };
-    const modeTitle = this.onlineMode === 'tag' ? 'ONLINE TAG · 2 VS 2' : 'ONLINE PLAYER 1 VS PLAYER 2';
+    const modeTitle = (this.onlineMode === 'tag' ? 'ONLINE TAG · 2 VS 2' : 'ONLINE PLAYER 1 VS PLAYER 2') +
+      ' · ' + this.onlineBoardSize + '×' + this.onlineBoardSize;
     add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.86)
       .setDepth(80).setInteractive());
     add(this.add.rectangle(GAME_WIDTH / 2, 650, 650, 820, 0x4b2d17, 1)
@@ -473,8 +543,9 @@ class MenuScene extends Phaser.Scene {
     const lobbyInstructions = this.onlineMode === 'tag'
       ? 'Four devices. Team 1: Players 1 and 2. Team 2: Players 3 and 4. Invite your teammate first, then invite the other team.'
       : 'Two devices. Take alternating turns; the first player to 100 points wins.';
+    const sizeInstruction = 'Board size: ' + this.onlineBoardSize + '×' + this.onlineBoardSize + '.';
     this.onlineStatus = add(this.add.text(GAME_WIDTH / 2, 415,
-      lobbyInstructions, {
+      lobbyInstructions + '\n' + sizeInstruction, {
         fontFamily: FONT, fontSize: '23px', color: '#fff2c7', align: 'center',
         wordWrap: { width: 560 }, stroke: '#3a2412', strokeThickness: 4,
       }).setOrigin(0.5).setDepth(82));
@@ -627,7 +698,7 @@ class MenuScene extends Phaser.Scene {
       const response = await fetch(MULTIPLAYER_API + '/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: this.onlineMode }),
+        body: JSON.stringify({ mode: this.onlineMode, boardSize: this.onlineBoardSize || BASE_BOARD_SIZE }),
       });
       const data = await response.json();
       if (!response.ok || !data.roomCode) throw new Error(data.error || 'Room creation failed.');
@@ -639,8 +710,77 @@ class MenuScene extends Phaser.Scene {
     }
   }
 
+  // Room-code entry styled to match the wooden in-game interface, rather than a browser prompt.
+  askRoomCode() {
+    return new Promise((resolve) => {
+      if (document.getElementById('shapey-join-modal')) { resolve(null); return; }
+      if (!document.getElementById('shapey-join-style')) {
+        const style = document.createElement('style');
+        style.id = 'shapey-join-style';
+        style.textContent = JOIN_MODAL_CSS;
+        document.head.appendChild(style);
+      }
+      const make = (tag, props, parent) => {
+        const node = document.createElement(tag);
+        Object.assign(node, props);
+        if (parent) parent.appendChild(node);
+        return node;
+      };
+      const overlay = make('div', { id: 'shapey-join-modal' });
+      // Prevent the dialog's pointer/click events from reaching the Phaser game underneath.
+      // In particular, clicking JOIN must not activate a game button behind this overlay.
+      for (const eventName of [
+        'pointerdown', 'pointerup', 'pointermove',
+        'mousedown', 'mouseup', 'click', 'touchstart', 'touchend'
+      ]) {
+        overlay.addEventListener(eventName, (event) => event.stopPropagation());
+      }
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-labelledby', 'shapey-join-title');
+      const panel = make('div', { className: 'panel' }, overlay);
+      make('h2', { id: 'shapey-join-title', textContent: 'ENTER ROOM CODE' }, panel);
+      make('p', { textContent: 'Ask your friend for their room code.' }, panel);
+      const input = make('input', { type: 'text', autocomplete: 'off', spellcheck: false }, panel);
+      input.setAttribute('aria-label', 'Room code');
+      input.setAttribute('autocapitalize', 'characters');
+      input.setAttribute('autocorrect', 'off');
+      input.setAttribute('enterkeyhint', 'go');
+      const error = make('div', { className: 'err' }, panel);
+      error.setAttribute('role', 'alert');
+      const row = make('div', { className: 'row' }, panel);
+      const cancel = make('button', { type: 'button', textContent: 'CANCEL' }, row);
+      const join = make('button', { type: 'button', textContent: 'JOIN' }, row);
+
+      const onKey = (event) => {
+        if (event.key === 'Escape') { event.preventDefault(); close(null); }
+        else if (event.key === 'Enter' && event.target === input) { event.preventDefault(); submit(); }
+      };
+      const close = (value) => {
+        document.removeEventListener('keydown', onKey, true);
+        overlay.remove();
+        resolve(value);
+      };
+      const submit = () => {
+        const code = input.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (!/^[A-Z0-9]{6}$/.test(code)) {
+          error.textContent = 'Room codes have 6 letters or numbers.';
+          input.focus();
+          return;
+        }
+        close(code);
+      };
+      input.addEventListener('input', () => { error.textContent = ''; });
+      cancel.addEventListener('click', () => close(null));
+      join.addEventListener('click', submit);
+      document.addEventListener('keydown', onKey, true);
+      document.body.appendChild(overlay);
+      input.focus();
+    });
+  }
+
   async promptJoinRoom() {
-    const entered = window.prompt('Enter your friend’s 6-character room code:');
+    const entered = await this.askRoomCode();
     if (entered == null) return;
     const code = entered.toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (!/^[A-Z0-9]{6}$/.test(code)) {
@@ -660,6 +800,7 @@ class MenuScene extends Phaser.Scene {
           '. Go back and select that mode to join.');
         return;
       }
+      this.onlineBoardSize = this.onlineMode === 'tag' ? BASE_BOARD_SIZE : normalizeBoardSize(room.boardSize);
       this.showOnlineRoomCode(code);
       this.connectOnlineRoom(code,
         MULTIPLAYER_API.replace(/^http/, 'ws') + '/ws/' + code, this.onlineMode);
@@ -760,7 +901,8 @@ class MenuScene extends Phaser.Scene {
       onlineSocket: socket,
       onlinePlayerNumber: playerNumber,
       onlineRoomCode: code,
-      onlineState: initialState
+      onlineState: initialState,
+      boardSize: normalizeBoardSize(initialState.boardSize || this.onlineBoardSize || BASE_BOARD_SIZE)
     });
   }
 
@@ -781,23 +923,28 @@ class MenuScene extends Phaser.Scene {
   }
 
   // "Choose difficulty" panel for Player vs AI (Easy / Professional, built from AI_LEVELS).
-  openDifficulty() {
+  // Choose AI difficulty after the board size is selected.
+  openDifficulty(boardSize = BASE_BOARD_SIZE) {
     if (this.pickerUI.length) return;
+    this.chosenBoardSize = normalizeBoardSize(boardSize);
     const add = (object) => { this.pickerUI.push(object); return object; };
     add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.8)
-      .setDepth(50).setInteractive()); // shield: taps must not reach the mode buttons underneath
+      .setDepth(50).setInteractive());
     add(this.add.rectangle(GAME_WIDTH / 2, 640, 640, 700, 0x4b2d17, 1).setStrokeStyle(5, 0xd5ad72).setDepth(51));
     add(this.add.text(GAME_WIDTH / 2, 380, 'CHOOSE DIFFICULTY', {
       fontFamily: FONT, fontSize: '46px', color: '#fff2c7', stroke: '#3a2412', strokeThickness: 8,
     }).setOrigin(0.5).setDepth(52));
     Object.entries(AI_LEVELS).forEach(([difficulty, level], i) => {
       woodButton(this, GAME_WIDTH / 2, 530 + i * 190, 560, 160, level.label, 42,
-        () => this.scene.start('GameScene', { mode: 'ai', difficulty }), 52, level.hint).forEach(add);
+        () => this.scene.start('GameScene', { mode: 'ai', difficulty, boardSize: this.chosenBoardSize }),
+        52, level.hint).forEach(add);
     });
     woodButton(this, GAME_WIDTH / 2, 530 + Object.keys(AI_LEVELS).length * 190, 560, 90, 'BACK', 36,
-      () => this.closeDifficulty(), 52).forEach(add);
+      () => {
+        this.closeDifficulty();
+        this.openBoardSize('ai');
+      }, 52).forEach(add);
   }
-
   closeDifficulty() {
     this.pickerUI.forEach((object) => object.destroy());
     this.pickerUI = [];
@@ -816,6 +963,15 @@ class GameScene extends Phaser.Scene {
     this.onlineRoomCode = (data && data.onlineRoomCode) || null;
     this.onlineState = (data && data.onlineState) || null;
     this.mode = (data && data.mode) || START_MODE || 'pvp';
+    const requestedBoardSize = normalizeBoardSize(
+      (this.onlineState && this.onlineState.boardSize) || (data && data.boardSize) || urlParams.get('size')
+    );
+    this.boardSize = this.mode === 'tag' ? BASE_BOARD_SIZE : requestedBoardSize;
+    GRID_COLS = this.boardSize;
+    GRID_ROWS = this.boardSize;
+    const boardScale = BASE_BOARD_SIZE / this.boardSize;
+    TILE_PITCH = BASE_TILE_PITCH * boardScale;
+    TILE_SIZE = TILE_PITCH - (BASE_TILE_PITCH - BASE_TILE_SIZE);
     this.modeCfg = MODES[this.mode];
     // Player vs AI difficulty comes from the picker (or ?level=pro for testing); Easy is the default.
     const level = (data && data.difficulty) || urlParams.get('level');
@@ -2682,7 +2838,8 @@ class GameScene extends Phaser.Scene {
 }
 
 // The game starts immediately (the font and art load behind a progress bar), instead of waiting for the font first.
-window.game = new Phaser.Game({
+window.ShapeyLoadingBar.ready.then(() => {
+  window.game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game',
   width: GAME_WIDTH,
@@ -2694,4 +2851,5 @@ window.game = new Phaser.Game({
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
   scene: [BootScene, LoadScene, MenuScene, GameScene],
+  });
 });
