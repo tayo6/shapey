@@ -873,6 +873,14 @@ class MenuScene extends Phaser.Scene {
         return node;
       };
       const overlay = make('div', { id: 'shapey-join-modal' });
+      // Prevent the dialog's pointer/click events from reaching the Phaser game underneath.
+      // In particular, clicking JOIN must not activate a game button behind this overlay.
+      for (const eventName of [
+        'pointerdown', 'pointerup', 'pointermove',
+        'mousedown', 'mouseup', 'click', 'touchstart', 'touchend'
+      ]) {
+        overlay.addEventListener(eventName, (event) => event.stopPropagation());
+      }
       overlay.setAttribute('role', 'dialog');
       overlay.setAttribute('aria-modal', 'true');
       overlay.setAttribute('aria-labelledby', 'shapey-join-title');
