@@ -13,7 +13,10 @@ const urlParams = new URLSearchParams(window.location.search);
 if (urlParams.get('embed') === '1') document.body.classList.add('audience-embed');
 // This file is published only under /staging/ and is pinned to the isolated test Worker.
 // Keep the live site's src/main.js pointed at the production service until staging is approved.
-const MULTIPLAYER_API = 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
+const requestedApi = urlParams.get('api');
+const MULTIPLAYER_API = /^http:\/\/(?:127\.0\.0\.1|localhost):8787$/i.test(requestedApi || '')
+  ? requestedApi
+  : 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
 
 const FONT = 'HappySchool';
 const BOARD_SIZES = Object.freeze([5, 6, 7]);
@@ -870,6 +873,14 @@ class MenuScene extends Phaser.Scene {
         return node;
       };
       const overlay = make('div', { id: 'shapey-join-modal' });
+      // Prevent the dialog's pointer/click events from reaching the Phaser game underneath.
+      // In particular, clicking JOIN must not activate a game button behind this overlay.
+      for (const eventName of [
+        'pointerdown', 'pointerup', 'pointermove',
+        'mousedown', 'mouseup', 'click', 'touchstart', 'touchend'
+      ]) {
+        overlay.addEventListener(eventName, (event) => event.stopPropagation());
+      }
       overlay.setAttribute('role', 'dialog');
       overlay.setAttribute('aria-modal', 'true');
       overlay.setAttribute('aria-labelledby', 'shapey-join-title');
