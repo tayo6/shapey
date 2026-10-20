@@ -58,12 +58,15 @@ async function run() {
     const roomCode = await pages[0].evaluate(() =>
       window.game.scene.getScene("MenuScene").currentRoomCode);
 
-    // Each additional browser context joins as a separate device. Replace the native prompt
-    // with a deterministic return value while retaining the real JOIN ROOM button flow.
+    // Each additional browser context joins as a separate device using the custom
+    // room-code dialog now shown by the game (not the old browser prompt()).
     for (let index = 1; index < 4; index++) {
       const page = pages[index];
-      await page.evaluate((code) => { window.prompt = () => code; }, roomCode);
       await clickWorld(page, 360, 810);
+      const joinDialog = page.locator("#shapey-join-modal");
+      await joinDialog.waitFor({ state: "visible", timeout: 5_000 });
+      await joinDialog.locator('input[aria-label="Room code"]').fill(roomCode);
+      await joinDialog.getByRole("button", { name: "JOIN", exact: true }).click();
       const expectedPlayer = index + 1;
       await waitForScene(page, (expected) =>
         window.game?.scene?.getScene("MenuScene")?.onlinePlayerNumber === expected,
