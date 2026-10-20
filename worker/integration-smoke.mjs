@@ -74,9 +74,15 @@ async function waitForOpen(client) {
 }
 
 async function createRoom(mode) {
+  // Keep integration-suite room creation separate from browser smoke tests. The Worker
+  // deliberately rate-limits each client IP, and both suites share the same local process.
   const response = await fetch(BASE_URL + "/api/rooms", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Origin: ALLOWED_ORIGIN },
+    headers: {
+      "Content-Type": "application/json",
+      Origin: ALLOWED_ORIGIN,
+      "CF-Connecting-IP": "198.51.100.21"
+    },
     body: JSON.stringify({ mode })
   });
   const data = await response.json();
