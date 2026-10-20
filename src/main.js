@@ -6,6 +6,9 @@ if (!RULES) throw new Error('Load src/rules.js before src/main.js.');
 const GAME_WIDTH = 720;
 const GAME_HEIGHT = 1280;
 
+// Move short game messages into the free strip above bottom navigation while a GIF is visible.
+const MEME_TOAST_Y = 1015;
+
 const urlParams = new URLSearchParams(window.location.search);
 // Permit only exact local Worker URLs when the page itself is on localhost. Production pages ignore this parameter.
 const requestedLocalApi = urlParams.get('api');
@@ -1031,6 +1034,9 @@ class GameScene extends Phaser.Scene {
     // Limits are per player: two players normally, four in Tag.
     this.inventoryLimiter = new InventoryLimiter(INVENTORY_OPEN_LIMIT, INVENTORY_WINDOW_MS, this.modeCfg.teams ? 4 : PLAYER_NAMES.length);
 
+    // Optional commentary: the game remains fully playable if the meme manifest or assets cannot load.
+    this.memes = window.ShapeyMemes ? window.ShapeyMemes.attach(this) : null;
+
     this.createBackground();
     this.createHeader();
     this.createBottomButtons();
@@ -1058,6 +1064,11 @@ class GameScene extends Phaser.Scene {
 
   // Runs every frame: flips tiles whose reveal is over, redraws both clocks, and ends the turn on timeout.
   update() {
+    if (this.memes) this.memes.tick();
+    if (this.toast) {
+      const toastY = this.memes && this.memes.visualVisible() ? MEME_TOAST_Y : 256;
+      if (this.toast.y !== toastY) this.toast.setY(toastY);
+    }
     if (!this.turnClock) return;
     if (!this.online) {
       this.hideFinishedReveals();
@@ -1177,7 +1188,8 @@ class GameScene extends Phaser.Scene {
   showToast(message, holdMs = 2600) {
     if (this.toastTween) this.toastTween.stop();
     if (this.toast) this.toast.destroy();
-    const toast = this.add.text(GAME_WIDTH / 2, 256, message, {
+    const toastY = this.memes && this.memes.visualVisible() ? MEME_TOAST_Y : 256;
+    const toast = this.add.text(GAME_WIDTH / 2, toastY, message, {
       fontFamily: FONT, fontSize: '24px', color: '#fff2c7',
       stroke: '#3a2412', strokeThickness: 5, align: 'center', wordWrap: { width: 660 },
     }).setOrigin(0.5).setDepth(200);
@@ -1271,6 +1283,7 @@ class GameScene extends Phaser.Scene {
   async endTurn(reason) {
     if (this.turnEnding || this.gameOver) return;
     this.turnEnding = true; // from here on, late taps and submits are ignored
+    if (this.memes) this.memes.turnResult(reason); // result commentary for the turn that just ended
     if (reason !== 'match') this.breakLocalMatchStreak();
     if (this.inventoryOpen) this.closeInventory();
     if (this.panelOpen) this.closePanel();
@@ -1969,6 +1982,7 @@ class GameScene extends Phaser.Scene {
 
   applyOnlineState(state, initial = false) {
     if (!this.online || !state) return;
+    const previousOnlineState = this.onlineState;
     // The server snapshot contains the canonical owner and deadline for the new turn.
     this.onlineSubmitPending = false;
     const oldInventorySignature = this.onlineInventorySignature || '';
@@ -1976,6 +1990,7 @@ class GameScene extends Phaser.Scene {
       Number.isFinite(Number(this.onlineState.me.stars))
       ? Number(this.onlineState.me.stars) : null;
     this.onlineState = state;
+    if (this.memes) this.memes.onlineState(previousOnlineState, state);
     this.scores = Array.isArray(state.scores) ? state.scores.slice() : [0, 0];
     this.activePlayer = Number.isInteger(state.activeSide) ? state.activeSide : 0;
     this.turnNumber = Number.isInteger(state.turnIndex) ? state.turnIndex : 0;
@@ -2302,13 +2317,14 @@ class GameScene extends Phaser.Scene {
     if (this.online) {
       if (!tile || !tile.active || !tile.serverId || this.gameOver ||
           tile.faceUp || tile.selected || tile.moving || tile.swapping) return;
-      this.sendOnlineAction({ type: 'pick', tileId: tile.serverId });
+      if (this.sendOnlineAction({ type: 'pick', tileId: tile.serverId }) && this.memes) this.memes.noteActivity();
       return;
     }
     // Taps are ignored during hand-over, once the turn clock has run out, after game over and while a
     // menu is open. Tiles in the middle of a swap can't be tapped, and a human can't tap during the AI's turn.
     if (this.busy || this.turnEnding || this.gameOver || this.turnClock.expired() || !tile.active || tile.selected || tile.swapping || tile.faceUp) return; // a face-up tile can't be picked: a shape is only revealed by the player's own flip
     if (!fromAI && (this.panelOpen || this.isAITurn())) return;
+    if (!fromAI && this.memes) this.memes.noteActivity(); // human activity prevents idle-delay commentary
 
     this.aiSee(tile, fromAI); // the AI sees every tile that gets flipped over (certainly its own, only partly the human's)
 
@@ -2371,7 +2387,10 @@ class GameScene extends Phaser.Scene {
     this.penalizeMiss();
     this.busy = false;
     this.recordAttempt(0);
-    if (!this.modeCfg.twoPlayers) this.breakLocalMatchStreak();
+    if (!this.modeCfg.twoPlayers) {
+      this.breakLocalMatchStreak();
+      if (this.memes && !this.gameOver) this.memes.attemptResult('lose');
+    }
     // In versus modes a wrong pair ends the turn immediately. Play Alone remains continuous.
     if (this.modeCfg.twoPlayers && !this.gameOver) this.endTurn('mismatch');
   }
