@@ -31,6 +31,8 @@ jobs:
         run: |
           node --check src/main.js
           node --check src/rules.js
+          node --check src/loading-bar.js
+          node --check src/memes.js
 
       - name: Check staging UI JavaScript syntax
         run: |
