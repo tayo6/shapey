@@ -1,11 +1,11 @@
-// Shapey staging - event-based meme commentary.
+// Shapey - event-based meme commentary.
 //
 // What it does (human players only; the AI never triggers or receives a meme):
-//   * Every human player has an attempt counter. In every window of 3 attempts one random attempt
+//   * Every human player has an attempt counter. In every window of 4 attempts one random attempt
 //     fires a meme: a LOSE meme when that attempt lost, a WIN meme when it won. Each meme is one
 //     random file picked from audio/<win|lose> or gifs/<win|lose>.
 //   * Tag: when a team wins, a file from gifs/tag_win is shown at an interval of 4 attempts per player
-//     (one random winning attempt in every window of 4). Losses keep the normal 3-attempt lose rule.
+//     (one random winning attempt in every window of 4). Losses keep the normal 4-attempt lose rule.
 //   * Delay: if the player whose turn it is has not picked anything and the pick countdown reaches
 //     10 seconds, one file from gifs/delay_pick is shown (once per turn).
 //   * A win is a submitted match of 3 or more identical shapes (3, 4, 5+ ...). The game's own match rule
@@ -25,7 +25,7 @@
   const CONFIG = Object.freeze({
     assetBase: 'assets/memes',
     manifestUrl: 'assets/memes/manifest.json',
-    standardWindow: 3,   // one win/lose meme per this many attempts, per human player
+    standardWindow: 4,   // one win/lose meme per four attempts, per human player
     tagWinWindow: 4,     // Tag: one team-win meme per this many attempts, per human player
     delayAtMs: 10000,    // Delay meme when this much of an idle player's pick countdown is left
     maxAudioMs: 5000,    // audio memes never play longer than this
