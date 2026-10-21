@@ -1019,6 +1019,7 @@ class GameScene extends Phaser.Scene {
     this.matchStreaks = new Map();
     this.pendingStreakToast = null;
     this.inventoryItems = this.loadInventoryItems();
+    this.audiencePollsUsedByPlayer = new Map(); // local practice poll allowance resets for each game
     this.inventoryUI = [];
     this.inventoryOpen = false;
     this.inventoryTimerText = null;
@@ -1459,12 +1460,12 @@ class GameScene extends Phaser.Scene {
         items.extraTime = Number(items.extraTime || 0) + Number(items.doubleTime);
         delete items.doubleTime;
       }
-      // A new local profile gets one free Audience Pick. A saved zero means it was already used.
-      if (!Object.prototype.hasOwnProperty.call(items, 'audiencePick')) items.audiencePick = 1;
+      // Audience polls are a free per-game allowance, not a purchasable inventory item.
+      delete items.audiencePick;
       try { window.localStorage.setItem('shapey-inventory', JSON.stringify(items)); } catch (_) {}
       return items;
     } catch (_) {
-      return { audiencePick: 1 };
+      return {};
     }
   }
 
@@ -1581,14 +1582,44 @@ class GameScene extends Phaser.Scene {
     }
 
     const offers = [
-      { key: 'audiencePick', name: 'AUDIENCE PICK', price: 3, desc: 'Use your poll lifeline to get a practice audience recommendation.' },
       { key: 'extraTime', name: 'EXTRA TIME (+45s)', price: 3, desc: 'Add 45 seconds to the current turn each time you use one.' },
       { key: 'doublePlay', name: 'DOUBLE PLAY', price: 4, desc: 'Take one extra turn with your mode’s normal timer.' },
       { key: 'scoreStrike', name: 'SCORE STRIKE', price: 5, desc: 'Remove 10 points from your opponent.' },
-    ].filter((offer) => offer.key !== 'audiencePick' || this.modeCfg.teams);
+    ];
+
+    // Audience polls are a free per-game allowance, not an inventory item bought with Stars.
+    const hasFreeAudiencePolls = this.modeCfg.teams;
+    if (hasFreeAudiencePolls) {
+      const y = 238;
+      const card = this.add.rectangle(GAME_WIDTH / 2, y, 630, 174, 0x704323, 0.96)
+        .setStrokeStyle(4, 0xd5ad72);
+      this.addInventoryUI(card);
+      const name = this.add.text(68, y - 66, 'FREE AUDIENCE POLLS', {
+        fontFamily: FONT, fontSize: '29px', color: '#fff0c7',
+        stroke: '#3a2112', strokeThickness: 4,
+      }).setOrigin(0, 0.5);
+      this.addInventoryUI(name);
+      const desc = this.add.text(68, y - 20,
+        '3 free uses per player, per game. Never bought with Stars.', {
+          fontFamily: FONT, fontSize: '21px', color: '#ffffff',
+          wordWrap: { width: 440 },
+        }).setOrigin(0, 0.5);
+      this.addInventoryUI(desc);
+      const remaining = this.add.text(68, y + 48,
+        'Remaining this game: ' + this.getAudiencePollsRemaining(), {
+          fontFamily: FONT, fontSize: '22px', color: '#ffdf78',
+        }).setOrigin(0, 0.5);
+      this.addInventoryUI(remaining);
+      const freeLabel = this.add.text(554, y - 5, 'FREE', {
+        fontFamily: FONT, fontSize: '24px', color: '#ffdf78',
+        stroke: '#3a2112', strokeThickness: 4,
+      }).setOrigin(0.5);
+      this.addInventoryUI(freeLabel);
+    }
+    const offerStartY = hasFreeAudiencePolls ? 443 : 238;
 
     offers.forEach((offer, index) => {
-      const y = 238 + index * 205;
+      const y = offerStartY + index * 205;
       const card = this.add.rectangle(GAME_WIDTH / 2, y, 630, 174, 0x704323, 0.96)
         .setStrokeStyle(4, 0xd5ad72);
       this.addInventoryUI(card);
@@ -1619,7 +1650,7 @@ class GameScene extends Phaser.Scene {
         return;
       }
 
-      if (['audiencePick', 'extraTime', 'doublePlay'].includes(offer.key) && ownedCount > 0) {
+      if (['extraTime', 'doublePlay'].includes(offer.key) && ownedCount > 0) {
         const canUse = offer.key === 'extraTime'
           ? this.modeCfg.turnClock && !this.turnClock.expired() && !this.turnEnding && !this.isAITurn()
           : offer.key === 'doublePlay'
@@ -1644,13 +1675,6 @@ class GameScene extends Phaser.Scene {
             }
             const count = Number(this.inventoryItems[offer.key] || 0);
             if (count < 1) return;
-            if (offer.key === 'audiencePick') {
-              this.inventoryItems.audiencePick = count - 1;
-              this.saveInventory();
-              this.closeInventory();
-              this.showAudiencePoll();
-              return;
-            }
             if (offer.key === 'extraTime') {
               if (!this.modeCfg.turnClock || this.turnClock.expired() || this.turnEnding || this.isAITurn()) return;
               this.inventoryItems.extraTime = count - 1;
@@ -1730,18 +1754,54 @@ class GameScene extends Phaser.Scene {
 
   // Tag's bottom Polls action opens a live audience poll when online. Local-mode practice
   // still uses clearly labelled simulated votes so it cannot be mistaken for real audience data.
+  getAudiencePollsUsed() {
+    if (this.online) {
+      const used = Number(this.onlineState && this.onlineState.me && this.onlineState.me.audiencePollsUsed);
+      return Math.max(0, Math.min(3, Number.isFinite(used) ? used : 0));
+    }
+    const slot = this.limiterSlot();
+    return Math.max(0, Math.min(3, Number(this.audiencePollsUsedByPlayer.get(slot) || 0)));
+  }
+
+  getAudiencePollsRemaining() {
+    return Math.max(0, 3 - this.getAudiencePollsUsed());
+  }
+
   showAudiencePoll() {
     this.closeAudiencePoll();
     if (this.gameOver) return;
+    if (!this.modeCfg.teams) {
+      this.showToast('Audience polls are available in Tag only.', 2200);
+      return;
+    }
+    if (this.isAITurn()) {
+      this.showToast('Audience polls are available to the human player, not the AI.', 2200);
+      return;
+    }
+    if (this.getAudiencePollsRemaining() <= 0) {
+      this.showToast('You have used all 3 free audience polls for this game.', 2600);
+      return;
+    }
     if (this.online) {
-      if (!this.modeCfg.teams || !this.onlineSocket || this.onlineSocket.readyState !== WebSocket.OPEN) {
+      if (!this.onlineSocket || this.onlineSocket.readyState !== WebSocket.OPEN) {
         this.showToast('Live audience polling requires a connected Tag room.', 2500);
+        return;
+      }
+      if (this.onlineState && this.onlineState.activePlayerNumber !== this.onlinePlayerNumber) {
+        this.showToast('You can use an audience poll during your own turn.', 2200);
+        return;
+      }
+      if (!this.onlineState || !Array.isArray(this.onlineState.selectedTileIds) ||
+          this.onlineState.selectedTileIds.length !== 1) {
+        this.showToast('Pick one first shape before asking the audience to find a match.', 2400);
         return;
       }
       this.onlineSocket.send(JSON.stringify({ type: 'audience_poll_start' }));
       this.showToast('Opening a live poll for spectators…', 1800);
       return;
     }
+    const slot = this.limiterSlot();
+    this.audiencePollsUsedByPlayer.set(slot, this.getAudiencePollsUsed() + 1);
     this.pollUI = [];
     const add = (object) => {
       object.setDepth(250);
@@ -2119,7 +2179,11 @@ class GameScene extends Phaser.Scene {
       const starReward = previousOnlineStars == null ? 0 : nextOnlineStars - previousOnlineStars;
       this.starBalance = nextOnlineStars;
       this.inventoryItems = { ...(state.me.inventory || {}) };
-      this.onlineInventorySignature = JSON.stringify({ stars: this.starBalance, inventory: this.inventoryItems });
+      this.onlineInventorySignature = JSON.stringify({
+        stars: this.starBalance,
+        inventory: this.inventoryItems,
+        audiencePollsUsed: Number(state.me.audiencePollsUsed) || 0
+      });
       this.updateStarDisplays();
       if (starReward > 0) {
         const streak = Math.max(3, Number(state.me.streak) || 3);
