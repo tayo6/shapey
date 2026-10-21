@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   INITIAL_REVIEW_MS, TURN_MS, TAG_TURN_MS, GRID_ROWS, GRID_COLS, BOARD_SIZES, SHAPE_KEYS, MATCH_SHAPE_KEYS,
   createGameState, gameViewForPlayer, gameViewForSpectator, applyGameAction, advanceGameByTime,
-  nextGameDeadline, scoreForMatch, turnDurationForMode
+  nextGameDeadline, scoreForMatch, turnDurationForMode, audiencePollsRemaining
 } from "../src/game-engine.js";
 
 const NOW = 1_000_000;
@@ -317,6 +317,25 @@ test("Cancel is a neutral first pick, including when a Dummy was picked first", 
   assert.equal(state.dummyTileIds.length, 0);
   assert.equal(state.tiles.find((tile) => tile.id === "t2").faceUp, false);
   assert.equal(state.tiles.find((tile) => tile.id === "t3").faceUp, false);
+});
+
+
+test("audience polls are limited to three per player and exposed in player snapshots", () => {
+  const state = startPlaying("tag");
+  for (const playerNumber of [1, 2, 3, 4]) {
+    const data = state.playerData[String(playerNumber)];
+    assert.equal(data.audiencePollsUsed, 0);
+    assert.equal(audiencePollsRemaining(data), 3);
+    assert.equal(gameViewForPlayer(state, playerNumber).me.audiencePollsUsed, 0);
+  }
+  const data = state.playerData["1"];
+  data.audiencePollsUsed = 1;
+  assert.equal(audiencePollsRemaining(data), 2);
+  assert.equal(gameViewForPlayer(state, 1).me.audiencePollsUsed, 1);
+  data.audiencePollsUsed = 3;
+  assert.equal(audiencePollsRemaining(data), 0);
+  data.audiencePollsUsed = 9;
+  assert.equal(audiencePollsRemaining(data), 0);
 });
 
 test("scores retain the existing 3/4/5+ scoring table", () => {
