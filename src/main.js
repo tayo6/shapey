@@ -6,16 +6,19 @@ if (!RULES) throw new Error('Load src/rules.js before src/main.js.');
 const GAME_WIDTH = 720;
 const GAME_HEIGHT = 1280;
 
-// Move short game messages into the free strip above bottom navigation while a GIF is visible.
+// Move game messages into the free strip above the bottom navigation while a GIF is visible.
 const MEME_TOAST_Y = 1015;
 
 const urlParams = new URLSearchParams(window.location.search);
-// Permit only exact local Worker URLs when the page itself is on localhost. Production pages ignore this parameter.
+if (urlParams.get('embed') === '1') document.body.classList.add('audience-embed');
+// Multiplayer service used by the live game: the Worker documented in worker/STAGING.md. A page served from
+// localhost may point at a local Worker with ?api=http://localhost:8787 (or 127.0.0.1:8787) for testing;
+// every other page ignores that parameter.
 const requestedLocalApi = urlParams.get('api');
 const MULTIPLAYER_API = ['localhost', '127.0.0.1'].includes(window.location.hostname) &&
-    ['http://localhost:8787', 'http://127.0.0.1:8787'].includes(requestedLocalApi)
+    /^http:\/\/(?:127\.0\.0\.1|localhost):8787$/i.test(requestedLocalApi || '')
   ? requestedLocalApi
-  : 'https://shapey-multiplayer.hellohuman100.workers.dev';
+  : 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
 
 const FONT = 'HappySchool';
 const BOARD_SIZES = Object.freeze([5, 6, 7]);
@@ -26,11 +29,12 @@ function normalizeBoardSize(value) {
 const BASE_BOARD_SIZE = 7;
 const BASE_TILE_SIZE = 90;
 const BASE_TILE_PITCH = 91;
-// Smaller boards fill the same tray width while preserving a 1px gap between tiles.
+// Updated for each match so smaller boards use the same full tray area as 7×7.
 let TILE_SIZE = BASE_TILE_SIZE;
 let TILE_PITCH = BASE_TILE_PITCH;
-let GRID_COLS = BASE_BOARD_SIZE;
-let GRID_ROWS = BASE_BOARD_SIZE;
+// These are set from the chosen board size before each board is created.
+let GRID_COLS = normalizeBoardSize(urlParams.get('size'));
+let GRID_ROWS = GRID_COLS;
 
 // ---- Game rules -----------------------------------------------------------
 // For quick testing you can shorten the timers in the URL, e.g. index.html?review=3000&turn=10000
@@ -44,11 +48,12 @@ const SHUFFLE_ARC_PX = 28;        // sideways bow of a swap path, so the two til
 const MIN_MATCH = 3;          // smallest scoring match; points are calculated in src/rules.js
 
 // ---- Turn clock and inventory limits ----------------------------------------
-// Every turn lasts 45 seconds. The turn clock and each newly spawned tile's SPAWN_REVEAL_MS reveal
-// run on their own absolute deadline, so they always tick side by side: a new batch
-// being revealed never pauses, resets or extends the turn, and the turn ending never cuts a reveal short.
+// Opening board reveal: 15 seconds. Newly spawned tiles: 5 seconds.
+// Pick clocks start after the opening reveal. Player vs AI: human gets 45s Easy / 30s Hard, AI gets 5s.
+// Player 1 vs Player 2: 45s per player. Tag: 30s per player. Play Alone has no pick clock.
 // Test overrides: ?turn=10000 (turn length) and ?invwindow=20000 (inventory window), in milliseconds.
 const TURN_MS = Number(urlParams.get('turn')) || 45000;
+const AI_TURN_MS = 5000; // every AI pick-turn has a fixed 5-second limit
 // Anti-stalling: a player may open the inventory at most 2 times in any rolling 5 minutes.
 // The turn clock keeps running while the inventory is open.
 const INVENTORY_OPEN_LIMIT = 2;
@@ -64,28 +69,30 @@ const ALONE_MISS_PENALTY = 1;   // a wrong shape costs this much (a too-small su
 // ---- Game modes --------------------------------------------------------------
 // hazard = chance that a tile is a hazard (skull) tile: the same ~10% in every mode. Test override: ?hazard=0.5
 const HAZARD_CHANCE = 0.1;
+// Win targets come from src/rules.js (100 for Play Alone / PvAI / PvP; 200 for a Tag team), so the game,
+// the rule tests and the README all agree.
+const MODE_TARGET_SCORE = Object.freeze({
+  alone: RULES.targetScoreForMode('alone'), ai: RULES.targetScoreForMode('ai'),
+  pvp: RULES.targetScoreForMode('pvp'), tag: RULES.targetScoreForMode('tag'),
+});
 // teams = Tag mode: two teams of two share the device, and each team's partners take turns (see turnLabel()).
 const MODES = {
-  alone: { label: 'PLAY ALONG', hint: 'Reach 100 points to win. Lose when your score reaches ' + ALONE_SCORE_FLOOR + '.',
-           targetScore: RULES.targetScoreForMode('alone'), hazard: HAZARD_CHANCE, twoPlayers: false, turnClock: false, ai: false },
-  ai:    { label: 'PLAYER VS AI', hint: 'First to ' + RULES.targetScoreForMode('ai') + ' points wins. Choose Easy or Professional.',
-           targetScore: RULES.targetScoreForMode('ai'), hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: true },
-  pvp:   { label: 'PLAYER 1 VS PLAYER 2', hint: 'Online 2-player match. First to ' + RULES.targetScoreForMode('pvp') + ' points wins.',
-           targetScore: RULES.targetScoreForMode('pvp'), hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false },
-  tag:   { label: 'TAG: 2 VS 2', hint: 'Online team match · 2 vs 2. First team to ' + RULES.targetScoreForMode('tag') + ' points wins.',
-           targetScore: RULES.targetScoreForMode('tag'), hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false, teams: true },
+  alone: { label: 'PLAY ALONE', hint: 'Reach ' + MODE_TARGET_SCORE.alone + ' points to win. Lose when your score reaches ' + ALONE_SCORE_FLOOR + '.',
+           targetScore: MODE_TARGET_SCORE.alone, hazard: HAZARD_CHANCE, twoPlayers: false, turnClock: false, ai: false },
+  ai:    { label: 'PLAYER VS AI', hint: 'First to ' + MODE_TARGET_SCORE.ai + ' points wins. Choose Easy or Professional.',
+           targetScore: MODE_TARGET_SCORE.ai, hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: true },
+  pvp:   { label: 'PLAYER 1 VS PLAYER 2', hint: 'Online 2-player match. First to ' + MODE_TARGET_SCORE.pvp + ' points wins.',
+           targetScore: MODE_TARGET_SCORE.pvp, hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false },
+  tag:   { label: 'TAG: 2 VS 2', hint: 'Online team match · 2 vs 2. First team to ' + MODE_TARGET_SCORE.tag + ' points wins.',
+           targetScore: MODE_TARGET_SCORE.tag, hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false, teams: true },
 };
 const TEAM_PLAYERS = [['Player 1', 'Player 2'], ['Player 3', 'Player 4']]; // Tag: Team 1 and Team 2
+const AUDIENCE_WATCH_CODE = /^[A-Z0-9]{6}$/.test(urlParams.get('watch') || '') ? urlParams.get('watch').toUpperCase() : '';
 const START_MODE = ['alone', 'ai'].includes(urlParams.get('mode')) ? urlParams.get('mode') : null; // only local modes may skip the menu; online modes must use their room lobby
 const HAZARD_OVERRIDE = RULES.parseProbabilityOverride(urlParams.get('hazard'), urlParams.has('hazard'));
-// A hazard tile has two effects (see hazardHit / hazardBlast):
-// - two-player modes (Player vs AI, Player vs Player, Tag): picked first it does no damage and flips back; picked
-//   after other shapes it costs HAZARD_BLAST_PENALTY point(s) and destroys itself and every picked tile, no reward;
-// - Play alone: it never costs anything. It always destroys itself and every picked tile, whether it is picked
-//   first or after other shapes.
+// Hazards are bombs: they always destroy themselves and every picked shape.
+// Only Play Alone loses 1 point for a Hazard; versus modes never subtract score for it.
 const HAZARD_BLAST_PENALTY = 1;
-// Spec: a hazard picked after other shapes always costs 1 point, even at 0, so a two-player score may go negative.
-// Set this to 0 to stop two-player scores dropping below zero (Play alone has its own floor, ALONE_SCORE_FLOOR).
 const TWO_PLAYER_SCORE_FLOOR = -Infinity;
 
 // Play Alone attempts are tracked for statistics only. Hazards and wooden dummies are not attempts.
@@ -139,29 +146,8 @@ const SHAPE_FILES = {
   x:       'x.webp',
 };
 const SHAPE_KEYS = Object.keys(SHAPE_FILES).filter((k) => !['mystery', 'dummy', 'hazard'].includes(k));
-// Cancel is a special tile, not a shape that can form a scoring match.
+// Cancel remains a spawnable special tile, but it is never a scoring/matchable shape.
 const MATCH_SHAPE_KEYS = SHAPE_KEYS.filter((shape) => shape !== 'cancel');
-
-const JOIN_MODAL_CSS = `
-#shapey-join-modal { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center;
-  padding: 16px; box-sizing: border-box; background: rgba(18, 10, 5, .84); font-family: ${FONT}, 'Comic Sans MS', cursive; }
-#shapey-join-modal .panel { box-sizing: border-box; width: min(100%, 460px); padding: 26px 22px 22px; background: #4b2d17;
-  border: 5px solid #d5ad72; display: flex; flex-direction: column; gap: 14px; text-align: center; }
-#shapey-join-modal h2 { margin: 0; font-weight: normal; font-size: 34px; line-height: 1.1; color: #fff2c7;
-  -webkit-text-stroke: .17em #3a2412; paint-order: stroke fill; stroke-linejoin: round; }
-#shapey-join-modal p { margin: 0; font-size: 19px; line-height: 1.3; color: #ffe9b8; }
-#shapey-join-modal input { box-sizing: border-box; width: 100%; height: 66px; padding: 0 12px; text-align: center; text-indent: .22em;
-  font: inherit; font-size: 36px; letter-spacing: .22em; text-transform: uppercase; color: #ffe36e; background: #25180f;
-  border: 4px solid #8b623a; border-radius: 0; outline: none; }
-#shapey-join-modal input:focus { border-color: #ffe36e; }
-#shapey-join-modal .err { min-height: 22px; font-size: 17px; line-height: 1.3; color: #ffb09e; }
-#shapey-join-modal .row { display: flex; gap: 12px; }
-#shapey-join-modal button { flex: 1; min-height: 58px; font: inherit; font-size: 26px; line-height: 1; color: #fff; background: #754322;
-  border: 4px solid #f3d29a; border-radius: 0; cursor: pointer; -webkit-text-stroke: .17em #3a2412; paint-order: stroke fill;
-  stroke-linejoin: round; transition: transform .07s; }
-#shapey-join-modal button:active { transform: scale(.96); }
-#shapey-join-modal button:focus-visible { outline: 3px solid #ffe36e; outline-offset: 2px; }
-`;
 const DUMMY_SPAWN_CHANCE = 0.08; // blank wooden tiles are occasional neutral decoys
 
 function randomBoardShape() {
@@ -183,7 +169,7 @@ const DUST_FRAME_RATE = 10;
 // Shapey logo and the loading bar. index.html draws the same layout while Phaser is still downloading.
 const LOGO_W = 520, LOGO_Y = 470;
 const LOAD_BAR_W = 560, LOAD_BAR_Y = 720;
-// Slot coordinates for the cleaned/cropped loading-bar canvas.
+// The dark slot of "load rectangle staging.webp", as fractions of the image: the progress fill goes inside it.
 const LOAD_TRACK = { x0: 0.0664, x1: 0.9326, y0: 0.283, y1: 0.7123 };
 const LOAD_MIN_FILL = 0.06; // share of the slot that is already filled at 0%, so the bar never looks empty
 
@@ -198,8 +184,8 @@ function shuffle(list) {
   return a;
 }
 
-// Starting board: guarantee groups of three where the selected board size allows it.
-// This avoids overflowing 5×5 boards while keeping every board size matchable.
+// Starting board: include at least three copies of each chosen scoring shape without
+// overflowing the smaller boards. Every board size keeps about 10% hazards.
 function makeInitialBoard(hazardChance = 0) {
   const total = GRID_ROWS * GRID_COLS;
   const wantedHazards = Math.min(total, Math.round(total * hazardChance));
@@ -235,6 +221,29 @@ class ShapeBag {
     return shape;
   }
 }
+
+// Styles for the room-code entry panel (MenuScene.askRoomCode). Same colours as the game's popups and wooden buttons:
+// panel 0x4b2d17 with a gold border, dark slot 0x25180f, wood buttons 0x754322 with a sand border, outlined Happy School text.
+const JOIN_MODAL_CSS = `
+#shapey-join-modal { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center;
+  padding: 16px; box-sizing: border-box; background: rgba(18, 10, 5, .84); font-family: ${FONT}, 'Comic Sans MS', cursive; }
+#shapey-join-modal .panel { box-sizing: border-box; width: min(100%, 460px); padding: 26px 22px 22px; background: #4b2d17;
+  border: 5px solid #d5ad72; display: flex; flex-direction: column; gap: 14px; text-align: center; }
+#shapey-join-modal h2 { margin: 0; font-weight: normal; font-size: 34px; line-height: 1.1; color: #fff2c7;
+  -webkit-text-stroke: .17em #3a2412; paint-order: stroke fill; stroke-linejoin: round; }
+#shapey-join-modal p { margin: 0; font-size: 19px; line-height: 1.3; color: #ffe9b8; }
+#shapey-join-modal input { box-sizing: border-box; width: 100%; height: 66px; padding: 0 12px; text-align: center; text-indent: .22em;
+  font: inherit; font-size: 36px; letter-spacing: .22em; text-transform: uppercase; color: #ffe36e; background: #25180f;
+  border: 4px solid #8b623a; border-radius: 0; outline: none; }
+#shapey-join-modal input:focus { border-color: #ffe36e; }
+#shapey-join-modal .err { min-height: 22px; font-size: 17px; line-height: 1.3; color: #ffb09e; }
+#shapey-join-modal .row { display: flex; gap: 12px; }
+#shapey-join-modal button { flex: 1; min-height: 58px; font: inherit; font-size: 26px; line-height: 1; color: #fff; background: #754322;
+  border: 4px solid #f3d29a; border-radius: 0; cursor: pointer; -webkit-text-stroke: .17em #3a2412; paint-order: stroke fill;
+  stroke-linejoin: round; transition: transform .07s; }
+#shapey-join-modal button:active { transform: scale(.96); }
+#shapey-join-modal button:focus-visible { outline: 3px solid #ffe36e; outline-offset: 2px; }
+`;
 
 // A wooden button used by the menu, the in-game panel and the game-over screen.
 function woodButton(scene, x, y, w, h, label, fontSize, onTap, depth = 0, sub = null) {
@@ -376,6 +385,7 @@ class BootScene extends Phaser.Scene {
   }
 
   create() {
+    // Reuse the already-cleaned transparent canvas instead of loading the old corrupted WebP.
     this.textures.addCanvas('loadRect', window.ShapeyLoadingBar.canvas);
     this.scene.start('LoadScene');
   }
@@ -453,8 +463,133 @@ class LoadScene extends Phaser.Scene {
 
   async create() {
     await fontReady; // usually already done by now
+    if (AUDIENCE_WATCH_CODE) {
+      this.startAudienceWatch();
+      return;
+    }
     if (START_MODE) this.scene.start('GameScene', { mode: START_MODE });
     else this.scene.start('MenuScene');
+  }
+
+  async startAudienceWatch() {
+    const code = AUDIENCE_WATCH_CODE;
+    // Audience links must use the audience wrapper so Chat, Polls, Settings and Back to game exist.
+    // Direct ?watch= links otherwise opened the game canvas without audience navigation.
+    if (urlParams.get('embed') !== '1') {
+      const audienceUrl = new URL('staging/audience.html', document.baseURI);
+      audienceUrl.searchParams.set('room', code);
+      const hintedMode = urlParams.get('mode');
+      if (hintedMode) audienceUrl.searchParams.set('mode', hintedMode);
+      window.location.replace(audienceUrl.href);
+      return;
+    }
+    const showError = (message) => {
+      this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, 620, 300, 0x4b2d17, 0.98).setStrokeStyle(5, 0xd5ad72).setDepth(200);
+      this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 45, message, {
+        fontFamily: FONT, fontSize: '28px', color: '#fff2c7', align: 'center',
+        stroke: '#3a2412', strokeThickness: 5, wordWrap: { width: 540 }
+      }).setOrigin(0.5).setDepth(201);
+    };
+    const roomModeFor = (message) => message.mode || message.state?.mode || urlParams.get('mode') || 'pvp';
+    const gameModeFor = (roomMode) => roomMode === 'tag' ? 'tag' : 'pvp';
+
+    // Embedded audience page owns the single real WebSocket. The iframe receives the same
+    // authorised spectator snapshots through postMessage, so each watcher counts only once.
+    if (urlParams.get('embed') === '1') {
+      class EmbeddedAudienceSocket extends EventTarget {
+        constructor() {
+          super();
+          this.readyState = WebSocket.OPEN;
+          this.parentMessageHandler = (event) => {
+            if (event.source !== window.parent || event.origin !== window.location.origin ||
+                event.data?.type !== 'shapey-audience-message') return;
+            const message = event.data.message;
+            if (message && typeof message.type === 'string') this.deliver(message);
+          };
+          window.addEventListener('message', this.parentMessageHandler);
+          try { window.parent.postMessage({ type: 'shapey-audience-ready' }, window.location.origin); } catch {}
+        }
+        send(data) {
+          try { window.parent.postMessage({ type: 'shapey-audience-socket-send', data }, window.location.origin); } catch {}
+        }
+        close() {
+          this.readyState = WebSocket.CLOSED;
+          window.removeEventListener('message', this.parentMessageHandler);
+          try { this.dispatchEvent(new CloseEvent('close')); } catch {}
+        }
+        deliver(message) {
+          try { this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) })); } catch {}
+        }
+      }
+      const socket = new EmbeddedAudienceSocket();
+      let started = false;
+      socket.addEventListener('message', (event) => {
+        let message;
+        try { message = JSON.parse(event.data); } catch { return; }
+        const isStartMessage = (message.type === 'spectator_welcome' || message.type === 'game_started' ||
+          message.type === 'game_state') && Boolean(message.state);
+        if (!started && isStartMessage) {
+          const roomMode = roomModeFor(message);
+          started = true;
+          this.scene.start('GameScene', {
+            mode: gameModeFor(roomMode),
+            online: true,
+            spectator: true,
+            audienceMode: roomMode,
+            onlineSocket: socket,
+            onlineRoomCode: code,
+            onlineState: message.state
+          });
+        } else if (!started && (message.type === 'error' || message.type === 'demo_ended')) {
+          showError(message.message || 'This room is no longer available.');
+        }
+      });
+      return;
+    }
+
+    // Direct watch links remain supported outside the embedded audience layout.
+    try {
+      const response = await fetch(MULTIPLAYER_API + '/api/rooms/' + code, { cache: 'no-store' });
+      const details = await response.json();
+      if (!response.ok) throw new Error(details.error || 'This room is no longer available.');
+      const roomMode = details.mode || urlParams.get('mode') || 'pvp';
+      const gameMode = gameModeFor(roomMode);
+      const wsBase = MULTIPLAYER_API.replace(/^http/, 'ws');
+      const socket = new WebSocket(wsBase + '/ws/' + code + '?mode=' + encodeURIComponent(roomMode) + '&role=spectator');
+      let started = false;
+      const handleMessage = (event) => {
+        let message;
+        try { message = JSON.parse(event.data); } catch { return; }
+        const isStartMessage = (message.type === 'spectator_welcome' || message.type === 'game_started' ||
+          message.type === 'game_state') && message.state;
+        if (message.type === 'error' && !started) {
+          showError(message.message || 'Could not connect to this room.');
+          try { socket.close(); } catch {}
+          return;
+        }
+        if (!started && isStartMessage) {
+          started = true;
+          this.scene.start('GameScene', {
+            mode: gameMode,
+            online: true,
+            spectator: true,
+            audienceMode: roomMode,
+            onlineSocket: socket,
+            onlineRoomCode: code,
+            onlineState: message.state
+          });
+        } else if (started) {
+          // GameScene registered its message handler after this callback; future messages are
+          // handled there once the transition has completed.
+        }
+      };
+      socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'spectate' })));
+      socket.addEventListener('message', handleMessage);
+      socket.addEventListener('error', () => { if (!started) showError('Could not connect to the room. Return to Live Games and try again.'); });
+      socket.addEventListener('close', () => { if (!started) showError('The room connection closed. Return to Live Games and try again.'); });
+    } catch (error) {
+      showError(error.message || 'Could not open this room.');
+    }
   }
 }
 
@@ -480,17 +615,25 @@ class MenuScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '38px', color: '#ffe36e', stroke: '#3a2412', strokeThickness: 7,
     }).setOrigin(0.5);
 
-    // Four modes: choose a board size first; Tag remains at its established 7×7 size.
+    // Four modes: 140px buttons every 165px. Player vs AI first asks for a difficulty.
     this.pickerUI = [];
     Object.entries(MODES).forEach(([mode, cfg], i) => {
       woodButton(this, GAME_WIDTH / 2, 600 + i * 165, 620, 140, cfg.label, 42,
         () => this.openBoardSize(mode), 10, cfg.hint);
     });
+
+    // Spectating is deliberately separated from playable modes: it is a darker, secondary panel (the same brown fill
+    // and gold border the game's popups use) instead of the bright wood of the four playable modes.
+    const audienceButton = woodButton(this, GAME_WIDTH / 2, 1228, 620, 76, 'WATCH LIVE GAMES', 32,
+      () => this.openAudienceDirectory(), 10, 'SPECTATOR AREA · WATCH ONLY · NO GAME MOVES');
+    audienceButton[0].setFillStyle(0x4b2d17, 1).setStrokeStyle(4, 0xd5ad72);
+    audienceButton[1].setColor('#fff2c7');
   }
 
-  // 5×5 and 6×6 use the same tray footprint as 7×7. Tag is kept at its established 7×7 size.
+  // The board-size choices are 5×5, 6×6 and 7×7; 7×7 remains the default and Tag is fixed at 7×7.
   openBoardSize(mode) {
     if (this.pickerUI.length) return;
+    // Tag is intentionally fixed at 7×7; only the other three modes offer smaller boards.
     if (mode === 'tag') {
       this.openOnlineLobby('tag', BASE_BOARD_SIZE);
       return;
@@ -504,7 +647,7 @@ class MenuScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '44px', color: '#fff2c7', stroke: '#3a2412', strokeThickness: 8,
     }).setOrigin(0.5).setDepth(52));
     add(this.add.text(GAME_WIDTH / 2, 430, 'Choose the number of rows and columns', {
-      fontFamily: FONT, fontSize: '22px', color: '#fff2c7', align: 'center',
+      fontFamily: FONT, fontSize: '20px', color: '#fff2c7', align: 'center',
       wordWrap: { width: 540 }, stroke: '#3a2412', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(52));
     BOARD_SIZES.forEach((size, index) => {
@@ -512,7 +655,7 @@ class MenuScene extends Phaser.Scene {
         () => {
           this.closeBoardSize();
           if (mode === 'ai') this.openDifficulty(size);
-          else if (mode === 'pvp') this.openOnlineLobby(mode, size);
+          else if (mode === 'pvp' || mode === 'tag') this.openOnlineLobby(mode, size);
           else this.scene.start('GameScene', { mode, boardSize: size });
         }, 52, (size * size) + ' tiles on the board').forEach(add);
     });
@@ -563,7 +706,7 @@ class MenuScene extends Phaser.Scene {
     this.onlineJoinUI = woodButton(this, GAME_WIDTH / 2, 810, 530, 88, 'JOIN ROOM', 36,
       () => this.promptJoinRoom(), 82, 'Enter a friend’s room code');
     this.onlineJoinUI.forEach(add);
-    this.onlineBackUI = woodButton(this, GAME_WIDTH / 2, 935, 530, 78, 'BACK', 33,
+    this.onlineBackUI = woodButton(this, GAME_WIDTH / 2, 925, 530, 72, 'BACK', 32,
       () => this.closeOnlineLobby(), 82);
     this.onlineBackUI.forEach(add);
   }
@@ -595,9 +738,14 @@ class MenuScene extends Phaser.Scene {
     }
   }
 
+  // Opens the public room directory in this tab; the directory has its own way back to the game.
+  openAudienceDirectory() {
+    window.location.assign(new URL('staging/audience.html', document.baseURI).href);
+  }
+
   audienceWatchUrl() {
     if (!this.currentRoomCode) return null;
-    const url = new URL('/shapey/staging/audience.html', window.location.origin);
+    const url = new URL('staging/audience.html', document.baseURI);
     url.searchParams.set('room', this.currentRoomCode);
     url.searchParams.set('mode', this.onlineMode || this.mode || 'tag');
     return url.href;
@@ -701,7 +849,7 @@ class MenuScene extends Phaser.Scene {
       const response = await fetch(MULTIPLAYER_API + '/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: this.onlineMode, boardSize: this.onlineBoardSize || BASE_BOARD_SIZE }),
+        body: JSON.stringify({ mode: this.onlineMode, boardSize: this.onlineBoardSize || 7 }),
       });
       const data = await response.json();
       if (!response.ok || !data.roomCode) throw new Error(data.error || 'Room creation failed.');
@@ -713,7 +861,8 @@ class MenuScene extends Phaser.Scene {
     }
   }
 
-  // Room-code entry styled to match the wooden in-game interface, rather than a browser prompt.
+  // Room-code entry that looks like the rest of the menu (wood panel, gold border, Happy School text, wooden buttons)
+  // instead of the browser's own prompt box. Resolves with the code on JOIN / Enter, or null on CANCEL / Escape.
   askRoomCode() {
     return new Promise((resolve) => {
       if (document.getElementById('shapey-join-modal')) { resolve(null); return; }
@@ -803,6 +952,7 @@ class MenuScene extends Phaser.Scene {
           '. Go back and select that mode to join.');
         return;
       }
+      // A room's server-selected size is authoritative for every device that joins it.
       this.onlineBoardSize = this.onlineMode === 'tag' ? BASE_BOARD_SIZE : normalizeBoardSize(room.boardSize);
       this.showOnlineRoomCode(code);
       this.connectOnlineRoom(code,
@@ -904,8 +1054,7 @@ class MenuScene extends Phaser.Scene {
       onlineSocket: socket,
       onlinePlayerNumber: playerNumber,
       onlineRoomCode: code,
-      onlineState: initialState,
-      boardSize: normalizeBoardSize(initialState.boardSize || this.onlineBoardSize || BASE_BOARD_SIZE)
+      onlineState: initialState
     });
   }
 
@@ -923,24 +1072,23 @@ class MenuScene extends Phaser.Scene {
     this.onlineCopyLabel = null;
     this.currentRoomCode = null;
     this.onlineMode = null;
+    this.onlineBoardSize = null;
   }
 
   // "Choose difficulty" panel for Player vs AI (Easy / Professional, built from AI_LEVELS).
-  // Choose AI difficulty after the board size is selected.
-  openDifficulty(boardSize = BASE_BOARD_SIZE) {
-    if (this.pickerUI.length) return;
+  openDifficulty(boardSize = 7) {
     this.chosenBoardSize = normalizeBoardSize(boardSize);
+    if (this.pickerUI.length) return;
     const add = (object) => { this.pickerUI.push(object); return object; };
     add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.8)
-      .setDepth(50).setInteractive());
+      .setDepth(50).setInteractive()); // shield: taps must not reach the mode buttons underneath
     add(this.add.rectangle(GAME_WIDTH / 2, 640, 640, 700, 0x4b2d17, 1).setStrokeStyle(5, 0xd5ad72).setDepth(51));
     add(this.add.text(GAME_WIDTH / 2, 380, 'CHOOSE DIFFICULTY', {
       fontFamily: FONT, fontSize: '46px', color: '#fff2c7', stroke: '#3a2412', strokeThickness: 8,
     }).setOrigin(0.5).setDepth(52));
     Object.entries(AI_LEVELS).forEach(([difficulty, level], i) => {
       woodButton(this, GAME_WIDTH / 2, 530 + i * 190, 560, 160, level.label, 42,
-        () => this.scene.start('GameScene', { mode: 'ai', difficulty, boardSize: this.chosenBoardSize }),
-        52, level.hint).forEach(add);
+        () => this.scene.start('GameScene', { mode: 'ai', difficulty, boardSize: this.chosenBoardSize }), 52, level.hint).forEach(add);
     });
     woodButton(this, GAME_WIDTH / 2, 530 + Object.keys(AI_LEVELS).length * 190, 560, 90, 'BACK', 36,
       () => {
@@ -948,6 +1096,7 @@ class MenuScene extends Phaser.Scene {
         this.openBoardSize('ai');
       }, 52).forEach(add);
   }
+
   closeDifficulty() {
     this.pickerUI.forEach((object) => object.destroy());
     this.pickerUI = [];
@@ -961,32 +1110,34 @@ class GameScene extends Phaser.Scene {
 
   init(data) {
     this.online = Boolean(data && data.online);
+    this.spectator = Boolean(data && data.spectator);
+    this.audienceMode = data && data.audienceMode || '';
+    this.audienceSoundMuted = (() => { try { return localStorage.getItem('shapey-audience-muted') === 'true'; } catch { return false; } })();
     this.onlineSocket = (data && data.onlineSocket) || null;
     this.onlinePlayerNumber = (data && data.onlinePlayerNumber) || null;
     this.onlineRoomCode = (data && data.onlineRoomCode) || null;
     this.onlineState = (data && data.onlineState) || null;
-    this.mode = (data && data.mode) || START_MODE || 'pvp';
-    const requestedBoardSize = normalizeBoardSize(
-      (this.onlineState && this.onlineState.boardSize) || (data && data.boardSize) || urlParams.get('size')
-    );
+    this.mode = (data && data.mode) || (this.onlineState && this.onlineState.mode) || START_MODE || 'pvp';
+    const requestedBoardSize = normalizeBoardSize((data && data.boardSize) ||
+      (this.onlineState && this.onlineState.boardSize) || urlParams.get('size'));
     this.boardSize = this.mode === 'tag' ? BASE_BOARD_SIZE : requestedBoardSize;
     GRID_COLS = this.boardSize;
     GRID_ROWS = this.boardSize;
     const boardScale = BASE_BOARD_SIZE / this.boardSize;
     TILE_PITCH = BASE_TILE_PITCH * boardScale;
+    // Keep the original 1px gap: all board sizes then occupy the same 636px visual footprint.
     TILE_SIZE = TILE_PITCH - (BASE_TILE_PITCH - BASE_TILE_SIZE);
     this.modeCfg = MODES[this.mode];
     // Player vs AI difficulty comes from the picker (or ?level=pro for testing); Easy is the default.
     const level = (data && data.difficulty) || urlParams.get('level');
     this.difficulty = AI_LEVELS[level] ? level : 'easy';
     this.ai = AI_LEVELS[this.difficulty];
-    this.turnDurationMs = RULES.turnDurationForMode(
-      this.mode,
-      this.difficulty,
-      TURN_MS,
-      urlParams.has('turn') ? TURN_MS : 30000,
-      urlParams.has('turn') ? TURN_MS : 30000
-    );
+    const hardHumanTurnMs = urlParams.has('turn') ? TURN_MS : 30000;
+    const tagTurnMs = urlParams.has('turn') ? TURN_MS : 30000;
+    this.turnDurationMs = this.mode === 'tag' ? tagTurnMs
+      : this.mode === 'ai'
+        ? RULES.turnDurationForMode('ai', this.difficulty, TURN_MS, hardHumanTurnMs)
+        : TURN_MS;
   }
 
   create() {
@@ -996,8 +1147,9 @@ class GameScene extends Phaser.Scene {
     this.dummySelection = [];  // Dummies stay face-up during the attempt but never count as shapes
     this.selectedShape = null; // the shape the current attempt is matching
     this.busy = false;        // true while animations run (input is ignored)
-    this.names = this.modeCfg.teams ? ['TEAM 1', 'TEAM 2']
-      : this.modeCfg.ai ? ['Player 1', 'AI ' + this.ai.tag] : PLAYER_NAMES.slice();
+    this.names = this.spectator && this.audienceMode === 'demo' ? ['AI 1', 'AI 2']
+      : this.modeCfg.teams ? ['TEAM 1', 'TEAM 2']
+        : this.modeCfg.ai ? ['Player 1', 'AI ' + this.ai.tag] : PLAYER_NAMES.slice();
     this.turnNumber = -1;            // counts normal turns from 0; a Double Play bonus keeps the same member
     this.activeMember = 0;           // Tag: which partner (0 or 1) of the active team is playing
     this.timeoutHandling = false;   // prevents duplicate timeout resolution across render frames
@@ -1009,15 +1161,19 @@ class GameScene extends Phaser.Scene {
     this.panelOpen = false;
     this.panelUI = [];
     this.turnId = 0;                 // bumped on every turn so a stale AI loop can tell its turn is over
-    this.pendingSubmitTurnId = null;  // don't discard Submit taps made during an animation
+    this.pendingSubmitTurnId = null;  // a Submit tap during an animation must be honoured when that animation finishes
+    this.pendingOnlineSubmitKey = null;
+    this.onlineSubmitPending = false;
     this.totalAttempts = 0;          // Play Alone statistic only; never a loss condition
     this.aiMemory = new Map();       // tile -> shape the AI believes it is
     this.aiRecall = this.ai.recall[0] + Math.random() * (this.ai.recall[1] - this.ai.recall[0]);
     this.starBalance = this.loadStarBalance();
-    // Match streaks are tracked separately for each local player (or Tag partner).
+    // Track streaks per player seat even though the local prototype shares its Star wallet.
     this.matchStreaks = new Map();
     this.pendingStreakToast = null;
     this.inventoryItems = this.loadInventoryItems();
+    // Audience polls are free, per player, and reset for each new game.
+    this.audiencePollsUsedByPlayer = new Map();
     this.inventoryUI = [];
     this.inventoryOpen = false;
     this.inventoryTimerText = null;
@@ -1034,7 +1190,7 @@ class GameScene extends Phaser.Scene {
     // Limits are per player: two players normally, four in Tag.
     this.inventoryLimiter = new InventoryLimiter(INVENTORY_OPEN_LIMIT, INVENTORY_WINDOW_MS, this.modeCfg.teams ? 4 : PLAYER_NAMES.length);
 
-    // Optional commentary: the game remains fully playable if the meme manifest or assets cannot load.
+    // Meme commentary (src/memes.js). Optional: the game plays the same without it.
     this.memes = window.ShapeyMemes ? window.ShapeyMemes.attach(this) : null;
 
     this.createBackground();
@@ -1042,10 +1198,29 @@ class GameScene extends Phaser.Scene {
     this.createBottomButtons();
     this.createFx();
     this.createBoard();
+    if (this.spectator && urlParams.get('embed') === '1') {
+      // Wait two animation frames so the first real board frame is painted before the parent
+      // reveals Chat / Polls / Settings navigation.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        try { window.parent.postMessage({ type: 'shapey-game-ready' }, window.location.origin); } catch {}
+      }));
+    }
     if (this.online) {
       this.attachOnlineSocket();
-      this.showToast('Online match connected. Waiting for the server state.', 3200);
+      if (!this.spectator) this.showToast('Online match connected. Waiting for the server state.', 3200);
+      if (this.spectator) {
+        this.sound.mute = this.audienceSoundMuted;
+        this.audienceMuteHandler = (event) => {
+          if (event.data && event.data.type === 'shapey-audience-mute') {
+            this.audienceSoundMuted = Boolean(event.data.muted);
+            this.sound.mute = this.audienceSoundMuted;
+            try { localStorage.setItem('shapey-audience-muted', String(this.audienceSoundMuted)); } catch {}
+          }
+        };
+        window.addEventListener('message', this.audienceMuteHandler);
+      }
       this.events.once('shutdown', () => {
+        if (this.audienceMuteHandler) window.removeEventListener('message', this.audienceMuteHandler);
         if (this.onlineSocket) {
           try { this.onlineSocket.close(); } catch {}
           this.onlineSocket = null;
@@ -1057,27 +1232,29 @@ class GameScene extends Phaser.Scene {
         this.updateAloneHUD();
         this.showToast('No timer. You lose when your score reaches ' + ALONE_SCORE_FLOOR + '.', 4000);
       } else if (this.modeCfg.teams) {
-        this.showToast('Tag: partners tag in on every other turn.\\n' + this.turnLabel() + ' starts.', 4000);
+        this.showToast('Tag: partners tag in on every other turn.\n' + this.turnLabel() + ' starts.', 4000);
       }
     }
   }
 
   // Runs every frame: flips tiles whose reveal is over, redraws both clocks, and ends the turn on timeout.
   update() {
+    if (!this.turnClock) return;
     if (this.memes) this.memes.tick();
+    // GIFs are attached only after loading, so reposition an existing message every frame too.
     if (this.toast) {
       const toastY = this.memes && this.memes.visualVisible() ? MEME_TOAST_Y : 256;
       if (this.toast.y !== toastY) this.toast.setY(toastY);
     }
-    if (!this.turnClock) return;
     if (!this.online) {
       this.hideFinishedReveals();
       this.healStuckTiles();
     }
     this.refreshClocks();
-    // A manual Submit tap made during an animation must be serviced when that same turn is idle.
-    // If a mismatch, hazard or match ends the turn first, startTurn() clears the stale request.
-    if (this.pendingSubmitTurnId !== null) {
+    // A manual Submit is a request, not a tap we silently discard. If an animation was already
+    // resolving, service that request as soon as the same turn is idle. A mismatch/hazard/match
+    // that ends the turn first invalidates the queued request in startTurn().
+    if (!this.online && this.pendingSubmitTurnId !== null) {
       if (this.pendingSubmitTurnId !== this.turnId || this.turnEnding || this.gameOver || !this.modeCfg.twoPlayers) {
         this.pendingSubmitTurnId = null;
       } else if (!this.busy) {
@@ -1175,7 +1352,7 @@ class GameScene extends Phaser.Scene {
     if (this.modeCfg.twoPlayers) return;
     this.timerText.setFontSize(23); // "TRIES: 17" must fit the timer plank; half the previous 46px size.
     this.timerText.setText('TRIES: ' + this.totalAttempts);
-    this.goalText.setText('WIN 100 · LOSE AT ' + ALONE_SCORE_FLOOR);
+    this.goalText.setText('WIN ' + MODE_TARGET_SCORE.alone + ' · LOSE AT ' + ALONE_SCORE_FLOOR);
   }
 
   updateActivePlayerUI() {
@@ -1188,6 +1365,7 @@ class GameScene extends Phaser.Scene {
   showToast(message, holdMs = 2600) {
     if (this.toastTween) this.toastTween.stop();
     if (this.toast) this.toast.destroy();
+    // Keep text below the tray and above the bottom navigation while a GIF is visible.
     const toastY = this.memes && this.memes.visualVisible() ? MEME_TOAST_Y : 256;
     const toast = this.add.text(GAME_WIDTH / 2, toastY, message, {
       fontFamily: FONT, fontSize: '24px', color: '#fff2c7',
@@ -1219,24 +1397,46 @@ class GameScene extends Phaser.Scene {
 
   // Both clocks are redrawn from their own deadlines, so they can never hold each other up.
   refreshClocks() {
+    const now = Date.now();
+    const openingStudyLeft = this.online && this.onlineState
+      ? Math.max(0, Number(this.onlineState.reviewEndsAt) - now)
+      : Number.isFinite(this.openingReviewEndsAt)
+        ? Math.max(0, this.openingReviewEndsAt - now) : 0;
+    const openingStudy = this.online
+      ? Boolean(this.onlineState && this.onlineState.status === 'study')
+      : openingStudyLeft > 0;
     const turnLeft = this.modeCfg.turnClock
       ? formatClock(Math.min(this.currentTurnDurationMs || this.turnDurationMs, this.turnClock.remaining())) : '';
-    if (this.modeCfg.turnClock) this.setClockText(this.timerText, turnLeft);
+
+    // Every mode shows the opening reveal countdown on the timer plank. Once it ends,
+    // timed modes switch to the active player's pick countdown; Play Alone returns to Tries.
+    if (openingStudy) {
+      this.timerText.setFontSize(46);
+      this.setClockText(this.timerText, formatClock(openingStudyLeft));
+    } else if (this.modeCfg.turnClock) {
+      this.timerText.setFontSize(46);
+      this.setClockText(this.timerText, turnLeft);
+    } else {
+      this.timerText.setFontSize(23);
+      this.setClockText(this.timerText, 'TRIES: ' + this.totalAttempts);
+    }
 
     const revealLeft = this.online && this.onlineState
-      ? Math.max(0, ...((this.onlineState.reveals || []).map((batch) => batch.endsAt - Date.now())),
+      ? Math.max(0, ...((this.onlineState.reveals || []).map((batch) => batch.endsAt - now)),
           this.onlineState.status === 'study' && Number.isFinite(this.onlineState.reviewEndsAt)
-            ? this.onlineState.reviewEndsAt - Date.now() : 0)
+            ? this.onlineState.reviewEndsAt - now : 0)
       : this.reveals.remaining();
     const onlineShuffling = Boolean(this.online && this.onlineState && this.onlineState.shuffling);
     this.revealText.setVisible(revealLeft > 0 || this.shuffling > 0 || onlineShuffling);
-    // Play alone has no countdown at all: the cue stays, the numbers go.
-    if (revealLeft > 0) this.setClockText(this.revealText, this.modeCfg.turnClock ? 'MEMORIZE ' + formatClock(revealLeft) : 'MEMORIZE');
+    // The spawned-tile reveal has a visible numeric countdown in every mode, including Play Alone.
+    if (revealLeft > 0) this.setClockText(this.revealText, 'MEMORIZE ' + formatClock(revealLeft));
     else if (this.shuffling > 0 || onlineShuffling) this.setClockText(this.revealText, 'SHUFFLING');
 
-    // The shop covers the header, so it shows the turn clock too: opening it never stops the clock.
+    // The shop covers the header, so it shows the same current timer without pausing it.
     if (this.inventoryTimerText && this.inventoryTimerText.active) {
-      this.setClockText(this.inventoryTimerText, 'TURN\n' + turnLeft);
+      const shopClock = openingStudy ? 'REVEAL\n' + formatClock(openingStudyLeft)
+        : this.modeCfg.turnClock ? 'TURN\n' + turnLeft : 'TRIES\n' + this.totalAttempts;
+      this.setClockText(this.inventoryTimerText, shopClock);
     }
   }
 
@@ -1252,12 +1452,16 @@ class GameScene extends Phaser.Scene {
     this.turnEnding = false;
     this.timeoutHandling = false;
     this.turnId++;
-    // Play Along has no countdown. Hard AI uses 30 seconds, Easy AI 45, and Tag uses 30 per pick.
-    // Double Play repeats the same mode-specific turn duration.
-    const duration = this.turnDurationMs;
+    // AI turns always have 5 seconds; human turns use the full duration for their mode.
+    // Double Play repeats the active player's normal duration; only Extra Time adds time.
+    const duration = this.mode === 'ai' && player === 1 ? AI_TURN_MS : this.turnDurationMs;
     this.currentTurnDurationMs = duration;
     if (this.modeCfg.turnClock) {
-      this.turnClock.start(duration + (this.turnNumber === 0 && !bonus ? REVIEW_MS : 0));
+      // Give the first player the entire pick allowance after the opening reveal has ended.
+      // The visible timer plank counts down the reveal separately while this deadline waits.
+      const openingStudyRemaining = !bonus && Number.isFinite(this.openingReviewEndsAt)
+        ? Math.max(0, this.openingReviewEndsAt - Date.now()) : 0;
+      this.turnClock.start(duration + openingStudyRemaining);
     } else this.turnClock.endsAt = Infinity;
     this.updateActivePlayerUI();
     if (this.modeCfg.teams) this.goalText.setText(this.turnLabel().toUpperCase());
@@ -1283,7 +1487,7 @@ class GameScene extends Phaser.Scene {
   async endTurn(reason) {
     if (this.turnEnding || this.gameOver) return;
     this.turnEnding = true; // from here on, late taps and submits are ignored
-    if (this.memes) this.memes.turnResult(reason); // result commentary for the turn that just ended
+    if (this.memes) this.memes.turnResult(reason); // win / lose commentary for the human who just played
     if (reason !== 'match') this.breakLocalMatchStreak();
     if (this.inventoryOpen) this.closeInventory();
     if (this.panelOpen) this.closePanel();
@@ -1320,13 +1524,18 @@ class GameScene extends Phaser.Scene {
   }
 
   createStars(startX, y, count) {
-    // One star icon plus a multiplier keeps the score plank uncluttered: ⭐*5, ⭐*2, etc.
+    // Show the Star icon followed by its count, without a multiplier asterisk.
     const star = this.add.image(startX, y, 'starIcon').setDisplaySize(30, 30).setDepth(10);
-    const multiplier = this.numberText(startX + 33, y, '*' + count, 23).setColor('#ffe36e');
+    const multiplier = this.numberText(startX + 33, y, String(count), 23).setColor('#ffe36e');
     return [star, multiplier];
   }
 
   createBottomButtons() {
+    if (this.spectator) {
+      // The audience page supplies the chat, polls and settings icons above the read-only game.
+      this.buttons = {};
+      return;
+    }
     const BUTTON_HEIGHT = 146;
     const BOTTOM = 1214; // bottom edge of the label plank
     const iconByAction = {
@@ -1335,8 +1544,9 @@ class GameScene extends Phaser.Scene {
       polls: 'btnPolls',
       inventory: 'btnInventory',
     };
+    // Which icons each mode gets is decided in src/rules.js (only Tag has Polls; Play Alone has no Inventory).
     const actions = RULES.navigationForMode(this.mode);
-    // Keep two- and three-button modes centred instead of leaving gaps from the four-icon layout.
+    // Keep each mode's icons centred and remove controls that mode does not support.
     const positions = actions.length === 2 ? [250, 470]
       : actions.length === 3 ? [175, 360, 545]
       : [136, 296, 449, 602];
@@ -1362,7 +1572,7 @@ class GameScene extends Phaser.Scene {
     settings.setInteractive({ useHandCursor: true });
     settings.on('pointerdown', () => this.openPanel());
 
-    // Only Tag exposes polls. These votes are explicitly labelled as simulated practice votes.
+    // Only Tag exposes polls: a team can ask the audience to choose a hidden tile directly on the shared board.
     const polls = this.buttons.btnPolls;
     if (polls) {
       polls.setInteractive({ useHandCursor: true });
@@ -1371,7 +1581,7 @@ class GameScene extends Phaser.Scene {
       });
     }
 
-    // Only modes whose navigation includes Inventory receive an inventory button.
+    // Inventory is not available in Play Along, so guard the optional icon.
     const inventory = this.buttons.btnInventory;
     if (inventory) {
       inventory.setInteractive({ useHandCursor: true });
@@ -1436,12 +1646,12 @@ class GameScene extends Phaser.Scene {
         items.extraTime = Number(items.extraTime || 0) + Number(items.doubleTime);
         delete items.doubleTime;
       }
-      // A new local profile gets one free Audience Pick. A saved zero means it was already used.
-      if (!Object.prototype.hasOwnProperty.call(items, 'audiencePick')) items.audiencePick = 1;
+      // Audience polls are a free per-game allowance, not a purchasable inventory item.
+      delete items.audiencePick;
       try { window.localStorage.setItem('shapey-inventory', JSON.stringify(items)); } catch (_) {}
       return items;
     } catch (_) {
-      return { audiencePick: 1 };
+      return {};
     }
   }
 
@@ -1457,16 +1667,16 @@ class GameScene extends Phaser.Scene {
 
   updateStarDisplays() {
     if (this.p1Stars && this.p1Stars[1] && this.p1Stars[1].active) {
-      this.p1Stars[1].setText('*' + this.starBalance);
+      this.p1Stars[1].setText(String(this.starBalance));
     }
     if (this.p2Stars && this.p2Stars[1] && this.p2Stars[1].active) {
-      this.p2Stars[1].setText('*' + (this.modeCfg.ai ? 0 : this.starBalance));
+      this.p2Stars[1].setText(String(this.modeCfg.ai ? 0 : this.starBalance));
     }
   }
 
-  // Streaks are per human seat even where the local prototype shares a Star balance.
+  // The 3rd consecutive successful turn earns 3 Stars; later streak lengths earn their number.
   advanceLocalMatchStreak() {
-    if (!this.modeCfg.twoPlayers) return; // Play Alone has no turns to streak across.
+    if (!this.modeCfg.twoPlayers) return; // Play Alone has no turn streak.
     const slot = this.limiterSlot();
     const current = this.matchStreaks.get(slot) || { streak: 0, lastRewardedStreak: 0 };
     const next = RULES.nextMatchStreak(current.streak, current.lastRewardedStreak, true);
@@ -1533,7 +1743,7 @@ class GameScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.addInventoryUI(title);
 
-    const balance = this.add.text(GAME_WIDTH / 2, 128, 'YOUR STARS: *' + this.starBalance, {
+    const balance = this.add.text(GAME_WIDTH / 2, 128, 'YOUR STARS: ' + this.starBalance, {
       fontFamily: FONT, fontSize: '31px', color: '#ffe36e',
       stroke: '#4a2814', strokeThickness: 5,
     }).setOrigin(0.5);
@@ -1558,14 +1768,44 @@ class GameScene extends Phaser.Scene {
     }
 
     const offers = [
-      { key: 'audiencePick', name: 'AUDIENCE PICK', price: 3, desc: 'Use your poll lifeline to get a practice audience recommendation.' },
       { key: 'extraTime', name: 'EXTRA TIME (+45s)', price: 3, desc: 'Add 45 seconds to the current turn each time you use one.' },
       { key: 'doublePlay', name: 'DOUBLE PLAY', price: 4, desc: 'Take one extra turn with your mode’s normal timer.' },
       { key: 'scoreStrike', name: 'SCORE STRIKE', price: 5, desc: 'Remove 10 points from your opponent.' },
-    ].filter((offer) => offer.key !== 'audiencePick' || this.modeCfg.teams);
+    ];
 
+    // Three free polls are an allowance for this game, not a Star-priced shop item.
+    const hasFreeAudiencePolls = this.mode !== 'alone';
+    if (hasFreeAudiencePolls) {
+      const y = 238;
+      const card = this.add.rectangle(GAME_WIDTH / 2, y, 630, 174, 0x704323, 0.96)
+        .setStrokeStyle(4, 0xd5ad72);
+      this.addInventoryUI(card);
+      const name = this.add.text(68, y - 66, 'FREE AUDIENCE POLLS', {
+        fontFamily: FONT, fontSize: '29px', color: '#fff0c7',
+        stroke: '#3a2112', strokeThickness: 4,
+      }).setOrigin(0, 0.5);
+      this.addInventoryUI(name);
+      const desc = this.add.text(68, y - 20,
+        '3 free uses per player, per game. Never bought with Stars.', {
+          fontFamily: FONT, fontSize: '21px', color: '#ffffff',
+          wordWrap: { width: 440 },
+        }).setOrigin(0, 0.5);
+      this.addInventoryUI(desc);
+      const remaining = this.add.text(68, y + 48,
+        'Remaining this game: ' + this.getAudiencePollsRemaining(), {
+          fontFamily: FONT, fontSize: '22px', color: '#ffdf78',
+        }).setOrigin(0, 0.5);
+      this.addInventoryUI(remaining);
+      const freeLabel = this.add.text(554, y - 5, 'FREE', {
+        fontFamily: FONT, fontSize: '24px', color: '#ffdf78',
+        stroke: '#3a2112', strokeThickness: 4,
+      }).setOrigin(0.5);
+      this.addInventoryUI(freeLabel);
+    }
+
+    const offerStartY = hasFreeAudiencePolls ? 443 : 238;
     offers.forEach((offer, index) => {
-      const y = 238 + index * 205;
+      const y = offerStartY + index * 205;
       const card = this.add.rectangle(GAME_WIDTH / 2, y, 630, 174, 0x704323, 0.96)
         .setStrokeStyle(4, 0xd5ad72);
       this.addInventoryUI(card);
@@ -1589,14 +1829,14 @@ class GameScene extends Phaser.Scene {
       this.addInventoryUI(owned);
 
       if (this.online && !['extraTime', 'doublePlay'].includes(offer.key)) {
-        const notice = this.add.text(554, y - 5, 'COMING SOON\\nONLINE', {
+        const notice = this.add.text(554, y - 5, 'COMING SOON\nONLINE', {
           fontFamily: FONT, fontSize: '18px', color: '#fff0c7', align: 'center',
         }).setOrigin(0.5);
         this.addInventoryUI(notice);
         return;
       }
 
-      if (['audiencePick', 'extraTime', 'doublePlay'].includes(offer.key) && ownedCount > 0) {
+      if (['extraTime', 'doublePlay'].includes(offer.key) && ownedCount > 0) {
         const canUse = offer.key === 'extraTime'
           ? this.modeCfg.turnClock && !this.turnClock.expired() && !this.turnEnding && !this.isAITurn()
           : offer.key === 'doublePlay'
@@ -1621,13 +1861,6 @@ class GameScene extends Phaser.Scene {
             }
             const count = Number(this.inventoryItems[offer.key] || 0);
             if (count < 1) return;
-            if (offer.key === 'audiencePick') {
-              this.inventoryItems.audiencePick = count - 1;
-              this.saveInventory();
-              this.closeInventory();
-              this.showAudiencePoll();
-              return;
-            }
             if (offer.key === 'extraTime') {
               if (!this.modeCfg.turnClock || this.turnClock.expired() || this.turnEnding || this.isAITurn()) return;
               this.inventoryItems.extraTime = count - 1;
@@ -1705,20 +1938,52 @@ class GameScene extends Phaser.Scene {
     this.inventoryOpen = false;
   }
 
-  // Tag's bottom Polls action opens a live audience poll when online. Local-mode practice
-  // still uses clearly labelled simulated votes so it cannot be mistaken for real audience data.
+  getAudiencePollsUsed() {
+    if (this.online) {
+      const used = Number(this.onlineState && this.onlineState.me && this.onlineState.me.audiencePollsUsed);
+      return Math.max(0, Math.min(3, Number.isFinite(used) ? used : 0));
+    }
+    const slot = this.limiterSlot();
+    return Math.max(0, Math.min(3, Number(this.audiencePollsUsedByPlayer.get(slot) || 0)));
+  }
+
+  getAudiencePollsRemaining() {
+    return Math.max(0, 3 - this.getAudiencePollsUsed());
+  }
+
+  // Each non-Play-Alone player gets three free polls per game. Online uses are enforced by the Worker;
+  // Player-vs-AI uses its clearly labelled practice audience.
   showAudiencePoll() {
     this.closeAudiencePoll();
     if (this.gameOver) return;
+    if (this.mode === 'alone') {
+      this.showToast('Audience polls are not available in Play Alone.', 2200);
+      return;
+    }
+    if (this.isAITurn()) {
+      this.showToast('Audience polls are available to the human player, not the AI.', 2200);
+      return;
+    }
+    if (this.getAudiencePollsRemaining() <= 0) {
+      this.showToast('You have used all 3 free audience polls for this game.', 2600);
+      return;
+    }
     if (this.online) {
-      if (!this.modeCfg.teams || !this.onlineSocket || this.onlineSocket.readyState !== WebSocket.OPEN) {
-        this.showToast('Live audience polling requires a connected Tag room.', 2500);
+      if ((this.mode !== 'pvp' && this.mode !== 'tag') ||
+          !this.onlineSocket || this.onlineSocket.readyState !== WebSocket.OPEN) {
+        this.showToast('Live audience polling requires a connected Player 1 vs Player 2 or Tag room.', 2500);
+        return;
+      }
+      if (this.onlineState && this.onlineState.activePlayerNumber !== this.onlinePlayerNumber) {
+        this.showToast('You can use an audience poll during your own turn.', 2200);
         return;
       }
       this.onlineSocket.send(JSON.stringify({ type: 'audience_poll_start' }));
       this.showToast('Opening a live poll for spectators…', 1800);
       return;
     }
+    const slot = this.limiterSlot();
+    this.audiencePollsUsedByPlayer.set(slot, this.getAudiencePollsUsed() + 1);
     this.pollUI = [];
     const add = (object) => {
       object.setDepth(250);
@@ -1749,16 +2014,17 @@ class GameScene extends Phaser.Scene {
     const totalWeight = weights.reduce((sum, n) => sum + n, 0);
     const votes = weights.map((weight) => Math.round((weight / totalWeight) * 100));
     votes[0] += 100 - votes.reduce((sum, n) => sum + n, 0);
-    const ranked = candidates.map((shape, i) => ({ shape, votes: votes[i] }))
-      .sort((a, b) => b.votes - a.votes);
-    add(this.add.text(GAME_WIDTH / 2, 470, 'TOP CHOICE: ' + ranked[0].shape.toUpperCase(), {
+    // Like the TV lifeline, the options keep their A-D order and the top choice is called out above them.
+    const ranked = candidates.map((shape, i) => ({ shape, votes: votes[i] }));
+    const top = ranked.reduce((best, item) => (item.votes > best.votes ? item : best), ranked[0]);
+    add(this.add.text(GAME_WIDTH / 2, 470, 'TOP CHOICE: ' + top.shape.toUpperCase(), {
       fontFamily: FONT, fontSize: '28px', color: '#ffe36e',
       stroke: '#3a2112', strokeThickness: 5, align: 'center',
     }).setOrigin(0.5));
 
     ranked.forEach((item, i) => {
       const y = 545 + i * 75;
-      add(this.add.text(86, y, item.shape.toUpperCase(), {
+      add(this.add.text(86, y, String.fromCharCode(65 + i) + '  ' + item.shape.toUpperCase(), {
         fontFamily: FONT, fontSize: '20px', color: '#fff2c7',
         stroke: '#3a2112', strokeThickness: 4,
       }).setOrigin(0, 0.5));
@@ -1773,9 +2039,19 @@ class GameScene extends Phaser.Scene {
       () => this.closeAudiencePoll(), 252).forEach(add);
   }
 
+  // Online poll, modelled on "Ask the Audience": while the audience votes the contestant sees the
+  // lettered options and a countdown only; the percentages are revealed when voting closes.
+  // Only the team that opened the poll sees it, so the other team never sees the audience's advice.
   renderOnlineAudiencePoll(poll) {
+    if (!poll || this.gameOver) { this.closeAudiencePoll(); return; }
+    const mySide = this.onlinePlayerNumber ? (this.onlinePlayerNumber <= 2 ? 0 : 1) : null;
+    const pollSide = Number(poll.startedByPlayer) <= 2 ? 0 : 1;
+    if (mySide === null || mySide !== pollSide) { this.closeAudiencePoll(); return; }
+    const key = poll.id + ':' + (poll.closed ? 'closed' : 'open');
+    if (this.dismissedPollKey === key) return; // the player closed this view; do not pop it up again
+    if (this.pollShownKey === key && this.pollUI && this.pollUI.length) return; // nothing new to draw
     this.closeAudiencePoll();
-    if (!poll || this.gameOver) return;
+    this.pollShownKey = key;
     this.pollUI = [];
     const add = (object) => {
       object.setDepth(250);
@@ -1786,40 +2062,68 @@ class GameScene extends Phaser.Scene {
       .setInteractive());
     add(this.add.rectangle(GAME_WIDTH / 2, 650, 640, 690, 0x4b2d17, 1)
       .setStrokeStyle(5, 0xd5ad72));
-    add(this.add.text(GAME_WIDTH / 2, 365, poll.closed ? 'AUDIENCE POLL RESULTS' : 'LIVE AUDIENCE PICK', {
-      fontFamily: FONT, fontSize: poll.closed ? '38px' : '44px', color: '#fff2c7',
+    add(this.add.text(GAME_WIDTH / 2, 365, poll.closed ? 'AUDIENCE RESULTS' : 'ASK THE AUDIENCE', {
+      fontFamily: FONT, fontSize: '42px', color: '#fff2c7',
       stroke: '#3a2112', strokeThickness: 8, align: 'center', wordWrap: { width: 590 },
     }).setOrigin(0.5));
-    const totalVotes = Number(poll.totalVotes) || 0;
-    add(this.add.text(GAME_WIDTH / 2, 420,
-      poll.closed ? 'POLL CLOSED · ' + totalVotes + ' VOTES'
-        : 'LIVE SPECTATOR VOTES · ' + totalVotes + ' VOTES', {
-        fontFamily: FONT, fontSize: '21px', color: '#ffe36e', align: 'center',
+
+    const options = Array.isArray(poll.options)
+      ? poll.options.filter((option) => option && typeof option.tileId === 'string') : [];
+    const counts = options.map((option) => Number((poll.counts || {})[option.tileId]) || 0);
+    const totalVotes = counts.reduce((sum, count) => sum + count, 0);
+    const best = Math.max(0, ...counts);
+    const secondsLeft = () => Math.max(0, Math.ceil(((Number(poll.endsAt) || 0) - Date.now()) / 1000));
+    const positionLabel = (option) => 'ROW ' + (Number(option.row) + 1) + ', COLUMN ' + (Number(option.col) + 1);
+    const subtitle = () => {
+      if (poll.closed) return totalVotes > 0
+        ? 'POLL CLOSED · ' + totalVotes + (totalVotes === 1 ? ' VOTE' : ' VOTES')
+        : 'NO VOTES WERE CAST';
+      const left = secondsLeft();
+      return left > 0 ? 'THE AUDIENCE IS VOTING ON THE BOARD · ' + left + 's' : 'COUNTING THE VOTES…';
+    };
+    const subtitleText = add(this.add.text(GAME_WIDTH / 2, 420, subtitle(), {
+      fontFamily: FONT, fontSize: '21px', color: '#ffe36e', align: 'center',
+      stroke: '#3a2112', strokeThickness: 4, wordWrap: { width: 570 },
+    }).setOrigin(0.5));
+    if (!poll.closed) {
+      this.pollTimer = this.time.addEvent({
+        delay: 250, loop: true,
+        callback: () => { if (subtitleText.active) subtitleText.setText(subtitle()); },
+      });
+      add(this.add.text(GAME_WIDTH / 2, 525,
+        'Spectators tap a face-down tile on the live board to vote.', {
+        fontFamily: FONT, fontSize: '21px', color: '#fff2c7', align: 'center',
+        stroke: '#3a2112', strokeThickness: 4, wordWrap: { width: 540 },
+      }).setOrigin(0.5));
+    } else if (totalVotes > 0) {
+      const leaders = options.filter((option, index) => counts[index] === best);
+      const labels = leaders.slice(0, 3).map(positionLabel);
+      add(this.add.text(GAME_WIDTH / 2, 500,
+        (leaders.length === 1 ? 'TOP BOARD PICK: ' : 'TOP BOARD PICKS: ') + labels.join(' · '), {
+        fontFamily: FONT, fontSize: '22px', color: '#ffe36e', align: 'center',
+        stroke: '#3a2112', strokeThickness: 4, wordWrap: { width: 560 },
+      }).setOrigin(0.5));
+      add(this.add.text(GAME_WIDTH / 2, 555,
+        'The audience chose from the full board.', {
+        fontFamily: FONT, fontSize: '19px', color: '#fff2c7', align: 'center',
+        stroke: '#3a2112', strokeThickness: 4, wordWrap: { width: 540 },
+      }).setOrigin(0.5));
+    } else if (poll.closed) {
+      add(this.add.text(GAME_WIDTH / 2, 510, 'No votes were cast this time.', {
+        fontFamily: FONT, fontSize: '22px', color: '#fff2c7', align: 'center',
         stroke: '#3a2112', strokeThickness: 4,
       }).setOrigin(0.5));
-    (poll.options || []).forEach((shape, index) => {
-      const y = 520 + index * 80;
-      const count = Number((poll.counts || {})[shape]) || 0;
-      const percent = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
-      add(this.add.text(78, y, String(shape).toUpperCase(), {
-        fontFamily: FONT, fontSize: '20px', color: '#fff2c7',
-        stroke: '#3a2112', strokeThickness: 4,
-      }).setOrigin(0, 0.5));
-      add(this.add.rectangle(270, y, 288, 24, 0x25180f, 1).setOrigin(0, 0.5));
-      add(this.add.rectangle(270, y, Math.max(3, 2.88 * percent), 18, 0xd7a849, 1).setOrigin(0, 0.5));
-      add(this.add.text(625, y, count + ' · ' + percent + '%', {
-        fontFamily: FONT, fontSize: '21px', color: '#ffffff',
-        stroke: '#3a2112', strokeThickness: 4, align: 'right',
-      }).setOrigin(1, 0.5));
-    });
+    }
     woodButton(this, GAME_WIDTH / 2, 885, 420, 82,
-      poll.closed ? 'CLOSE RESULTS' : 'CLOSE PANEL', 30,
-      () => this.closeAudiencePoll(), 252).forEach(add);
+      poll.closed ? 'CLOSE RESULTS' : 'HIDE', 30,
+      () => { this.dismissedPollKey = key; this.closeAudiencePoll(); }, 252).forEach(add);
   }
 
   closeAudiencePoll() {
+    if (this.pollTimer) { this.pollTimer.remove(false); this.pollTimer = null; }
     if (this.pollUI) this.pollUI.forEach((object) => object.destroy());
     this.pollUI = [];
+    this.pollShownKey = null;
   }
 
   // ------------------------------------------------------------------ fx
@@ -1858,7 +2162,7 @@ class GameScene extends Phaser.Scene {
   cellX(col) { return this.gridX0 + col * TILE_PITCH; }
   cellY(row) { return this.gridY0 + row * TILE_PITCH; }
 
-  // 7 x 7 board centred on the tray. Every tile is 90 x 90.
+  // The selected square board is centred on the tray. Every tile is 90 x 90.
   createBoard() {
     this.gridX0 = this.tray.x - ((GRID_COLS - 1) * TILE_PITCH) / 2;
     this.gridY0 = this.tray.y - ((GRID_ROWS - 1) * TILE_PITCH) / 2;
@@ -1893,6 +2197,7 @@ class GameScene extends Phaser.Scene {
       }
     }
     all.forEach((tile) => this.aiSee(tile)); // the AI studies the board too (and forgets about half of it)
+    this.openingReviewEndsAt = Date.now() + REVIEW_MS;
     this.startReview(all, REVIEW_MS, false); // study phase: everything face-up for 15s, then flip to mystery (no shuffle)
   }
 
@@ -1921,9 +2226,9 @@ class GameScene extends Phaser.Scene {
       try { message = JSON.parse(event.data); } catch { return; }
       if (message.type === 'game_state' && message.state) {
         this.applyOnlineState(message.state);
-      } else if (message.type === 'audience_poll_state' && message.poll) {
-        this.onlineAudiencePoll = message.poll;
-        this.renderOnlineAudiencePoll(message.poll);
+      } else if (message.type === 'audience_poll_state') {
+        this.onlineAudiencePoll = message.poll || null;
+        if (!this.spectator) this.renderOnlineAudiencePoll(message.poll || null);
       } else if (message.type === 'spectator_count') {
         this.onlineSpectatorCount = Number(message.count) || 0;
       } else if (message.type === 'error') {
@@ -1933,12 +2238,22 @@ class GameScene extends Phaser.Scene {
             this.turnClock.endsAt = this.onlineState.turnEndsAt;
           }
         }
+        // The server may begin resolving a pick just before this client's snapshot arrives.
+        // If it rejects Submit for that reason, retry only after the authoritative state is idle.
+        if (/resolving an action/i.test(message.message || '') &&
+            this.onlineState && this.onlineState.status === 'playing' &&
+            this.onlineState.activePlayerNumber === this.onlinePlayerNumber &&
+            this.queueOnlineSubmit(this.onlineState)) {
+          this.showToast('Submit queued until the current move finishes.', 1800);
+          return;
+        }
         this.showToast(message.message || 'The server rejected that action.', 3000);
       } else if (message.type === 'player_disconnected') {
         this.showToast('A player disconnected. Waiting for them to reconnect.', 3500);
       }
     });
     socket.addEventListener('close', () => {
+      this.pendingOnlineSubmitKey = null;
       if (this.onlineSubmitPending) {
         this.onlineSubmitPending = false;
         if (this.onlineState && Number.isFinite(this.onlineState.turnEndsAt)) {
@@ -1946,6 +2261,43 @@ class GameScene extends Phaser.Scene {
         }
       }
       if (this.online && !this.gameOver) this.showToast('Connection lost. Return to the main menu and reconnect.', 4500);
+    });
+  }
+
+  onlineTurnKey(state) {
+    return {
+      turnIndex: Number(state.turnIndex),
+      activePlayerNumber: Number(state.activePlayerNumber),
+      isBonusTurn: Boolean(state.isBonusTurn),
+    };
+  }
+
+  isSameOnlineTurn(state, key) {
+    return Boolean(state && key && state.status === 'playing' &&
+      state.activePlayerNumber === this.onlinePlayerNumber &&
+      Number(state.turnIndex) === key.turnIndex &&
+      Number(state.activePlayerNumber) === key.activePlayerNumber &&
+      Boolean(state.isBonusTurn) === key.isBonusTurn);
+  }
+
+  queueOnlineSubmit(state = this.onlineState) {
+    if (!state || state.status !== 'playing' || state.activePlayerNumber !== this.onlinePlayerNumber) return false;
+    this.pendingOnlineSubmitKey = this.onlineTurnKey(state);
+    return true;
+  }
+
+  processPendingOnlineSubmit(state) {
+    const key = this.pendingOnlineSubmitKey;
+    if (!key) return;
+    if (!this.isSameOnlineTurn(state, key)) {
+      this.pendingOnlineSubmitKey = null;
+      return;
+    }
+    if (state.pendingEffect) return;
+    this.pendingOnlineSubmitKey = null;
+    this.time.delayedCall(0, () => {
+      const current = this.onlineState;
+      if (!this.gameOver && this.isSameOnlineTurn(current, key)) this.submit(false, false, true);
     });
   }
 
@@ -1982,15 +2334,14 @@ class GameScene extends Phaser.Scene {
 
   applyOnlineState(state, initial = false) {
     if (!this.online || !state) return;
-    const previousOnlineState = this.onlineState;
     // The server snapshot contains the canonical owner and deadline for the new turn.
     this.onlineSubmitPending = false;
     const oldInventorySignature = this.onlineInventorySignature || '';
     const previousOnlineStars = this.onlineState && this.onlineState.me &&
       Number.isFinite(Number(this.onlineState.me.stars))
       ? Number(this.onlineState.me.stars) : null;
+    const previousOnlineState = this.onlineState;
     this.onlineState = state;
-    if (this.memes) this.memes.onlineState(previousOnlineState, state);
     this.scores = Array.isArray(state.scores) ? state.scores.slice() : [0, 0];
     this.activePlayer = Number.isInteger(state.activeSide) ? state.activeSide : 0;
     this.turnNumber = Number.isInteger(state.turnIndex) ? state.turnIndex : 0;
@@ -2022,6 +2373,17 @@ class GameScene extends Phaser.Scene {
     }
 
     const previous = this.onlineTilesById || new Map();
+    const canAnimateOnlineCascade = Boolean(!initial && previousOnlineState &&
+      previousOnlineState.status === 'playing' && state.status === 'playing' &&
+      Array.isArray(previousOnlineState.tiles) && Array.isArray(state.tiles));
+    const newCountByColumn = new Map();
+    if (canAnimateOnlineCascade) {
+      for (const viewTile of (state.tiles || [])) {
+        if (!previous.has(viewTile.id) && !viewTile.moving && Number.isInteger(viewTile.col)) {
+          newCountByColumn.set(viewTile.col, (newCountByColumn.get(viewTile.col) || 0) + 1);
+        }
+      }
+    }
     const nextById = new Map();
     const nextGrid = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
     for (const viewTile of (state.tiles || [])) {
@@ -2030,6 +2392,16 @@ class GameScene extends Phaser.Scene {
       const targetY = this.cellY(viewTile.row);
       if (!tile || !tile.active) {
         tile = this.createOnlineTile(viewTile);
+        const spawnCount = newCountByColumn.get(viewTile.col) || 0;
+        if (canAnimateOnlineCascade && spawnCount > 0 && !viewTile.moving) {
+          // Match the local game: new tiles fall in from above the board and puff dust on landing.
+          tile.setPosition(targetX, this.cellY(viewTile.row - spawnCount));
+          const targetRow = viewTile.row;
+          tile.onlineCascadeTargetRow = targetRow;
+          this.fall(tile, targetY, 40 * Math.max(0, spawnCount - 1 - viewTile.row), true).then(() => {
+            if (tile.active && tile.onlineCascadeTargetRow === targetRow) delete tile.onlineCascadeTargetRow;
+          });
+        }
         if (viewTile.moving) {
           this.addShuffleOutline(tile);
           tile.shuffleBaseDepth = tile.depth;
@@ -2045,17 +2417,31 @@ class GameScene extends Phaser.Scene {
         } else {
           this.removeShuffleOutline(tile);
         }
-        if (Math.abs(tile.x - targetX) > 0.5 || Math.abs(tile.y - targetY) > 0.5) {
+        const stillFallingToSameRow = !viewTile.moving && tile.onlineCascadeTargetRow === viewTile.row;
+        if ((Math.abs(tile.x - targetX) > 0.5 || Math.abs(tile.y - targetY) > 0.5) && !stillFallingToSameRow) {
+          const cascadeFall = canAnimateOnlineCascade && !viewTile.moving &&
+            (newCountByColumn.get(viewTile.col) || 0) > 0 &&
+            Math.abs(tile.x - targetX) <= 0.5 && targetY > tile.y + 0.5;
+          delete tile.onlineCascadeTargetRow;
           this.tweens.killTweensOf(tile);
           if (tile.shuffleOutline) this.tweens.killTweensOf(tile.shuffleOutline);
-          const moveDuration = viewTile.moving && Number.isFinite(viewTile.movingUntil)
-            ? Math.max(0, viewTile.movingUntil - Date.now())
-            : (initial ? 0 : 240);
-          const movingTargets = tile.shuffleOutline ? [tile, tile.shuffleOutline] : [tile];
-          this.tweens.add({ targets: movingTargets, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
-          if (tile.ring) {
-            this.tweens.killTweensOf(tile.ring);
-            this.tweens.add({ targets: tile.ring, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
+          if (cascadeFall) {
+            // Existing tiles in a refilled column drop with the same bounce as the local cascade.
+            const targetRow = viewTile.row;
+            tile.onlineCascadeTargetRow = targetRow;
+            this.fall(tile, targetY, 0, false).then(() => {
+              if (tile.active && tile.onlineCascadeTargetRow === targetRow) delete tile.onlineCascadeTargetRow;
+            });
+          } else {
+            const moveDuration = viewTile.moving && Number.isFinite(viewTile.movingUntil)
+              ? Math.max(0, viewTile.movingUntil - Date.now())
+              : (initial ? 0 : 240);
+            const movingTargets = tile.shuffleOutline ? [tile, tile.shuffleOutline] : [tile];
+            this.tweens.add({ targets: movingTargets, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
+            if (tile.ring) {
+              this.tweens.killTweensOf(tile.ring);
+              this.tweens.add({ targets: tile.ring, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
+            }
           }
         }
         tile.row = viewTile.row;
@@ -2104,10 +2490,12 @@ class GameScene extends Phaser.Scene {
         oldInventorySignature !== (this.onlineInventorySignature || '')) {
       this.renderInventory();
     }
+    if (this.memes) this.memes.onlineState(previousOnlineState, state); // win / lose commentary from the server's turn changes
     if (state.status === 'finished' && !this.gameOver) {
       this.activePlayer = Number.isInteger(state.winnerSide) ? state.winnerSide : this.activePlayer;
       this.endGame('First to ' + state.targetScore + ' points wins.');
     }
+    this.processPendingOnlineSubmit(state);
   }
 
   // Draw the same cyan square used by local shuffle animation around server-moved tiles.
@@ -2145,8 +2533,10 @@ class GameScene extends Phaser.Scene {
     tile.baseScale = tile.scaleX;
     tile.flipChain = Promise.resolve();
     tile.setMask(this.boardMask);
-    tile.setInteractive({ useHandCursor: true });
-    tile.on('pointerdown', () => this.onTileTap(tile));
+    if (!this.spectator) {
+      tile.setInteractive({ useHandCursor: true });
+      tile.on('pointerdown', () => this.onTileTap(tile));
+    }
     return tile;
   }
 
@@ -2305,8 +2695,10 @@ class GameScene extends Phaser.Scene {
   // -------------------------------------------------------------- picking
   addRing(tile) {
     tile.ring = this.add.graphics({ x: tile.x, y: tile.y }).setDepth(12);
-    tile.ring.lineStyle(5, 0xffe066, 1);
-    tile.ring.strokeRoundedRect(-43, -43, 86, 86, 14);
+    const scale = TILE_SIZE / BASE_TILE_SIZE;
+    const ringSize = TILE_SIZE - 4 * scale;
+    tile.ring.lineStyle(5 * scale, 0xffe066, 1);
+    tile.ring.strokeRoundedRect(-ringSize / 2, -ringSize / 2, ringSize, ringSize, 14 * scale);
   }
 
   removeRing(tile) {
@@ -2324,16 +2716,14 @@ class GameScene extends Phaser.Scene {
     // menu is open. Tiles in the middle of a swap can't be tapped, and a human can't tap during the AI's turn.
     if (this.busy || this.turnEnding || this.gameOver || this.turnClock.expired() || !tile.active || tile.selected || tile.swapping || tile.faceUp) return; // a face-up tile can't be picked: a shape is only revealed by the player's own flip
     if (!fromAI && (this.panelOpen || this.isAITurn())) return;
-    if (!fromAI && this.memes) this.memes.noteActivity(); // human activity prevents idle-delay commentary
 
+    if (!fromAI && this.memes) this.memes.noteActivity(); // the human is taking part in this turn
     this.aiSee(tile, fromAI); // the AI sees every tile that gets flipped over (certainly its own, only partly the human's)
 
-    // A hazard flipped while other shapes are picked destroys them all (no reward); on its own it costs points.
+    // Hazard is a bomb in every mode: destroy it and every shape already picked.
+    // Only Play Alone loses one point; versus modes never lose points from Hazard.
     if (tile.shape === 'hazard') {
-      // Dummies do not count as shapes or penalties. In versus, Dummy + Hazard destroys both for free;
-      // only a previously picked real shape makes the Hazard a penalized blast.
-      if (!this.modeCfg.twoPlayers || this.selection.length > 0 || this.dummySelection.length > 0) this.hazardBlast(tile);
-      else this.hazardHit(tile);
+      this.hazardBlast(tile);
       return;
     }
 
@@ -2347,9 +2737,9 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
-    // Cancel + one or more Dummies is a neutral cancelled attempt: reveal Cancel, then flip both
-    // it and the Dummies down without awarding or deducting points.
-    if (tile.shape === 'cancel' && this.selection.length === 0 && this.dummySelection.length > 0) {
+    // Cancel picked first cancels the current selection (including any Dummies), flips back down,
+    // and never scores or subtracts points. It does not consume the turn.
+    if (tile.shape === 'cancel' && this.selection.length === 0) {
       this.busy = true;
       tile.selected = true;
       this.selection.push(tile);
@@ -2389,53 +2779,43 @@ class GameScene extends Phaser.Scene {
     this.recordAttempt(0);
     if (!this.modeCfg.twoPlayers) {
       this.breakLocalMatchStreak();
-      if (this.memes && !this.gameOver) this.memes.attemptResult('lose');
+      if (this.memes && !this.gameOver) this.memes.attemptResult('lose'); // Play Alone has no turn hand-over to report this
     }
     // In versus modes a wrong pair ends the turn immediately. Play Alone remains continuous.
     if (this.modeCfg.twoPlayers && !this.gameOver) this.endTurn('mismatch');
   }
 
-  // A hazard (skull) flipped after other shapes are picked: it costs HAZARD_BLAST_PENALTY point(s) (two-player
-  // modes may go below 0, see TWO_PLAYER_SCORE_FLOOR) and the hazard and every picked tile are destroyed, with no reward. It never joins the
-  // selection. Like a submitted match it spends the turn: the board falls and refills, the new tiles are
-  // revealed and shuffled as usual, and play passes on. Play alone does not count it as an attempt.
+  // Hazards always detonate, destroying the bomb and all shapes/Dummies currently picked.
+  // Play Alone loses one point per explosion; versus modes receive no Hazard penalty.
   async hazardBlast(hazard) {
     this.busy = true;
-    this.cancelShuffles(); // the board is about to change: stop any shuffle and settle the swap in progress
-    const hadRealShapes = this.selection.length > 0;
+    this.cancelShuffles();
     const tiles = [...this.selection, ...this.dummySelection, hazard];
     this.selection = [];
     this.dummySelection = [];
     this.selectedShape = null;
-    hazard.selected = true; // nothing else may pick it while it is being destroyed
+    hazard.selected = true;
     await this.flipTile(hazard, true);
-    const lost = this.modeCfg.twoPlayers && hadRealShapes ? this.applyPenalty(HAZARD_BLAST_PENALTY) : 0; // Dummies alone never trigger the penalty
+    const lost = this.modeCfg.twoPlayers ? 0 : this.applyPenalty(HAZARD_BLAST_PENALTY);
     this.showToast('Hazard! It destroys everything you picked.\n' +
       (lost > 0 ? '−' + lost + ' point, no reward.' : 'No reward.'));
     this.tweens.add({ targets: hazard, angle: { from: -8, to: 8 }, duration: 70, yoyo: true, repeat: 3,
       onComplete: () => { if (hazard.active) hazard.setAngle(0); } });
     await this.sleep(900);
-    await Promise.all(tiles.map((t) => t.flipChain)); // let any flips finish
+    await Promise.all(tiles.map((tile) => tile.flipChain));
     await this.destroyTiles(tiles);
     await this.cascade();
     this.busy = false;
-    // A hazard is not an attempt: in Play Alone it costs nothing and does not increment the attempt statistic.
+    if (!this.modeCfg.twoPlayers && RULES.hasReachedScoreFloor(this.scores[0], ALONE_SCORE_FLOOR)) {
+      this.endGame('Your score reached ' + ALONE_SCORE_FLOOR + '.');
+      return;
+    }
     this.endTurn('hazard');
   }
 
-  // A hazard (skull) flipped first, with nothing picked: no damage. It is revealed, shakes and flips back, and
-  // the turn goes on. (Play alone does not count it as an attempt.)
+  // Legacy internal alias retained for any existing callback: a standalone Hazard also detonates.
   async hazardHit(tile) {
-    this.busy = true;
-    await this.flipTile(tile, true);
-    this.showToast('Hazard! Nothing was picked, so no damage.');
-    this.tweens.add({ targets: tile, angle: { from: -8, to: 8 }, duration: 70, yoyo: true, repeat: 3,
-      onComplete: () => { if (tile.active) tile.setAngle(0); } });
-    await this.sleep(900);
-    await this.resetSelection();
-    if (tile.active) await this.flipTile(tile, false);
-    this.busy = false;
-    // (a hazard is not an attempt: no penalty of any kind)
+    return this.hazardBlast(tile);
   }
 
   // Play alone: a wrong shape costs a point (a too-small submit is free). (Two-player modes keep failed attempts free.)
@@ -2474,15 +2854,25 @@ class GameScene extends Phaser.Scene {
   // -------------------------------------------------------------- submit
   async submit(fromAI = false, forced = false, queued = false) {
     if (this.online) {
+      const state = this.onlineState;
+      if (!forced && !fromAI && state && state.status === 'playing' &&
+          state.activePlayerNumber === this.onlinePlayerNumber && state.pendingEffect) {
+        const alreadyQueued = Boolean(this.pendingOnlineSubmitKey);
+        this.queueOnlineSubmit(state);
+        if (!alreadyQueued) this.showToast('Submit queued until the current move finishes.', 1800);
+        return;
+      }
       const sent = this.sendOnlineAction({ type: 'submit' });
       if (sent) {
+        this.pendingOnlineSubmitKey = null;
+        // Freeze the submitting player's display until the authoritative next-turn state arrives.
         this.onlineSubmitPending = true;
         this.turnClock.stop();
       }
       return;
     }
-    // Don't silently ignore Submit while a flip, hazard or other board animation is resolving.
-    // Freeze this player's clock and honour the request as soon as the same turn becomes idle.
+    // If Submit is tapped during a flip, hazard or other board animation, remember the request
+    // instead of silently ignoring it. The same turn will be submitted when it becomes idle.
     if (this.turnEnding || this.gameOver || (this.turnClock.expired() && !forced && !queued)) return;
     if (this.busy) {
       if (!forced && !fromAI && !queued && this.modeCfg.twoPlayers && !this.isAITurn()) {
@@ -2520,7 +2910,16 @@ class GameScene extends Phaser.Scene {
       } else {
         this.recordAttempt();
         this.breakLocalMatchStreak();
+        if (this.memes && !this.gameOver) this.memes.attemptResult('lose'); // too few shapes in Play Alone
       }
+      return;
+    }
+
+    const matchShape = tiles[0] && tiles[0].shape;
+    if (!MATCH_SHAPE_KEYS.includes(matchShape) || !tiles.every((tile) => tile.shape === matchShape)) {
+      // Safety net: Cancel/Hazard/Dummy can never be submitted as a scoring match.
+      await this.resetSelection();
+      this.busy = false;
       return;
     }
 
@@ -2594,6 +2993,7 @@ class GameScene extends Phaser.Scene {
   endGame(reason) {
     if (this.gameOver) return;
     this.gameOver = true;
+    if (this.memes) this.memes.hide(); // the end screen covers the canvas; a picture on top of it would hide the buttons
     if (this.inventoryOpen) this.closeInventory();
     this.closePanel();
     const text = (y, message, size, color = '#ffffff') => this.add.text(GAME_WIDTH / 2, y, message, {
@@ -2682,15 +3082,17 @@ class GameScene extends Phaser.Scene {
   // shape so the board never becomes unplayable.
   ensureMatchPossible(fresh) {
     const counts = {};
-    for (const row of this.tiles) for (const t of row) if (t && SHAPE_KEYS.includes(t.shape)) counts[t.shape] = (counts[t.shape] || 0) + 1;
-    if (Object.values(counts).some((n) => n >= MIN_MATCH)) return;
-    const best = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || SHAPE_KEYS[0];
+    for (const row of this.tiles) for (const tile of row) {
+      if (tile && MATCH_SHAPE_KEYS.includes(tile.shape)) counts[tile.shape] = (counts[tile.shape] || 0) + 1;
+    }
+    if (Object.values(counts).some((count) => count >= MIN_MATCH)) return;
+    const best = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || MATCH_SHAPE_KEYS[0];
     let need = MIN_MATCH - (counts[best] || 0);
     for (const tile of fresh) {
       if (need <= 0) break;
-      if (tile.shape === best || tile.shape === 'hazard') continue; // never turn a hazard into a shape: default hazard chance is 10%
+      if (tile.shape === best || ['hazard', 'dummy', 'cancel'].includes(tile.shape)) continue;
       tile.shape = best;
-      tile.setTexture('shape_' + best); // still face-up at this point
+      tile.setTexture('shape_' + best);
       need--;
     }
   }
@@ -2709,7 +3111,8 @@ class GameScene extends Phaser.Scene {
   // Dust cloud at the bottom edge of a tile that just landed.
   spawnDust(x, tileY) {
     const puff = this.add.sprite(x, tileY + TILE_SIZE / 2, 'dust', 'u0').setOrigin(0.5, 1).setDepth(13);
-    puff.setScale(DUST_SCALE);
+    // Scale landing dust with the tile, just like the tile-destruction animation.
+    puff.setScale(DUST_SCALE * (TILE_SIZE / BASE_TILE_SIZE));
     puff.play('dustPuff');
     puff.once('animationcomplete', () => puff.destroy());
   }
@@ -2753,7 +3156,7 @@ class GameScene extends Phaser.Scene {
     const groups = {};
     for (const [tile, shape] of this.aiMemory) {
       if (!tile.active) { this.aiMemory.delete(tile); continue; }
-      if (shape === 'dummy' || shape === 'hazard' || !this.aiCanTap(tile)) continue;
+      if (shape === 'dummy' || shape === 'hazard' || shape === 'cancel' || !this.aiCanTap(tile)) continue;
       (groups[shape] = groups[shape] || []).push(tile);
     }
     return Object.values(groups);
@@ -2775,7 +3178,7 @@ class GameScene extends Phaser.Scene {
       for (const tile of row) {
         if (!tile || !this.aiCanTap(tile)) continue;
         const remembered = this.aiMemory.get(tile);
-        if (remembered === 'dummy' || remembered === 'hazard') continue;
+        if (remembered === 'dummy' || remembered === 'hazard' || remembered === 'cancel') continue;
         if (shape && remembered && remembered !== shape) continue;
         pool.push(tile);
       }
@@ -2843,8 +3246,8 @@ class GameScene extends Phaser.Scene {
     const alive = () => turnId === this.turnId && !this.turnEnding &&
       !this.timeoutHandling && !this.gameOver && !this.turnClock.expired();
     await this.sleep(this.ai.thinkMs);
-    // Keep participating until the AI submits a match, makes a genuine mismatch, or its clock expires.
-    // Neutral first-pick hazards and Dummy-only attempts do not prematurely consume its turn.
+    // Keep participating until a match, mismatch, Hazard explosion, or clock expiry.
+    // Cancel-first and Dummy-only picks never award points.
     while (alive()) {
       await this.aiIdle(alive);
       if (!alive()) return;
@@ -2856,19 +3259,20 @@ class GameScene extends Phaser.Scene {
   }
 }
 
-// The game starts immediately (the font and art load behind a progress bar), instead of waiting for the font first.
+// Start Phaser once the clean loading-bar image is ready. The HTML placeholder remains visible
+// while its checkerboard background is removed, so both loading screens use the same clean artwork.
 window.ShapeyLoadingBar.ready.then(() => {
   window.game = new Phaser.Game({
-  type: Phaser.AUTO,
-  parent: 'game',
-  width: GAME_WIDTH,
-  height: GAME_HEIGHT,
-  backgroundColor: '#2b1a0f',
-  banner: false,
-  scale: {
-    mode: Phaser.Scale.FIT,
-    autoCenter: Phaser.Scale.CENTER_BOTH,
-  },
-  scene: [BootScene, LoadScene, MenuScene, GameScene],
+    type: Phaser.AUTO,
+    parent: 'game',
+    width: GAME_WIDTH,
+    height: GAME_HEIGHT,
+    backgroundColor: '#2b1a0f',
+    banner: false,
+    scale: {
+      mode: Phaser.Scale.FIT,
+      autoCenter: Phaser.Scale.CENTER_BOTH,
+    },
+    scene: [BootScene, LoadScene, MenuScene, GameScene],
   });
 });

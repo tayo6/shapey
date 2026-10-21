@@ -10,7 +10,7 @@ This test environment is separate from production.
 - **Production Worker:** `shapey-multiplayer` — unchanged
 - **Production Durable Object namespace:** `shapey-multiplayer_Room` — unchanged
 
-The staging game page is an additional path on the site's static hosting. The existing home page and `src/main.js` are not changed; only `staging/main.js` points to the staging Worker. The staging Worker has its own namespace and does not share game-room storage with production.
+The staging game page is an additional path on the site's static hosting and keeps its own copy of the game code in `staging/main.js`. The home page (`src/main.js`) now runs the same game and also connects to this Worker, so both pages share one backend. The Worker has its own namespace and does not share game-room storage with the old production Worker, which the game no longer uses.
 
 ## What to test
 
@@ -32,4 +32,4 @@ npx wrangler@4.151.0 deploy --config wrangler.staging.jsonc
 
 Do not deploy `wrangler.jsonc` for this task. It names the live `shapey-multiplayer` Worker and its existing `ROOMS` namespace. The staging config uses a separate Worker name and has its own new `v1` SQLite migration.
 
-The staging Worker is not a production release. Use it only for testing; it may create isolated test rooms and staging storage.
+This Worker now also serves the live game, so treat changes to it as production changes: redeploy it only with the staging config above, and test on the staging game page first. Its name still says "staging" and can be migrated to a production-named Worker later.
