@@ -189,7 +189,7 @@ test('a human fires exactly one win/lose meme per four attempts, from the matchi
   const outcomes = ['match', 'mismatch', 'match', 'timeout', 'hazard', 'match', 'submit', 'match', 'mismatch', 'timeout', 'hazard', 'match'];
   outcomes.forEach((reason) => playTurn(ctx, reason));
   const fired = ctx.player.log;
-  assert.equal(fired.length, 3, 'one per window of three');
+  assert.equal(fired.length, 3, 'one per window of four');
   // The attempts inside each window decide which pool: reconstruct which attempt fired from the url.
   fired.forEach(([, item], index) => {
     const windowOutcomes = outcomes.slice(index * 4, index * 4 + 4).map((r) => (r === 'match' ? 'win' : 'lose'));
