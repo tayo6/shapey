@@ -1220,24 +1220,46 @@ class GameScene extends Phaser.Scene {
 
   // Both clocks are redrawn from their own deadlines, so they can never hold each other up.
   refreshClocks() {
+    const now = Date.now();
+    const openingStudyLeft = this.online && this.onlineState
+      ? Math.max(0, Number(this.onlineState.reviewEndsAt) - now)
+      : Number.isFinite(this.openingReviewEndsAt)
+        ? Math.max(0, this.openingReviewEndsAt - now) : 0;
+    const openingStudy = this.online
+      ? Boolean(this.onlineState && this.onlineState.status === 'study')
+      : openingStudyLeft > 0;
     const turnLeft = this.modeCfg.turnClock
       ? formatClock(Math.min(this.currentTurnDurationMs || this.turnDurationMs, this.turnClock.remaining())) : '';
-    if (this.modeCfg.turnClock) this.setClockText(this.timerText, turnLeft);
+
+    // Every mode shows the opening reveal countdown on the timer plank. Once it ends,
+    // timed modes switch to the active player's pick countdown; Play Alone returns to Tries.
+    if (openingStudy) {
+      this.timerText.setFontSize(46);
+      this.setClockText(this.timerText, formatClock(openingStudyLeft));
+    } else if (this.modeCfg.turnClock) {
+      this.timerText.setFontSize(46);
+      this.setClockText(this.timerText, turnLeft);
+    } else {
+      this.timerText.setFontSize(23);
+      this.setClockText(this.timerText, 'TRIES: ' + this.totalAttempts);
+    }
 
     const revealLeft = this.online && this.onlineState
-      ? Math.max(0, ...((this.onlineState.reveals || []).map((batch) => batch.endsAt - Date.now())),
+      ? Math.max(0, ...((this.onlineState.reveals || []).map((batch) => batch.endsAt - now)),
           this.onlineState.status === 'study' && Number.isFinite(this.onlineState.reviewEndsAt)
-            ? this.onlineState.reviewEndsAt - Date.now() : 0)
+            ? this.onlineState.reviewEndsAt - now : 0)
       : this.reveals.remaining();
     const onlineShuffling = Boolean(this.online && this.onlineState && this.onlineState.shuffling);
     this.revealText.setVisible(revealLeft > 0 || this.shuffling > 0 || onlineShuffling);
-    // Play alone has no countdown at all: the cue stays, the numbers go.
-    if (revealLeft > 0) this.setClockText(this.revealText, this.modeCfg.turnClock ? 'MEMORIZE ' + formatClock(revealLeft) : 'MEMORIZE');
+    // The spawned-tile reveal has a visible numeric countdown in every mode, including Play Alone.
+    if (revealLeft > 0) this.setClockText(this.revealText, 'MEMORIZE ' + formatClock(revealLeft));
     else if (this.shuffling > 0 || onlineShuffling) this.setClockText(this.revealText, 'SHUFFLING');
 
-    // The shop covers the header, so it shows the turn clock too: opening it never stops the clock.
+    // The shop covers the header, so it shows the same current timer without pausing it.
     if (this.inventoryTimerText && this.inventoryTimerText.active) {
-      this.setClockText(this.inventoryTimerText, 'TURN\n' + turnLeft);
+      const shopClock = openingStudy ? 'REVEAL\n' + formatClock(openingStudyLeft)
+        : this.modeCfg.turnClock ? 'TURN\n' + turnLeft : 'TRIES\n' + this.totalAttempts;
+      this.setClockText(this.inventoryTimerText, shopClock);
     }
   }
 
