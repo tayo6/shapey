@@ -1,7 +1,7 @@
-// Shapey staging - event-based meme commentary.
+// Shapey - event-based meme commentary.
 //
 // What it does (human players only; the AI never triggers or receives a meme):
-//   * Every human player has an attempt counter. In every window of 3 attempts one random attempt
+//   * Every human player has an attempt counter. In every window of 4 attempts one random attempt
 //     fires a meme: a LOSE meme when that attempt lost, a WIN meme when it won. Each meme is one
 //     random file picked from audio/<win|lose> or gifs/<win|lose>.
 //   * Tag: when a team wins, a file from gifs/tag_win is shown at an interval of 4 attempts per player
