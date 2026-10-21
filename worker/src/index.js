@@ -6,7 +6,7 @@ import {
 } from "./protocol.js";
 import {
   createGameState, gameViewForPlayer, gameViewForSpectator, applyGameAction,
-  advanceGameByTime, nextGameDeadline, SHAPE_KEYS
+  advanceGameByTime, nextGameDeadline, SHAPE_KEYS, audiencePollsRemaining
 } from "./game-engine.js";
 
 const MAX_SPECTATORS_PER_ROOM = 100;
@@ -986,11 +986,21 @@ export class Room extends DurableObject {
       this.broadcastAudiencePollState(existing);
       return;
     }
+    const playerData = game.playerData && game.playerData[String(attachment.playerNumber)];
+    if (!playerData) {
+      ws.send(JSON.stringify({ type: "error", message: "Player data is unavailable for this match." }));
+      return;
+    }
+    if (audiencePollsRemaining(playerData) <= 0) {
+      ws.send(JSON.stringify({ type: "error", message: "You have used all 3 audience polls for this game." }));
+      return;
+    }
     const poll = await this.createAudiencePoll(game, attachment.playerNumber, now);
     if (!poll) {
       ws.send(JSON.stringify({ type: "error", message: "Pick one first shape before asking the audience to find a match." }));
       return;
     }
+    playerData.audiencePollsUsed = (Number.isInteger(playerData.audiencePollsUsed) ? playerData.audiencePollsUsed : 0) + 1;
     await this.publishAudiencePoll(poll, game);
   }
 
