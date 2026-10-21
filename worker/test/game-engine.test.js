@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  INITIAL_REVIEW_MS, TURN_MS, TAG_TURN_MS, GRID_ROWS, GRID_COLS, BOARD_SIZES, SHAPE_KEYS,
+  INITIAL_REVIEW_MS, TURN_MS, TAG_TURN_MS, GRID_ROWS, GRID_COLS, BOARD_SIZES, SHAPE_KEYS, MATCH_SHAPE_KEYS,
   createGameState, gameViewForPlayer, gameViewForSpectator, applyGameAction, advanceGameByTime,
-  nextGameDeadline, scoreForMatch, turnDurationForMode
+  nextGameDeadline, scoreForMatch, turnDurationForMode, audiencePollsRemaining
 } from "../src/game-engine.js";
 
 const NOW = 1_000_000;
@@ -62,9 +62,9 @@ test("creates exact 5x5, 6x6 and 7x7 boards with playable matching groups", () =
 
     const counts = {};
     for (const tile of state.tiles) {
-      if (SHAPE_KEYS.includes(tile.shape)) counts[tile.shape] = (counts[tile.shape] || 0) + 1;
+      if (MATCH_SHAPE_KEYS.includes(tile.shape)) counts[tile.shape] = (counts[tile.shape] || 0) + 1;
     }
-    const guaranteedCount = Math.min(SHAPE_KEYS.length, Math.floor((total - Math.round(total * 0.1)) / 3));
+    const guaranteedCount = Math.min(MATCH_SHAPE_KEYS.length, Math.floor((total - Math.round(total * 0.1)) / 3));
     assert.ok(Object.values(counts).filter((count) => count >= 3).length >= guaranteedCount);
   }
   assert.throws(() => createGameState({
@@ -284,6 +284,57 @@ test("a timeout with no valid match passes the turn and breaks the streak", () =
   advanceGameByTime(state, state.turnEndsAt, steadyRandom);
   assert.equal(state.activePlayerNumber, 2);
   assert.equal(state.playerData["1"].streak, 0);
+});
+
+test("Cancel is a neutral first pick, including when a Dummy was picked first", () => {
+  let state = startPlaying();
+  state.tiles.find((tile) => tile.id === "t1").shape = "cancel";
+
+  let result = act(state, 1, { type: "pick", tileId: "t1" });
+  assert.equal(result.accepted, true, result.error);
+  state = result.state;
+  assert.equal(state.pendingEffect.type, "cancel-dummy");
+  advanceGameByTime(state, NOW + INITIAL_REVIEW_MS + 352, steadyRandom);
+  assert.equal(state.activePlayerNumber, 1);
+  assert.deepEqual(state.scores, [0, 0]);
+  assert.equal(state.selectedTileIds.length, 0);
+  assert.equal(state.tiles.find((tile) => tile.id === "t1").faceUp, false);
+
+  state.tiles.find((tile) => tile.id === "t2").shape = "dummy";
+  state.tiles.find((tile) => tile.id === "t3").shape = "cancel";
+  result = act(state, 1, { type: "pick", tileId: "t2" }, INITIAL_REVIEW_MS + 400);
+  assert.equal(result.accepted, true, result.error);
+  state = result.state;
+  result = act(state, 1, { type: "pick", tileId: "t3" }, INITIAL_REVIEW_MS + 401);
+  assert.equal(result.accepted, true, result.error);
+  state = result.state;
+  assert.equal(state.pendingEffect.type, "cancel-dummy");
+  advanceGameByTime(state, NOW + INITIAL_REVIEW_MS + 752, steadyRandom);
+  assert.equal(state.activePlayerNumber, 1);
+  assert.deepEqual(state.scores, [0, 0]);
+  assert.equal(state.selectedTileIds.length, 0);
+  assert.equal(state.dummyTileIds.length, 0);
+  assert.equal(state.tiles.find((tile) => tile.id === "t2").faceUp, false);
+  assert.equal(state.tiles.find((tile) => tile.id === "t3").faceUp, false);
+});
+
+
+test("audience polls are limited to three per player and exposed in player snapshots", () => {
+  const state = startPlaying("tag");
+  for (const playerNumber of [1, 2, 3, 4]) {
+    const data = state.playerData[String(playerNumber)];
+    assert.equal(data.audiencePollsUsed, 0);
+    assert.equal(audiencePollsRemaining(data), 3);
+    assert.equal(gameViewForPlayer(state, playerNumber).me.audiencePollsUsed, 0);
+  }
+  const data = state.playerData["1"];
+  data.audiencePollsUsed = 1;
+  assert.equal(audiencePollsRemaining(data), 2);
+  assert.equal(gameViewForPlayer(state, 1).me.audiencePollsUsed, 1);
+  data.audiencePollsUsed = 3;
+  assert.equal(audiencePollsRemaining(data), 0);
+  data.audiencePollsUsed = 9;
+  assert.equal(audiencePollsRemaining(data), 0);
 });
 
 test("scores retain the existing 3/4/5+ scoring table", () => {

@@ -19,9 +19,16 @@ export const SHAPE_KEYS = Object.freeze([
   "cancel", "capsule", "circle", "cross", "divide", "corner", "marked",
   "pointer", "shield", "sphere", "square", "star", "x"
 ]);
+export const MATCH_SHAPE_KEYS = Object.freeze(SHAPE_KEYS.filter((shape) => shape !== "cancel"));
 
 const MATCH_SCORES = Object.freeze({ 3: 1, 4: 2 });
 const ITEM_PRICES = Object.freeze({ extraTime: 3, doublePlay: 4 });
+export const MAX_AUDIENCE_POLLS_PER_PLAYER = 3;
+export function audiencePollsRemaining(playerData) {
+  const used = Number.isInteger(playerData && playerData.audiencePollsUsed) && playerData.audiencePollsUsed >= 0
+    ? playerData.audiencePollsUsed : 0;
+  return Math.max(0, MAX_AUDIENCE_POLLS_PER_PLAYER - used);
+}
 function randomIndex(length, rng) {
   return Math.min(length - 1, Math.floor(rng() * length));
 }
@@ -59,12 +66,12 @@ export function scoreForMatch(count) {
 }
 
 function makeStartingBoard(rng, boardSize) {
-  // Choose as many complete three-of-a-kind groups as the selected square board can fit.
-  // 5×5 gets seven guaranteed groups, 6×6 gets ten, and 7×7 keeps all thirteen.
+  // Guarantee matchable three-of-a-kind groups; Cancel is a neutral special tile, not a scoring shape.
+  // 5×5 gets seven groups, 6×6 gets ten, and 7×7 gets up to twelve matchable groups.
   const totalTiles = boardSize * boardSize;
   const wantedHazards = Math.round(totalTiles * 0.1);
-  const guaranteedShapeCount = Math.min(SHAPE_KEYS.length, Math.floor((totalTiles - wantedHazards) / 3));
-  const startingShapes = shuffled(SHAPE_KEYS, rng).slice(0, guaranteedShapeCount);
+  const guaranteedShapeCount = Math.min(MATCH_SHAPE_KEYS.length, Math.floor((totalTiles - wantedHazards) / 3));
+  const startingShapes = shuffled(MATCH_SHAPE_KEYS, rng).slice(0, guaranteedShapeCount);
   const shapes = [];
   for (const shape of startingShapes) shapes.push(shape, shape, shape);
   const hazardCount = Math.min(totalTiles - shapes.length, wantedHazards);
@@ -86,6 +93,7 @@ function makeStartingBoard(rng, boardSize) {
 function newPlayerData() {
   return {
     stars: 1,
+    audiencePollsUsed: 0,
     streak: 0,
     lastRewardedStreak: 0,
     inventory: { audiencePick: 1, extraTime: 0, doublePlay: 0, scoreStrike: 0, cancelCounter: 0 },
@@ -261,14 +269,14 @@ function stopShuffles(state) {
 function ensureMatchPossible(state, freshTiles, rng) {
   const counts = {};
   for (const tile of state.tiles) {
-    if (SHAPE_KEYS.includes(tile.shape)) counts[tile.shape] = (counts[tile.shape] || 0) + 1;
+    if (MATCH_SHAPE_KEYS.includes(tile.shape)) counts[tile.shape] = (counts[tile.shape] || 0) + 1;
   }
   if (Object.values(counts).some((count) => count >= MIN_MATCH)) return;
-  const best = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || pick(SHAPE_KEYS, rng);
+  const best = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || pick(MATCH_SHAPE_KEYS, rng);
   let needed = MIN_MATCH - (counts[best] || 0);
   for (const tile of freshTiles) {
     if (needed <= 0) break;
-    if (tile.shape === "hazard" || tile.shape === "dummy" || tile.shape === best) continue;
+    if (["hazard", "dummy", "cancel"].includes(tile.shape) || tile.shape === best) continue;
     tile.shape = best;
     needed--;
   }
@@ -339,7 +347,7 @@ function resolveSelectedMatch(state, now, rng) {
   const selected = state.selectedTileIds.map((id) => tileById(state, id)).filter(Boolean);
   const shape = state.selectedShape;
   const valid = selected.length >= MIN_MATCH && shape !== null &&
-    selected.every((tile) => tile.shape === shape && SHAPE_KEYS.includes(tile.shape));
+    selected.every((tile) => tile.shape === shape && MATCH_SHAPE_KEYS.includes(tile.shape));
   if (!valid) {
     clearSelection(state, true);
     endTurn(state, now, { matched: false });
@@ -490,7 +498,7 @@ function applyPick(state, playerNumber, tileId, now, rng) {
     return;
   }
 
-  if (tile.shape === "cancel" && state.selectedTileIds.length === 0 && state.dummyTileIds.length > 0) {
+  if (tile.shape === "cancel" && state.selectedTileIds.length === 0) {
     tile.selected = true;
     state.selectedTileIds.push(tile.id);
     state.selectedShape = tile.shape;
