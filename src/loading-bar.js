@@ -151,8 +151,8 @@
     await showImage(fallbackUrl, fallback.naturalWidth, fallback.naturalHeight);
 
     // Do not hold the game boot screen hostage while removing the checkerboard baked into the JPEG.
-    window.ShapeyLoadingBar.cleaning = (async () => {
-      try {
+      const clean = async () => {
+        try {
         const source = await loadImage(sourceUrl);
         const clean = cleanAndCrop(source);
         const url = clean.canvas.toDataURL('image/webp', 0.95);
@@ -171,11 +171,17 @@
           game.textures.get('loadRect').refresh();
         }
         return { url, width: clean.width, height: clean.height, canvas };
-      } catch (error) {
-        console.warn('Could not clean the loading-bar source; keeping the fast fallback.', error);
-        return { url: fallbackUrl, width: canvas.width, height: canvas.height, canvas, fallback: true };
-      }
-    })();
+        } catch (error) {
+          console.warn('Could not clean the loading-bar source; keeping the fast fallback.', error);
+          return { url: fallbackUrl, width: canvas.width, height: canvas.height, canvas, fallback: true };
+        }
+      };
+      // Let the browser paint the visible placeholder and let Phaser begin before the pixel cleanup runs.
+      window.ShapeyLoadingBar.cleaning = new Promise((resolve) => {
+        const schedule = () => window.setTimeout(async () => resolve(await clean()), 0);
+        if (window.requestAnimationFrame) window.requestAnimationFrame(schedule);
+        else schedule();
+      });
 
     return { url: fallbackUrl, width: fallback.naturalWidth, height: fallback.naturalHeight, canvas, fallback: true };
   })();
