@@ -97,8 +97,8 @@ test('score targets are fixed by mode', () => {
 
 test('mode navigation only exposes the actions allowed by each mode', () => {
   assert.deepEqual(rules.navigationForMode('alone'), ['settings', 'submit']);
-  assert.deepEqual(rules.navigationForMode('ai'), ['settings', 'submit', 'inventory']);
-  assert.deepEqual(rules.navigationForMode('pvp'), ['settings', 'submit', 'inventory']);
+  assert.deepEqual(rules.navigationForMode('ai'), ['settings', 'submit', 'polls', 'inventory']);
+  assert.deepEqual(rules.navigationForMode('pvp'), ['settings', 'submit', 'polls', 'inventory']);
   assert.deepEqual(rules.navigationForMode('tag'), ['settings', 'submit', 'polls', 'inventory']);
 });
 

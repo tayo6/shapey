@@ -1544,7 +1544,7 @@ class GameScene extends Phaser.Scene {
       polls: 'btnPolls',
       inventory: 'btnInventory',
     };
-    // Which icons each mode gets is decided in src/rules.js (only Tag has Polls; Play Alone has no Inventory).
+    // Which icons each mode gets is decided in src/rules.js (Polls in every mode but Play Alone, which has no Inventory either).
     const actions = RULES.navigationForMode(this.mode);
     // Keep each mode's icons centred and remove controls that mode does not support.
     const positions = actions.length === 2 ? [250, 470]
@@ -1572,12 +1572,13 @@ class GameScene extends Phaser.Scene {
     settings.setInteractive({ useHandCursor: true });
     settings.on('pointerdown', () => this.openPanel());
 
-    // Only Tag exposes polls: a team can ask the audience to choose a hidden tile directly on the shared board.
+    // Player vs AI, Player 1 vs Player 2 and Tag expose polls: against the AI it is a practice audience; online the
+    // audience chooses a hidden tile directly on the shared board. Play Alone has no polls.
     const polls = this.buttons.btnPolls;
     if (polls) {
       polls.setInteractive({ useHandCursor: true });
       polls.on('pointerdown', () => {
-        if (this.modeCfg.teams && !this.panelOpen && !this.inventoryOpen) this.showAudiencePoll();
+        if (this.mode !== 'alone' && !this.panelOpen && !this.inventoryOpen) this.showAudiencePoll();
       });
     }
 
@@ -2042,11 +2043,21 @@ class GameScene extends Phaser.Scene {
   // Online poll, modelled on "Ask the Audience": while the audience votes the contestant sees the
   // lettered options and a countdown only; the percentages are revealed when voting closes.
   // Only the team that opened the poll sees it, so the other team never sees the audience's advice.
+  // Online sides: in Player 1 vs Player 2 each player is their own side; in Tag, Players 1-2 are Team 1 and
+  // Players 3-4 are Team 2. Mirrors sideForPlayer() in worker/src/game-engine.js.
+  onlineSideForPlayer(playerNumber) {
+    const number = Number(playerNumber);
+    const mode = (this.onlineState && this.onlineState.mode) || this.onlineMode || this.mode;
+    if (!Number.isInteger(number) || number < 1) return null;
+    if (mode === 'tag') return number <= 2 ? 0 : number <= 4 ? 1 : null;
+    return number === 1 ? 0 : number === 2 ? 1 : null;
+  }
+
   renderOnlineAudiencePoll(poll) {
     if (!poll || this.gameOver) { this.closeAudiencePoll(); return; }
-    const mySide = this.onlinePlayerNumber ? (this.onlinePlayerNumber <= 2 ? 0 : 1) : null;
-    const pollSide = Number(poll.startedByPlayer) <= 2 ? 0 : 1;
-    if (mySide === null || mySide !== pollSide) { this.closeAudiencePoll(); return; }
+    const mySide = this.onlineSideForPlayer(this.onlinePlayerNumber);
+    const pollSide = this.onlineSideForPlayer(poll.startedByPlayer);
+    if (mySide === null || pollSide === null || mySide !== pollSide) { this.closeAudiencePoll(); return; }
     const key = poll.id + ':' + (poll.closed ? 'closed' : 'open');
     if (this.dismissedPollKey === key) return; // the player closed this view; do not pop it up again
     if (this.pollShownKey === key && this.pollUI && this.pollUI.length) return; // nothing new to draw

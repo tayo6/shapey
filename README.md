@@ -13,4 +13,6 @@ Pick a mode on the opening menu:
 
 Hazard (skull) tiles have a 10% spawn chance in every mode. In Player vs AI, Player vs Player and Tag, a hazard picked first does no damage and flips back; picked after other shapes it costs 1 point and destroys itself and the shapes picked before it, with no reward. In Play alone a hazard never costs anything: it always destroys itself and any picked shapes.
 
+Audience polls: Player vs AI, Player 1 vs Player 2 and Tag have a **Polls** button, with 3 free polls per player per game (never bought with Stars). Against the AI the votes are a labelled practice audience; online they are live spectator votes. Play Alone has no polls.
+
 Online play (Player 1 vs Player 2 and Tag) uses the authoritative multiplayer Worker documented in `worker/STAGING.md`; the game at the home page now connects to that Worker. The earlier production Worker (`shapey-multiplayer`) is no longer used by the game. Before relying on online matches, test Player 1 vs Player 2 on two real devices and Tag on four. See `GAMEPLAY.md` for the rules and `DEVELOPER_GUIDE.md` for how the code is organised. Handy URL options for testing: `?mode=alone|ai|pvp|tag`, `?level=easy|pro` (with `?mode=ai`), `?review=3000`, `?reveal=2000`, `?swap=500`, `?turn=10000`, `?hazard=0.5` (values clamp to 0–1; invalid values use the 10% default).
