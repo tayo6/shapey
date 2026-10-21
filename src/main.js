@@ -1010,6 +1010,7 @@ class GameScene extends Phaser.Scene {
     this.panelUI = [];
     this.turnId = 0;                 // bumped on every turn so a stale AI loop can tell its turn is over
     this.pendingSubmitTurnId = null;  // don't discard Submit taps made during an animation
+    this.pendingOnlineSubmitKey = null;
     this.totalAttempts = 0;          // Play Alone statistic only; never a loss condition
     this.aiMemory = new Map();       // tile -> shape the AI believes it is
     this.aiRecall = this.ai.recall[0] + Math.random() * (this.ai.recall[1] - this.ai.recall[0]);
@@ -1774,8 +1775,15 @@ class GameScene extends Phaser.Scene {
   }
 
   renderOnlineAudiencePoll(poll) {
+    if (!poll || this.gameOver) { this.closeAudiencePoll(); return; }
+    const mySide = this.onlinePlayerNumber ? (this.onlinePlayerNumber <= 2 ? 0 : 1) : null;
+    const pollSide = Number(poll.startedByPlayer) <= 2 ? 0 : 1;
+    if (mySide === null || mySide !== pollSide) { this.closeAudiencePoll(); return; }
+    const key = poll.id + ':' + (poll.closed ? 'closed' : 'open');
+    if (this.dismissedPollKey === key) return; // the player closed this view; do not pop it up again
+    if (this.pollShownKey === key && this.pollUI && this.pollUI.length) return; // nothing new to draw
     this.closeAudiencePoll();
-    if (!poll || this.gameOver) return;
+    this.pollShownKey = key;
     this.pollUI = [];
     const add = (object) => {
       object.setDepth(250);
@@ -1786,40 +1794,68 @@ class GameScene extends Phaser.Scene {
       .setInteractive());
     add(this.add.rectangle(GAME_WIDTH / 2, 650, 640, 690, 0x4b2d17, 1)
       .setStrokeStyle(5, 0xd5ad72));
-    add(this.add.text(GAME_WIDTH / 2, 365, poll.closed ? 'AUDIENCE POLL RESULTS' : 'LIVE AUDIENCE PICK', {
-      fontFamily: FONT, fontSize: poll.closed ? '38px' : '44px', color: '#fff2c7',
+    add(this.add.text(GAME_WIDTH / 2, 365, poll.closed ? 'AUDIENCE RESULTS' : 'ASK THE AUDIENCE', {
+      fontFamily: FONT, fontSize: '42px', color: '#fff2c7',
       stroke: '#3a2112', strokeThickness: 8, align: 'center', wordWrap: { width: 590 },
     }).setOrigin(0.5));
-    const totalVotes = Number(poll.totalVotes) || 0;
-    add(this.add.text(GAME_WIDTH / 2, 420,
-      poll.closed ? 'POLL CLOSED · ' + totalVotes + ' VOTES'
-        : 'LIVE SPECTATOR VOTES · ' + totalVotes + ' VOTES', {
-        fontFamily: FONT, fontSize: '21px', color: '#ffe36e', align: 'center',
+
+    const options = Array.isArray(poll.options)
+      ? poll.options.filter((option) => option && typeof option.tileId === 'string') : [];
+    const counts = options.map((option) => Number((poll.counts || {})[option.tileId]) || 0);
+    const totalVotes = counts.reduce((sum, count) => sum + count, 0);
+    const best = Math.max(0, ...counts);
+    const secondsLeft = () => Math.max(0, Math.ceil(((Number(poll.endsAt) || 0) - Date.now()) / 1000));
+    const positionLabel = (option) => 'ROW ' + (Number(option.row) + 1) + ', COLUMN ' + (Number(option.col) + 1);
+    const subtitle = () => {
+      if (poll.closed) return totalVotes > 0
+        ? 'POLL CLOSED · ' + totalVotes + (totalVotes === 1 ? ' VOTE' : ' VOTES')
+        : 'NO VOTES WERE CAST';
+      const left = secondsLeft();
+      return left > 0 ? 'THE AUDIENCE IS VOTING ON THE BOARD · ' + left + 's' : 'COUNTING THE VOTES…';
+    };
+    const subtitleText = add(this.add.text(GAME_WIDTH / 2, 420, subtitle(), {
+      fontFamily: FONT, fontSize: '21px', color: '#ffe36e', align: 'center',
+      stroke: '#3a2112', strokeThickness: 4, wordWrap: { width: 570 },
+    }).setOrigin(0.5));
+    if (!poll.closed) {
+      this.pollTimer = this.time.addEvent({
+        delay: 250, loop: true,
+        callback: () => { if (subtitleText.active) subtitleText.setText(subtitle()); },
+      });
+      add(this.add.text(GAME_WIDTH / 2, 525,
+        'Spectators tap a face-down tile on the live board to vote.', {
+        fontFamily: FONT, fontSize: '21px', color: '#fff2c7', align: 'center',
+        stroke: '#3a2112', strokeThickness: 4, wordWrap: { width: 540 },
+      }).setOrigin(0.5));
+    } else if (totalVotes > 0) {
+      const leaders = options.filter((option, index) => counts[index] === best);
+      const labels = leaders.slice(0, 3).map(positionLabel);
+      add(this.add.text(GAME_WIDTH / 2, 500,
+        (leaders.length === 1 ? 'TOP BOARD PICK: ' : 'TOP BOARD PICKS: ') + labels.join(' · '), {
+        fontFamily: FONT, fontSize: '22px', color: '#ffe36e', align: 'center',
+        stroke: '#3a2112', strokeThickness: 4, wordWrap: { width: 560 },
+      }).setOrigin(0.5));
+      add(this.add.text(GAME_WIDTH / 2, 555,
+        'The audience chose from the full board.', {
+        fontFamily: FONT, fontSize: '19px', color: '#fff2c7', align: 'center',
+        stroke: '#3a2112', strokeThickness: 4, wordWrap: { width: 540 },
+      }).setOrigin(0.5));
+    } else if (poll.closed) {
+      add(this.add.text(GAME_WIDTH / 2, 510, 'No votes were cast this time.', {
+        fontFamily: FONT, fontSize: '22px', color: '#fff2c7', align: 'center',
         stroke: '#3a2112', strokeThickness: 4,
       }).setOrigin(0.5));
-    (poll.options || []).forEach((shape, index) => {
-      const y = 520 + index * 80;
-      const count = Number((poll.counts || {})[shape]) || 0;
-      const percent = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
-      add(this.add.text(78, y, String(shape).toUpperCase(), {
-        fontFamily: FONT, fontSize: '20px', color: '#fff2c7',
-        stroke: '#3a2112', strokeThickness: 4,
-      }).setOrigin(0, 0.5));
-      add(this.add.rectangle(270, y, 288, 24, 0x25180f, 1).setOrigin(0, 0.5));
-      add(this.add.rectangle(270, y, Math.max(3, 2.88 * percent), 18, 0xd7a849, 1).setOrigin(0, 0.5));
-      add(this.add.text(625, y, count + ' · ' + percent + '%', {
-        fontFamily: FONT, fontSize: '21px', color: '#ffffff',
-        stroke: '#3a2112', strokeThickness: 4, align: 'right',
-      }).setOrigin(1, 0.5));
-    });
+    }
     woodButton(this, GAME_WIDTH / 2, 885, 420, 82,
-      poll.closed ? 'CLOSE RESULTS' : 'CLOSE PANEL', 30,
-      () => this.closeAudiencePoll(), 252).forEach(add);
+      poll.closed ? 'CLOSE RESULTS' : 'HIDE', 30,
+      () => { this.dismissedPollKey = key; this.closeAudiencePoll(); }, 252).forEach(add);
   }
 
   closeAudiencePoll() {
+    if (this.pollTimer) { this.pollTimer.remove(false); this.pollTimer = null; }
     if (this.pollUI) this.pollUI.forEach((object) => object.destroy());
     this.pollUI = [];
+    this.pollShownKey = null;
   }
 
   // ------------------------------------------------------------------ fx
@@ -1893,6 +1929,7 @@ class GameScene extends Phaser.Scene {
       }
     }
     all.forEach((tile) => this.aiSee(tile)); // the AI studies the board too (and forgets about half of it)
+    this.openingReviewEndsAt = Date.now() + REVIEW_MS; // also keeps idle commentary quiet during the opening study
     this.startReview(all, REVIEW_MS, false); // study phase: everything face-up for 15s, then flip to mystery (no shuffle)
   }
 
@@ -1921,9 +1958,9 @@ class GameScene extends Phaser.Scene {
       try { message = JSON.parse(event.data); } catch { return; }
       if (message.type === 'game_state' && message.state) {
         this.applyOnlineState(message.state);
-      } else if (message.type === 'audience_poll_state' && message.poll) {
-        this.onlineAudiencePoll = message.poll;
-        this.renderOnlineAudiencePoll(message.poll);
+      } else if (message.type === 'audience_poll_state') {
+        this.onlineAudiencePoll = message.poll || null;
+        if (!this.spectator) this.renderOnlineAudiencePoll(message.poll || null);
       } else if (message.type === 'spectator_count') {
         this.onlineSpectatorCount = Number(message.count) || 0;
       } else if (message.type === 'error') {
@@ -1933,12 +1970,22 @@ class GameScene extends Phaser.Scene {
             this.turnClock.endsAt = this.onlineState.turnEndsAt;
           }
         }
+        // The server may begin resolving a pick just before this client's snapshot arrives.
+        // If it rejects Submit for that reason, retry only after the authoritative state is idle.
+        if (/resolving an action/i.test(message.message || '') &&
+            this.onlineState && this.onlineState.status === 'playing' &&
+            this.onlineState.activePlayerNumber === this.onlinePlayerNumber &&
+            this.queueOnlineSubmit(this.onlineState)) {
+          this.showToast('Submit queued until the current move finishes.', 1800);
+          return;
+        }
         this.showToast(message.message || 'The server rejected that action.', 3000);
       } else if (message.type === 'player_disconnected') {
         this.showToast('A player disconnected. Waiting for them to reconnect.', 3500);
       }
     });
     socket.addEventListener('close', () => {
+      this.pendingOnlineSubmitKey = null;
       if (this.onlineSubmitPending) {
         this.onlineSubmitPending = false;
         if (this.onlineState && Number.isFinite(this.onlineState.turnEndsAt)) {
@@ -1946,6 +1993,43 @@ class GameScene extends Phaser.Scene {
         }
       }
       if (this.online && !this.gameOver) this.showToast('Connection lost. Return to the main menu and reconnect.', 4500);
+    });
+  }
+
+  onlineTurnKey(state) {
+    return {
+      turnIndex: Number(state.turnIndex),
+      activePlayerNumber: Number(state.activePlayerNumber),
+      isBonusTurn: Boolean(state.isBonusTurn),
+    };
+  }
+
+  isSameOnlineTurn(state, key) {
+    return Boolean(state && key && state.status === 'playing' &&
+      state.activePlayerNumber === this.onlinePlayerNumber &&
+      Number(state.turnIndex) === key.turnIndex &&
+      Number(state.activePlayerNumber) === key.activePlayerNumber &&
+      Boolean(state.isBonusTurn) === key.isBonusTurn);
+  }
+
+  queueOnlineSubmit(state = this.onlineState) {
+    if (!state || state.status !== 'playing' || state.activePlayerNumber !== this.onlinePlayerNumber) return false;
+    this.pendingOnlineSubmitKey = this.onlineTurnKey(state);
+    return true;
+  }
+
+  processPendingOnlineSubmit(state) {
+    const key = this.pendingOnlineSubmitKey;
+    if (!key) return;
+    if (!this.isSameOnlineTurn(state, key)) {
+      this.pendingOnlineSubmitKey = null;
+      return;
+    }
+    if (state.pendingEffect) return;
+    this.pendingOnlineSubmitKey = null;
+    this.time.delayedCall(0, () => {
+      const current = this.onlineState;
+      if (!this.gameOver && this.isSameOnlineTurn(current, key)) this.submit(false, false, true);
     });
   }
 
@@ -2022,6 +2106,17 @@ class GameScene extends Phaser.Scene {
     }
 
     const previous = this.onlineTilesById || new Map();
+    const canAnimateOnlineCascade = Boolean(!initial && previousOnlineState &&
+      previousOnlineState.status === 'playing' && state.status === 'playing' &&
+      Array.isArray(previousOnlineState.tiles) && Array.isArray(state.tiles));
+    const newCountByColumn = new Map();
+    if (canAnimateOnlineCascade) {
+      for (const viewTile of (state.tiles || [])) {
+        if (!previous.has(viewTile.id) && !viewTile.moving && Number.isInteger(viewTile.col)) {
+          newCountByColumn.set(viewTile.col, (newCountByColumn.get(viewTile.col) || 0) + 1);
+        }
+      }
+    }
     const nextById = new Map();
     const nextGrid = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
     for (const viewTile of (state.tiles || [])) {
@@ -2030,6 +2125,16 @@ class GameScene extends Phaser.Scene {
       const targetY = this.cellY(viewTile.row);
       if (!tile || !tile.active) {
         tile = this.createOnlineTile(viewTile);
+        const spawnCount = newCountByColumn.get(viewTile.col) || 0;
+        if (canAnimateOnlineCascade && spawnCount > 0 && !viewTile.moving) {
+          // New authoritative tiles use the same falling bounce and landing dust as local cascades.
+          tile.setPosition(targetX, this.cellY(viewTile.row - spawnCount));
+          const targetRow = viewTile.row;
+          tile.onlineCascadeTargetRow = targetRow;
+          this.fall(tile, targetY, 40 * Math.max(0, spawnCount - 1 - viewTile.row), true).then(() => {
+            if (tile.active && tile.onlineCascadeTargetRow === targetRow) delete tile.onlineCascadeTargetRow;
+          });
+        }
         if (viewTile.moving) {
           this.addShuffleOutline(tile);
           tile.shuffleBaseDepth = tile.depth;
@@ -2045,17 +2150,31 @@ class GameScene extends Phaser.Scene {
         } else {
           this.removeShuffleOutline(tile);
         }
-        if (Math.abs(tile.x - targetX) > 0.5 || Math.abs(tile.y - targetY) > 0.5) {
+        const stillFallingToSameRow = !viewTile.moving && tile.onlineCascadeTargetRow === viewTile.row;
+        if ((Math.abs(tile.x - targetX) > 0.5 || Math.abs(tile.y - targetY) > 0.5) && !stillFallingToSameRow) {
+          const cascadeFall = canAnimateOnlineCascade && !viewTile.moving &&
+            (newCountByColumn.get(viewTile.col) || 0) > 0 &&
+            Math.abs(tile.x - targetX) <= 0.5 && targetY > tile.y + 0.5;
+          delete tile.onlineCascadeTargetRow;
           this.tweens.killTweensOf(tile);
           if (tile.shuffleOutline) this.tweens.killTweensOf(tile.shuffleOutline);
-          const moveDuration = viewTile.moving && Number.isFinite(viewTile.movingUntil)
-            ? Math.max(0, viewTile.movingUntil - Date.now())
-            : (initial ? 0 : 240);
-          const movingTargets = tile.shuffleOutline ? [tile, tile.shuffleOutline] : [tile];
-          this.tweens.add({ targets: movingTargets, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
-          if (tile.ring) {
-            this.tweens.killTweensOf(tile.ring);
-            this.tweens.add({ targets: tile.ring, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
+          if (cascadeFall) {
+            // Existing tiles in a refilled column drop with the same bounce as the local cascade.
+            const targetRow = viewTile.row;
+            tile.onlineCascadeTargetRow = targetRow;
+            this.fall(tile, targetY, 0, false).then(() => {
+              if (tile.active && tile.onlineCascadeTargetRow === targetRow) delete tile.onlineCascadeTargetRow;
+            });
+          } else {
+            const moveDuration = viewTile.moving && Number.isFinite(viewTile.movingUntil)
+              ? Math.max(0, viewTile.movingUntil - Date.now())
+              : (initial ? 0 : 240);
+            const movingTargets = tile.shuffleOutline ? [tile, tile.shuffleOutline] : [tile];
+            this.tweens.add({ targets: movingTargets, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
+            if (tile.ring) {
+              this.tweens.killTweensOf(tile.ring);
+              this.tweens.add({ targets: tile.ring, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
+            }
           }
         }
         tile.row = viewTile.row;
@@ -2108,6 +2227,7 @@ class GameScene extends Phaser.Scene {
       this.activePlayer = Number.isInteger(state.winnerSide) ? state.winnerSide : this.activePlayer;
       this.endGame('First to ' + state.targetScore + ' points wins.');
     }
+    this.processPendingOnlineSubmit(state);
   }
 
   // Draw the same cyan square used by local shuffle animation around server-moved tiles.
@@ -2305,8 +2425,10 @@ class GameScene extends Phaser.Scene {
   // -------------------------------------------------------------- picking
   addRing(tile) {
     tile.ring = this.add.graphics({ x: tile.x, y: tile.y }).setDepth(12);
-    tile.ring.lineStyle(5, 0xffe066, 1);
-    tile.ring.strokeRoundedRect(-43, -43, 86, 86, 14);
+    const scale = TILE_SIZE / BASE_TILE_SIZE;
+    const ringSize = TILE_SIZE - 4 * scale;
+    tile.ring.lineStyle(5 * scale, 0xffe066, 1);
+    tile.ring.strokeRoundedRect(-ringSize / 2, -ringSize / 2, ringSize, ringSize, 14 * scale);
   }
 
   removeRing(tile) {
@@ -2347,9 +2469,9 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
-    // Cancel + one or more Dummies is a neutral cancelled attempt: reveal Cancel, then flip both
-    // it and the Dummies down without awarding or deducting points.
-    if (tile.shape === 'cancel' && this.selection.length === 0 && this.dummySelection.length > 0) {
+    // Cancel picked before any real shape is a neutral cancellation: reveal it, then flip it and any
+    // picked Dummies down without awarding or deducting points.
+    if (tile.shape === 'cancel' && this.selection.length === 0) {
       this.busy = true;
       tile.selected = true;
       this.selection.push(tile);
@@ -2474,8 +2596,17 @@ class GameScene extends Phaser.Scene {
   // -------------------------------------------------------------- submit
   async submit(fromAI = false, forced = false, queued = false) {
     if (this.online) {
+      const state = this.onlineState;
+      if (!forced && !fromAI && state && state.status === 'playing' &&
+          state.activePlayerNumber === this.onlinePlayerNumber && state.pendingEffect) {
+        const alreadyQueued = Boolean(this.pendingOnlineSubmitKey);
+        this.queueOnlineSubmit(state);
+        if (!alreadyQueued) this.showToast('Submit queued until the current move finishes.', 1800);
+        return;
+      }
       const sent = this.sendOnlineAction({ type: 'submit' });
       if (sent) {
+        this.pendingOnlineSubmitKey = null;
         this.onlineSubmitPending = true;
         this.turnClock.stop();
       }
@@ -2682,15 +2813,17 @@ class GameScene extends Phaser.Scene {
   // shape so the board never becomes unplayable.
   ensureMatchPossible(fresh) {
     const counts = {};
-    for (const row of this.tiles) for (const t of row) if (t && SHAPE_KEYS.includes(t.shape)) counts[t.shape] = (counts[t.shape] || 0) + 1;
-    if (Object.values(counts).some((n) => n >= MIN_MATCH)) return;
-    const best = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || SHAPE_KEYS[0];
+    for (const row of this.tiles) for (const tile of row) {
+      if (tile && MATCH_SHAPE_KEYS.includes(tile.shape)) counts[tile.shape] = (counts[tile.shape] || 0) + 1;
+    }
+    if (Object.values(counts).some((count) => count >= MIN_MATCH)) return;
+    const best = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || MATCH_SHAPE_KEYS[0];
     let need = MIN_MATCH - (counts[best] || 0);
     for (const tile of fresh) {
       if (need <= 0) break;
-      if (tile.shape === best || tile.shape === 'hazard') continue; // never turn a hazard into a shape: default hazard chance is 10%
+      if (tile.shape === best || ['hazard', 'dummy', 'cancel'].includes(tile.shape)) continue;
       tile.shape = best;
-      tile.setTexture('shape_' + best); // still face-up at this point
+      tile.setTexture('shape_' + best);
       need--;
     }
   }
@@ -2709,7 +2842,8 @@ class GameScene extends Phaser.Scene {
   // Dust cloud at the bottom edge of a tile that just landed.
   spawnDust(x, tileY) {
     const puff = this.add.sprite(x, tileY + TILE_SIZE / 2, 'dust', 'u0').setOrigin(0.5, 1).setDepth(13);
-    puff.setScale(DUST_SCALE);
+    // Scale landing dust with the tile, just like the tile-destruction animation.
+    puff.setScale(DUST_SCALE * (TILE_SIZE / BASE_TILE_SIZE));
     puff.play('dustPuff');
     puff.once('animationcomplete', () => puff.destroy());
   }
