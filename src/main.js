@@ -385,7 +385,7 @@ class BootScene extends Phaser.Scene {
   }
 
   create() {
-    // Reuse the already-cleaned transparent canvas instead of loading the old corrupted WebP.
+    // Reuse the immediately available canvas; loading-bar.js cleans it in the background.
     this.textures.addCanvas('loadRect', window.ShapeyLoadingBar.canvas);
     this.scene.start('LoadScene');
   }
@@ -1484,7 +1484,7 @@ class GameScene extends Phaser.Scene {
   }
 
   // Ends the active player's turn exactly once (timeout or a submitted match) and hands over to the other player.
-  async endTurn(reason) {
+  async endTurn(reason, options = {}) {
     if (this.turnEnding || this.gameOver) return;
     this.turnEnding = true; // from here on, late taps and submits are ignored
     if (this.memes) this.memes.turnResult(reason); // win / lose commentary for the human who just played
@@ -1517,7 +1517,7 @@ class GameScene extends Phaser.Scene {
     this.startTurn(next);
     const prefix = reason === 'timeout' ? 'Time is up. '
       : reason === 'pass' ? 'The AI passes. '
-      : reason === 'hazard' ? 'Hazard! No reward. '
+      : reason === 'hazard' && !options.suppressHazardCommentary ? 'Hazard! No reward. '
       : reason === 'mismatch' ? 'Mismatch. '
       : reason === 'submit' ? 'Turn submitted. ' : '';
     this.showTurnToast(prefix + this.turnLabel() + '’s turn');
@@ -1603,7 +1603,7 @@ class GameScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(252));
     woodButton(this, GAME_WIDTH / 2, 530, 440, 90, 'RESUME', 36, () => this.closePanel(), 252).forEach(add);
     woodButton(this, GAME_WIDTH / 2, 645, 440, 90, this.online ? 'LEAVE MATCH' : 'RESTART', 36,
-      () => this.online ? this.leaveOnlineMatch() : this.scene.restart({ mode: this.mode, difficulty: this.difficulty }), 252).forEach(add);
+      () => this.online ? this.leaveOnlineMatch() : this.scene.restart({ mode: this.mode, difficulty: this.difficulty, boardSize: this.boardSize }), 252).forEach(add);
     woodButton(this, GAME_WIDTH / 2, 760, 440, 90, 'MAIN MENU', 36,
       () => this.online ? this.leaveOnlineMatch() : this.scene.start('MenuScene'), 252).forEach(add);
     if (this.modeCfg.turnClock) {
@@ -2734,7 +2734,7 @@ class GameScene extends Phaser.Scene {
     // Hazard is a bomb in every mode: destroy it and every shape already picked.
     // Only Play Alone loses one point; versus modes never lose points from Hazard.
     if (tile.shape === 'hazard') {
-      this.hazardBlast(tile);
+      this.hazardBlast(tile, { fromAI });
       return;
     }
 
@@ -2798,7 +2798,8 @@ class GameScene extends Phaser.Scene {
 
   // Hazards always detonate, destroying the bomb and all shapes/Dummies currently picked.
   // Play Alone loses one point per explosion; versus modes receive no Hazard penalty.
-  async hazardBlast(hazard) {
+  async hazardBlast(hazard, options = {}) {
+    const suppressHazardCommentary = Boolean(options.fromAI && this.mode === 'ai');
     this.busy = true;
     this.cancelShuffles();
     const tiles = [...this.selection, ...this.dummySelection, hazard];
@@ -2808,8 +2809,10 @@ class GameScene extends Phaser.Scene {
     hazard.selected = true;
     await this.flipTile(hazard, true);
     const lost = this.modeCfg.twoPlayers ? 0 : this.applyPenalty(HAZARD_BLAST_PENALTY);
-    this.showToast('Hazard! It destroys everything you picked.\n' +
-      (lost > 0 ? '−' + lost + ' point, no reward.' : 'No reward.'));
+    if (!suppressHazardCommentary) {
+      this.showToast('Hazard! It destroys everything you picked.\n' +
+        (lost > 0 ? '−' + lost + ' point, no reward.' : 'No reward.'));
+    }
     this.tweens.add({ targets: hazard, angle: { from: -8, to: 8 }, duration: 70, yoyo: true, repeat: 3,
       onComplete: () => { if (hazard.active) hazard.setAngle(0); } });
     await this.sleep(900);
@@ -2821,7 +2824,7 @@ class GameScene extends Phaser.Scene {
       this.endGame('Your score reached ' + ALONE_SCORE_FLOOR + '.');
       return;
     }
-    this.endTurn('hazard');
+    this.endTurn('hazard', { suppressHazardCommentary });
   }
 
   // Legacy internal alias retained for any existing callback: a standalone Hazard also detonates.
@@ -3025,7 +3028,7 @@ class GameScene extends Phaser.Scene {
         (this.modeCfg.targetScore ? '\nTarget: ' + this.modeCfg.targetScore : '');
     text(600, summary, 40, '#ffe36e');
     woodButton(this, GAME_WIDTH / 2, 810, 500, 110, this.online ? 'NEW ONLINE ROOM' : 'PLAY AGAIN', 44,
-      () => this.online ? this.leaveOnlineMatch() : this.scene.restart({ mode: this.mode, difficulty: this.difficulty }), 301);
+      () => this.online ? this.leaveOnlineMatch() : this.scene.restart({ mode: this.mode, difficulty: this.difficulty, boardSize: this.boardSize }), 301);
     woodButton(this, GAME_WIDTH / 2, 950, 500, 110, 'MAIN MENU', 44, () => this.scene.start('MenuScene'), 301);
   }
 
@@ -3270,8 +3273,7 @@ class GameScene extends Phaser.Scene {
   }
 }
 
-// Start Phaser once the clean loading-bar image is ready. The HTML placeholder remains visible
-// while its checkerboard background is removed, so both loading screens use the same clean artwork.
+// Start Phaser as soon as the fast fallback bar is visible. The loading-bar canvas is cleaned in the background.
 window.ShapeyLoadingBar.ready.then(() => {
   window.game = new Phaser.Game({
     type: Phaser.AUTO,
