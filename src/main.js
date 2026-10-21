@@ -2737,7 +2737,16 @@ class GameScene extends Phaser.Scene {
       } else {
         this.recordAttempt();
         this.breakLocalMatchStreak();
+        if (this.memes && !this.gameOver) this.memes.attemptResult('lose');
       }
+      return;
+    }
+
+    const matchShape = tiles[0] && tiles[0].shape;
+    if (!MATCH_SHAPE_KEYS.includes(matchShape) || !tiles.every((tile) => tile.shape === matchShape)) {
+      // Safety net: Cancel/Hazard/Dummy can never be submitted as a scoring match.
+      await this.resetSelection();
+      this.busy = false;
       return;
     }
 
