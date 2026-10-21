@@ -49,8 +49,8 @@ test('invalid side numbers cannot be handed to the next turn', () => {
 });
 
 test('versus target scores remain fixed', () => {
-  assert.equal(RULES.targetScoreForMode('ai'), 100);
-  assert.equal(RULES.targetScoreForMode('pvp'), 100);
-  assert.equal(RULES.targetScoreForMode('tag'), 200);
-  assert.equal(RULES.targetScoreForMode('alone'), 100);
+  assert.equal(RULES.targetScoreForMode('ai'), 50);
+  assert.equal(RULES.targetScoreForMode('pvp'), 50);
+  assert.equal(RULES.targetScoreForMode('tag'), 100);
+  assert.equal(RULES.targetScoreForMode('alone'), 50);
 });

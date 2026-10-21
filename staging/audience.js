@@ -322,7 +322,7 @@ function makeRoomCard(room) {
     (Number(room.spectatorCount) || 0) + ' watching'));
 
   const boardSize = [5, 6, 7].includes(Number(room.boardSize)) ? Number(room.boardSize) : 7;
-  const details = ['Board ' + boardSize + '×' + boardSize, 'First to ' + (Number(room.targetScore) || (tag ? 200 : 100))];
+  const details = ['Board ' + boardSize + '×' + boardSize, 'First to ' + (Number(room.targetScore) || (tag ? 100 : 50))];
   if (room.status === 'live' && room.activePlayerNumber) details.push(turnLabel(room.mode, room.activePlayerNumber) + ' to play');
   if (Number.isFinite(room.createdAt)) {
     const minutes = Math.max(0, Math.floor((Date.now() - room.createdAt) / 60000));

@@ -23,13 +23,13 @@ function act(state, playerNumber, action, offset = INITIAL_REVIEW_MS + 1) {
 test("creates correct room-sized game states, score targets, and Tag turn order", () => {
   const pvp = createGameState({ roomCode: "ABC234", mode: "pvp", playerNumbers: [1, 2], now: NOW, rng: steadyRandom });
   assert.equal(pvp.tiles.length, GRID_ROWS * GRID_COLS);
-  assert.equal(pvp.targetScore, 100);
+  assert.equal(pvp.targetScore, 50);
   assert.deepEqual(pvp.turnOrder, [1, 2]);
   assert.equal(pvp.status, "study");
   assert.equal(nextGameDeadline(pvp), NOW + INITIAL_REVIEW_MS);
 
   const tag = createGameState({ roomCode: "TAG234", mode: "tag", playerNumbers: [1, 2, 3, 4], now: NOW, rng: steadyRandom });
-  assert.equal(tag.targetScore, 200);
+  assert.equal(tag.targetScore, 100);
   assert.equal(tag.turnDurationMs, TAG_TURN_MS);
   assert.equal(tag.turnEndsAt, NOW + INITIAL_REVIEW_MS + TAG_TURN_MS);
   assert.equal(pvp.turnDurationMs, TURN_MS);

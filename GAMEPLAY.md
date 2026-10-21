@@ -12,7 +12,7 @@ This document describes the recommended rules for turning the current Phaser pro
 - When a versus clock expires, a selected group of 3 or more matching shapes is **auto-submitted**. If there is no valid group, the selection is cleared and the turn passes without a reward.
 - **Two clocks run at the same time.** The turn clock and the 5-second "memorize" reveal of newly spawned tiles (followed by their shuffle) are independent; a reveal or shuffle never pauses, resets, or extends a turn.
 - The Submit button ends the active versus turn even if the player still has time or selected fewer than 3 shapes. **Double Play** is the sole exception: using it grants that same player one extra 45-second turn; it cannot chain. The turn deadline auto-submits any valid selected match.
-- **Versus targets are fixed by mode:** Player vs AI and Player 1 vs Player 2 end when a side first reaches or exceeds **100 points**; Tag ends when a team first reaches or exceeds **200 points**. Play Alone wins at **100 points** and loses at **−15 points**; it has no attempt-based checkpoint or turn countdown. Online, the server—not the browser—must authoritatively resolve scores and winners.
+- **Versus targets are fixed by mode:** Player vs AI and Player 1 vs Player 2 end when a side first reaches or exceeds **50 points**; Tag ends when a team first reaches or exceeds **100 points**. Play Alone wins at **50 points** and loses at **−15 points**; it has no attempt-based checkpoint or turn countdown. Online, the server—not the browser—must authoritatively resolve scores and winners.
 
 ### Which shapes spawn (shuffle bag)
 
@@ -52,7 +52,7 @@ Tag is the online 2-vs-2 mode. Team 1 is Player 1 and Player 2; Team 2 is Player
 
 - **Turn order:** the teams alternate, and each team's partners take turns, so the sequence is Player 1 → Player 3 → Player 2 → Player 4 → Player 1 → ... A partner "tags in" every other turn.
 - **One score per team.** A match scores for the team of whoever played it, so partners add to the same score. The header planks read TEAM 1 / TEAM 2, and a line under the timer names the team and partner whose turn it is (for example "TEAM 1: PLAYER 2"). The turn toast says the same.
-- **Everything else matches Player 1 vs Player 2:** 45-second turns, 10% hazards, same scoring, shuffle and timeout rules. A timeout passes to the next player in the sequence. First team to 200 points wins.
+- **Everything else matches Player 1 vs Player 2:** 45-second turns, 10% hazards, same scoring, shuffle and timeout rules. A timeout passes to the next player in the sequence. First team to 100 points wins.
 - **Inventory limit is per player:** each of the four players has their own 2-opens-per-5-minutes allowance (`limiterSlot()`).
 - Fixed score targets and the local winner screen are implemented. Stars, streaks and inventory still use one shared balance, and there is no hand-off screen hiding the board between players.
 

@@ -261,7 +261,7 @@ export class Room extends DurableObject {
         spectatorCount: Number.isInteger(data.spectatorCount) ? Math.min(MAX_SPECTATORS_PER_ROOM, Math.max(0, data.spectatorCount)) : 0,
         scores,
         activePlayerNumber,
-        targetScore: Number.isFinite(data.targetScore) ? data.targetScore : (details.mode === "tag" ? 200 : 100),
+        targetScore: Number.isFinite(data.targetScore) ? data.targetScore : (details.mode === "tag" ? 100 : 50),
         createdAt: Number.isFinite(data.createdAt) ? data.createdAt : now,
         updatedAt: now,
         expiresAt: now + LIVE_DIRECTORY_STALE_MS
@@ -323,7 +323,7 @@ export class Room extends DurableObject {
       if (details.mode === "demo") {
         // A demo is an automatically running PvP game whose two player seats are controlled by the Worker.
         const game = createGameState({ roomCode: data.roomCode, mode: "pvp", playerNumbers: [1, 2], boardSize, now });
-        // Keep the sample short enough to watch on one device; regular PvP still targets 100.
+        // Keep the sample short enough to watch on one device; regular PvP still targets 50.
         game.targetScore = 10;
         game.demoNextActionAt = Number(game.reviewEndsAt) + 500;
         game.demoPickPlan = null;
@@ -454,7 +454,7 @@ export class Room extends DurableObject {
       spectatorCount: this.spectatorCount(),
       scores: Array.isArray(game?.scores) ? game.scores.slice(0, 2) : [0, 0],
       activePlayerNumber: Number.isInteger(game?.activePlayerNumber) ? game.activePlayerNumber : null,
-      targetScore: Number.isFinite(game?.targetScore) ? game.targetScore : (room.mode === "tag" ? 200 : 100),
+      targetScore: Number.isFinite(game?.targetScore) ? game.targetScore : (room.mode === "tag" ? 100 : 50),
       createdAt: room.createdAt
     };
     const signature = JSON.stringify(summary);
