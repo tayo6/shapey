@@ -1588,7 +1588,7 @@ class GameScene extends Phaser.Scene {
     ];
 
     // Audience polls are a free per-game allowance, not an inventory item bought with Stars.
-    const hasFreeAudiencePolls = this.modeCfg.teams;
+    const hasFreeAudiencePolls = this.mode !== 'alone';
     if (hasFreeAudiencePolls) {
       const y = 238;
       const card = this.add.rectangle(GAME_WIDTH / 2, y, 630, 174, 0x704323, 0.96)
@@ -1770,8 +1770,8 @@ class GameScene extends Phaser.Scene {
   showAudiencePoll() {
     this.closeAudiencePoll();
     if (this.gameOver) return;
-    if (!this.modeCfg.teams) {
-      this.showToast('Audience polls are available in Tag only.', 2200);
+    if (this.mode === 'alone') {
+      this.showToast('Audience polls are not available in Play Alone.', 2200);
       return;
     }
     if (this.isAITurn()) {
