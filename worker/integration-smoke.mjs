@@ -249,6 +249,10 @@ async function run() {
       message.type === "game_state" && message.state?.selectedTileIds?.length === 1,
       WAIT_MS, "PvP player reveals a first shape before asking the audience");
     pollPvp1.send({ type: "audience_poll_start" });
+    const firstPollUse = await pollPvp1.waitFor((message) =>
+      message.type === "game_state" && message.state?.me?.audiencePollsUsed === 1,
+      WAIT_MS, "server records the first poll against the requesting player");
+    assert.equal(firstPollUse.state.me.audiencePollsUsed, 1);
     const pvpPoll = await pvpAudience.waitFor((message) =>
       message.type === "audience_poll_state" && message.poll && !message.poll.closed,
       WAIT_MS, "PvP audience poll broadcast");
