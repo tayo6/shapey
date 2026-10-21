@@ -23,6 +23,12 @@ export const MATCH_SHAPE_KEYS = Object.freeze(SHAPE_KEYS.filter((shape) => shape
 
 const MATCH_SCORES = Object.freeze({ 3: 1, 4: 2 });
 const ITEM_PRICES = Object.freeze({ extraTime: 3, doublePlay: 4 });
+export const MAX_AUDIENCE_POLLS_PER_PLAYER = 3;
+export function audiencePollsRemaining(playerData) {
+  const used = Number.isInteger(playerData && playerData.audiencePollsUsed) && playerData.audiencePollsUsed >= 0
+    ? playerData.audiencePollsUsed : 0;
+  return Math.max(0, MAX_AUDIENCE_POLLS_PER_PLAYER - used);
+}
 function randomIndex(length, rng) {
   return Math.min(length - 1, Math.floor(rng() * length));
 }
@@ -87,6 +93,7 @@ function makeStartingBoard(rng, boardSize) {
 function newPlayerData() {
   return {
     stars: 1,
+    audiencePollsUsed: 0,
     streak: 0,
     lastRewardedStreak: 0,
     inventory: { audiencePick: 1, extraTime: 0, doublePlay: 0, scoreStrike: 0, cancelCounter: 0 },
