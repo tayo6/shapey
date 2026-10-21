@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const rules = require('../src/rules.js');
-const memes = require('../staging/memes.js');
+const memes = require('../src/memes.js');
 const manifestTool = require('../tools/build-memes-manifest.js');
 
 const { AttemptWindow, ShuffleBag, MemePicker, buildPools, createLibrary, attach, CONFIG } = memes;
@@ -83,17 +83,17 @@ test('a win is a valid match of three or more identical shapes', () => {
 });
 
 // ---------------------------------------------------------------- attempt windows
-test('standard window fires exactly once per three attempts, at a random position', () => {
+test('standard window fires exactly once per four attempts, at a random position', () => {
   const positions = new Set();
   for (let seed = 1; seed <= 60; seed++) {
-    const window3 = new AttemptWindow(3, seeded(seed));
+    const window4 = new AttemptWindow(4, seeded(seed));
     for (let round = 0; round < 10; round++) {
-      const fired = [1, 2, 3].map(() => window3.record(true));
+      const fired = [1, 2, 3, 4].map(() => window4.record(true));
       assert.equal(fired.filter(Boolean).length, 1, 'seed ' + seed + ' round ' + round);
       positions.add(fired.indexOf(true) + 1);
     }
   }
-  assert.deepEqual([...positions].sort(), [1, 2, 3]);
+  assert.deepEqual([...positions].sort(), [1, 2, 3, 4]);
 });
 
 test('a trigger that lands on a non-qualifying attempt carries to the next qualifying one in the window, or lapses', () => {
@@ -184,15 +184,15 @@ function playTurn(ctx, reason, { activePlayer = 0, activeMember = 0, pick = true
   ctx.controller.turnResult(reason);
 }
 
-test('a human fires exactly one win/lose meme per three attempts, from the matching pool', async () => {
+test('a human fires exactly one win/lose meme per four attempts, from the matching pool', async () => {
   const ctx = await setup({});
-  const outcomes = ['match', 'mismatch', 'match', 'timeout', 'hazard', 'match', 'submit', 'match', 'mismatch'];
+  const outcomes = ['match', 'mismatch', 'match', 'timeout', 'hazard', 'match', 'submit', 'match', 'mismatch', 'timeout', 'hazard', 'match'];
   outcomes.forEach((reason) => playTurn(ctx, reason));
   const fired = ctx.player.log;
   assert.equal(fired.length, 3, 'one per window of three');
   // The attempts inside each window decide which pool: reconstruct which attempt fired from the url.
   fired.forEach(([, item], index) => {
-    const windowOutcomes = outcomes.slice(index * 3, index * 3 + 3).map((r) => (r === 'match' ? 'win' : 'lose'));
+    const windowOutcomes = outcomes.slice(index * 4, index * 4 + 4).map((r) => (r === 'match' ? 'win' : 'lose'));
     assert.ok(windowOutcomes.includes(item.kind), 'window ' + index + ' contains a ' + item.kind);
     assert.ok(item.url.includes('/' + item.kind + '/'));
   });
@@ -205,7 +205,7 @@ test('AI turns never fire or count, and the human windows are unaffected', async
     ctx.controller.tick();
   }
   assert.equal(ctx.player.log.length, 0);
-  for (let i = 0; i < 6; i++) playTurn(ctx, i % 2 ? 'mismatch' : 'match', { activePlayer: 0 }); // human turns
+  for (let i = 0; i < 8; i++) playTurn(ctx, i % 2 ? 'mismatch' : 'match', { activePlayer: 0 }); // human turns
   assert.equal(ctx.player.log.length, 2);
 });
 
@@ -217,12 +217,12 @@ test('a turn in which nothing was picked is not an attempt', async () => {
 
 test('each human player has an independent attempt window', async () => {
   const ctx = await setup({ modeCfg: { turnClock: true, twoPlayers: true, ai: false, teams: false } });
-  // Player 1 and Player 2 alternate; each has 6 attempts -> each fires twice.
-  for (let i = 0; i < 12; i++) playTurn(ctx, 'mismatch', { activePlayer: i % 2 });
+  // Player 1 and Player 2 alternate; each has 8 attempts -> each fires twice.
+  for (let i = 0; i < 16; i++) playTurn(ctx, 'mismatch', { activePlayer: i % 2 });
   assert.equal(ctx.player.log.length, 4);
 });
 
-test('Tag: team wins use the tag_win folder, one per four attempts per player; losses keep the 3-attempt rule', async () => {
+test('Tag: team wins and ordinary commentary use four-attempt windows', async () => {
   const ctx = await setup({ modeCfg: { turnClock: true, twoPlayers: true, ai: false, teams: true } }, 11);
   // Four players, 8 winning turns each.
   for (let round = 0; round < 8; round++) {
@@ -235,11 +235,11 @@ test('Tag: team wins use the tag_win folder, one per four attempts per player; l
     assert.equal(type, 'visual');
     assert.ok(item.url.includes('/gifs/tag_win/'));
   });
-  // Losses still follow the standard 3-attempt rule in Tag.
+  // Losses follow the standard 4-attempt rule in Tag.
   const before = ctx.player.log.length;
   for (let i = 0; i < 6; i++) playTurn(ctx, 'mismatch', { activePlayer: 0, activeMember: 0 });
   const losses = ctx.player.log.slice(before);
-  assert.ok(losses.length >= 1 && losses.length <= 3);
+  assert.ok(losses.length >= 1 && losses.length <= 2);
   losses.forEach(([, item]) => assert.equal(item.kind, 'lose'));
 });
 
@@ -288,7 +288,7 @@ test('Delay meme: idle human at 10 seconds left, once per turn, never for the AI
 
 test('Play Alone: wrong shapes and wins both count as attempts for the single player', async () => {
   const ctx = await setup({ modeCfg: { turnClock: false, twoPlayers: false, ai: false, teams: false } });
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0; i < 12; i++) {
     if (i % 3 === 1) ctx.controller.attemptResult('lose');
     else { ctx.controller.noteActivity(); ctx.controller.turnResult('match'); }
   }
@@ -333,7 +333,7 @@ test('online: a score increase is a win, a quiet turn change after picks is a lo
   // turns alternate P1, P2: P1 wins, P2 loses (picked, no score), repeated for 3 attempts each
   let scores = [0, 0];
   let turn = 0;
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 4; i++) {
     feed(snapshot({ turnIndex: turn, player: 1, scores: scores.slice(), selected: false }));
     feed(snapshot({ turnIndex: turn, player: 1, scores: scores.slice(), selected: true }));   // P1 picks
     scores = [scores[0] + 1, scores[1]];
@@ -344,7 +344,7 @@ test('online: a score increase is a win, a quiet turn change after picks is a lo
     turn++;
     feed(snapshot({ turnIndex: turn, player: 1, scores: scores.slice(), selected: false }));  // P2 scored nothing
   }
-  assert.equal(ctx.player.log.length, 2, 'one meme per three attempts for each of two players');
+  assert.equal(ctx.player.log.length, 2, 'one meme per four attempts for each of two players');
   const kinds = ctx.player.log.map(([, item]) => item.kind).sort();
   assert.deepEqual(kinds, ['lose', 'win']);
 
