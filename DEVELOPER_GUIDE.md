@@ -10,7 +10,7 @@ Shapey is intended to be a competitive, turn-based memory-and-matching game with
 - Player versus AI, with Easy and Professional (Hard) difficulty.
 - Tag: two teams of two on one device (same-device for now).
 - Online human versus human using a shared backend.
-- Mode-specific score targets: 100 points for Player vs AI and Player 1 vs Player 2; 200 points for Tag.
+- Mode-specific score targets: 50 points for Play Alone, Player vs AI and Player 1 vs Player 2; 100 points for Tag.
 - Stars, streak rewards, an inventory/shop, and tactical power-ups.
 - Rare special tiles, including a neutral blank wooden dummy and a Cancel Counter pickup.
 - Audience Pick voting, eventually with real spectators.
@@ -150,9 +150,9 @@ Resolve tile destruction, gravity, spawning, reveal/hide timing, and score updat
 
 ## 4. Target score, victory, and ties
 
-- **Player vs AI:** first side to reach or exceed **100 points** wins.
-- **Player 1 vs Player 2:** first side to reach or exceed **100 points** wins.
-- **Tag:** first team to reach or exceed **200 points** wins; partners share their team's score.
+- **Player vs AI:** first side to reach or exceed **50 points** wins.
+- **Player 1 vs Player 2:** first side to reach or exceed **50 points** wins.
+- **Tag:** first team to reach or exceed **100 points** wins; partners share their team's score.
 - Targets are fixed by mode; players do not select a target in the current game.
 - **Play Alone is not a race to a target:** there is no attempt-based checkpoint. The player loses only when their score reaches **−15**.
 - The local prototype displays the winner, both versus scores, and the applicable target, then offers **Play Again** or **Main Menu**. It also shows the final Play Alone score and attempt count after a loss.

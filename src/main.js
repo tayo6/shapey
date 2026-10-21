@@ -69,7 +69,7 @@ const ALONE_MISS_PENALTY = 1;   // a wrong shape costs this much (a too-small su
 // ---- Game modes --------------------------------------------------------------
 // hazard = chance that a tile is a hazard (skull) tile: the same ~10% in every mode. Test override: ?hazard=0.5
 const HAZARD_CHANCE = 0.1;
-// Win targets come from src/rules.js (100 for Play Alone / PvAI / PvP; 200 for a Tag team), so the game,
+// Win targets come from src/rules.js (50 for Play Alone / PvAI / PvP; 100 for a Tag team), so the game,
 // the rule tests and the README all agree.
 const MODE_TARGET_SCORE = Object.freeze({
   alone: RULES.targetScoreForMode('alone'), ai: RULES.targetScoreForMode('ai'),
@@ -688,7 +688,7 @@ class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(82));
     const lobbyInstructions = this.onlineMode === 'tag'
       ? 'Four devices. Team 1: Players 1 and 2. Team 2: Players 3 and 4. Invite your teammate first, then invite the other team.'
-      : 'Two devices. Take alternating turns; the first player to 100 points wins.';
+      : 'Two devices. Take alternating turns; the first player to ' + MODE_TARGET_SCORE.pvp + ' points wins.';
     const sizeInstruction = 'Board size: ' + this.onlineBoardSize + '×' + this.onlineBoardSize + '.';
     this.onlineStatus = add(this.add.text(GAME_WIDTH / 2, 415,
       lobbyInstructions + '\n' + sizeInstruction, {

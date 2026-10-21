@@ -130,7 +130,7 @@ export function createGameState({ roomCode, mode, playerNumbers, boardSize = DEF
     doublePlayPendingPlayer: null,
     turnDurationMs,
     turnEndsAt: now + INITIAL_REVIEW_MS + turnDurationMs,
-    targetScore: mode === "tag" ? 200 : 100,
+    targetScore: mode === "tag" ? 100 : 50,
     scores: [0, 0],
     winnerSide: null,
     winnerPlayerNumber: null,

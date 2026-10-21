@@ -88,10 +88,10 @@ test('a new profile gets exactly one starter Star but saved balances are preserv
 });
 
 test('score targets are fixed by mode', () => {
-  assert.equal(rules.targetScoreForMode('alone'), 100);
-  assert.equal(rules.targetScoreForMode('ai'), 100);
-  assert.equal(rules.targetScoreForMode('pvp'), 100);
-  assert.equal(rules.targetScoreForMode('tag'), 200);
+  assert.equal(rules.targetScoreForMode('alone'), 50);
+  assert.equal(rules.targetScoreForMode('ai'), 50);
+  assert.equal(rules.targetScoreForMode('pvp'), 50);
+  assert.equal(rules.targetScoreForMode('tag'), 100);
   assert.equal(rules.targetScoreForMode('unknown'), null);
 });
 

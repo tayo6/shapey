@@ -186,10 +186,10 @@ async function run() {
       pollPvp2.waitFor((message) => message.type === "game_started")
     ]);
     assert.equal(pollPvpInitial1.state.mode, "pvp");
-    assert.equal(pollPvpInitial1.state.targetScore, 100);
+    assert.equal(pollPvpInitial1.state.targetScore, 50);
     assert.equal(pollPvpInitial1.state.status, "study");
     assert.equal(pvpInitial1.state.mode, "pvp");
-    assert.equal(pvpInitial1.state.targetScore, 100);
+    assert.equal(pvpInitial1.state.targetScore, 50);
     assert.equal(pvpInitial1.state.status, "study");
     assert.equal(pvpInitial1.state.tiles.length, 49);
     assert.deepEqual(pvpInitial1.state.players, [1, 2]);
@@ -207,7 +207,7 @@ async function run() {
       client.waitFor((message) => message.type === "game_started")));
     for (const message of tagInitialMessages) {
       assert.equal(message.state.mode, "tag");
-      assert.equal(message.state.targetScore, 200);
+      assert.equal(message.state.targetScore, 100);
       assert.deepEqual(message.state.players, [1, 3, 2, 4]);
       assert.equal(message.state.activePlayerNumber, 1);
     }

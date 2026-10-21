@@ -682,7 +682,7 @@ class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(82));
     const lobbyInstructions = this.onlineMode === 'tag'
       ? 'Four devices. Team 1: Players 1 and 2. Team 2: Players 3 and 4. Invite your teammate first, then invite the other team.'
-      : 'Two devices. Take alternating turns; the first player to 100 points wins.';
+      : 'Two devices. Take alternating turns; the first player to ' + MODE_TARGET_SCORE.pvp + ' points wins.';
     const sizeInstruction = 'Board size: ' + this.onlineBoardSize + '×' + this.onlineBoardSize + '.';
     this.onlineStatus = add(this.add.text(GAME_WIDTH / 2, 415,
       lobbyInstructions + '\n' + sizeInstruction, {

@@ -82,10 +82,10 @@
     return mode === 'ai' && difficulty === 'pro' ? professionalMs : standardMs;
   }
 
-  // Play Alone and AI/PvP target 100; Tag teams target 200.
+  // Play Alone and AI/PvP target 50; Tag teams target 100.
   function targetScoreForMode(mode) {
-    if (mode === 'tag') return 200;
-    if (mode === 'alone' || mode === 'ai' || mode === 'pvp') return 100;
+    if (mode === 'tag') return 100;
+    if (mode === 'alone' || mode === 'ai' || mode === 'pvp') return 50;
     return null;
   }
 
