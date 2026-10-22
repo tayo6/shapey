@@ -49,11 +49,12 @@
     };
   }
 
-  // Bottom navigation differs by mode: Play Alone has no inventory or polls; Player vs AI, Player 1 vs Player 2
-  // and Tag have both (against the AI the poll is a labelled practice audience; online it is a live spectator poll).
+  // Polls require real audience participation, so only online PvP and Tag show the Polls control.
+  // Play Alone has neither polls nor inventory; Player vs AI has inventory but no Polls control.
   function navigationForMode(mode) {
     if (mode === 'alone') return ['settings', 'submit'];
-    if (mode === 'ai' || mode === 'pvp' || mode === 'tag') return ['settings', 'submit', 'polls', 'inventory'];
+    if (mode === 'ai') return ['settings', 'submit', 'inventory'];
+    if (mode === 'pvp' || mode === 'tag') return ['settings', 'submit', 'polls', 'inventory'];
     return ['settings', 'submit', 'inventory'];
   }
 
