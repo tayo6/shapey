@@ -1538,7 +1538,7 @@ class GameScene extends Phaser.Scene {
       polls: 'btnPolls',
       inventory: 'btnInventory',
     };
-    const supportsAudiencePolling = this.mode !== 'alone';
+    const supportsAudiencePolling = this.mode === 'pvp' || this.mode === 'tag';
     const actions = this.mode === 'alone'
       ? ['settings', 'submit']
       : supportsAudiencePolling
@@ -1570,12 +1570,12 @@ class GameScene extends Phaser.Scene {
     settings.setInteractive({ useHandCursor: true });
     settings.on('pointerdown', () => this.openPanel());
 
-    // Both online modes can ask the audience to choose a hidden tile directly on the shared board.
+    // Polls are live-only and restricted to online Player 1 vs Player 2 and Tag; never simulate votes locally.
     const polls = this.buttons.btnPolls;
     if (polls) {
       polls.setInteractive({ useHandCursor: true });
       polls.on('pointerdown', () => {
-        if (this.mode !== 'alone' && !this.panelOpen && !this.inventoryOpen) this.showAudiencePoll();
+        if ((this.mode === 'pvp' || this.mode === 'tag') && this.online && !this.panelOpen && !this.inventoryOpen) this.showAudiencePoll();
       });
     }
 
@@ -1954,87 +1954,29 @@ class GameScene extends Phaser.Scene {
   showAudiencePoll() {
     this.closeAudiencePoll();
     if (this.gameOver) return;
-    if (this.mode === 'alone') {
-      this.showToast('Audience polls are not available in Play Alone.', 2200);
+
+    // Audience polling is a live multiplayer feature, never a local AI practice simulation.
+    if (this.mode !== 'pvp' && this.mode !== 'tag') {
+      this.showToast('Audience polls are only available in online Player 1 vs Player 2 and Tag.', 2800);
       return;
     }
-    if (this.isAITurn()) {
-      this.showToast('Audience polls are available to the human player, not the AI.', 2200);
+    if (!this.online || !this.onlineSocket || this.onlineSocket.readyState !== WebSocket.OPEN) {
+      this.showToast('Connect to an online Player 1 vs Player 2 or Tag room before asking the audience.', 2800);
       return;
     }
     if (this.getAudiencePollsRemaining() <= 0) {
       this.showToast('You have used all 3 free audience polls for this game.', 2600);
       return;
     }
-    if (this.online) {
-      if ((this.mode !== 'pvp' && this.mode !== 'tag') ||
-          !this.onlineSocket || this.onlineSocket.readyState !== WebSocket.OPEN) {
-        this.showToast('Live audience polling requires a connected Player 1 vs Player 2 or Tag room.', 2500);
-        return;
-      }
-      if (this.onlineState && this.onlineState.activePlayerNumber !== this.onlinePlayerNumber) {
-        this.showToast('You can use an audience poll during your own turn.', 2200);
-        return;
-      }
-      this.onlineSocket.send(JSON.stringify({ type: 'audience_poll_start' }));
-      this.showToast('Opening a live poll for spectators…', 1800);
+    if (!this.onlineState || this.onlineState.activePlayerNumber !== this.onlinePlayerNumber) {
+      this.showToast('You can use an audience poll during your own turn.', 2200);
       return;
     }
-    const slot = this.limiterSlot();
-    this.audiencePollsUsedByPlayer.set(slot, this.getAudiencePollsUsed() + 1);
-    this.pollUI = [];
-    const add = (object) => {
-      object.setDepth(250);
-      this.pollUI.push(object);
-      return object;
-    };
-    add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.78)
-      .setInteractive());
-    add(this.add.rectangle(GAME_WIDTH / 2, 650, 640, 690, 0x4b2d17, 1)
-      .setStrokeStyle(5, 0xd5ad72));
-    add(this.add.text(GAME_WIDTH / 2, 365, 'AUDIENCE POLL', {
-      fontFamily: FONT, fontSize: '48px', color: '#fff2c7',
-      stroke: '#3a2112', strokeThickness: 8, align: 'center',
-    }).setOrigin(0.5));
-    add(this.add.text(GAME_WIDTH / 2, 420, 'PRACTICE AUDIENCE · SIMULATED VOTES', {
-      fontFamily: FONT, fontSize: '20px', color: '#ffe36e', align: 'center',
-      stroke: '#3a2112', strokeThickness: 4,
-    }).setOrigin(0.5));
 
-    const candidates = [];
-    const pollCandidates = SHAPE_KEYS.filter((shape) => shape !== 'cancel');
-    while (candidates.length < 4) {
-      const shape = randomItem(pollCandidates);
-      if (!candidates.includes(shape)) candidates.push(shape);
-    }
-    // Simulate 100 votes so the results look like a game-show audience poll.
-    const weights = candidates.map(() => 0.15 + Math.random());
-    const totalWeight = weights.reduce((sum, n) => sum + n, 0);
-    const votes = weights.map((weight) => Math.round((weight / totalWeight) * 100));
-    votes[0] += 100 - votes.reduce((sum, n) => sum + n, 0);
-    // Like the TV lifeline, the options keep their A-D order and the top choice is called out above them.
-    const ranked = candidates.map((shape, i) => ({ shape, votes: votes[i] }));
-    const top = ranked.reduce((best, item) => (item.votes > best.votes ? item : best), ranked[0]);
-    add(this.add.text(GAME_WIDTH / 2, 470, 'TOP CHOICE: ' + top.shape.toUpperCase(), {
-      fontFamily: FONT, fontSize: '28px', color: '#ffe36e',
-      stroke: '#3a2112', strokeThickness: 5, align: 'center',
-    }).setOrigin(0.5));
-
-    ranked.forEach((item, i) => {
-      const y = 545 + i * 75;
-      add(this.add.text(86, y, String.fromCharCode(65 + i) + '  ' + item.shape.toUpperCase(), {
-        fontFamily: FONT, fontSize: '20px', color: '#fff2c7',
-        stroke: '#3a2112', strokeThickness: 4,
-      }).setOrigin(0, 0.5));
-      add(this.add.rectangle(280, y, 300, 24, 0x25180f, 1).setOrigin(0, 0.5));
-      add(this.add.rectangle(280, y, Math.max(3, 3 * item.votes), 18, 0xd7a849, 1).setOrigin(0, 0.5));
-      add(this.add.text(620, y, item.votes + '%', {
-        fontFamily: FONT, fontSize: '22px', color: '#ffffff',
-        stroke: '#3a2112', strokeThickness: 4, align: 'right',
-      }).setOrigin(1, 0.5));
-    });
-    woodButton(this, GAME_WIDTH / 2, 885, 420, 82, 'CLOSE POLL', 30,
-      () => this.closeAudiencePoll(), 252).forEach(add);
+    // The Worker validates the first selected shape, remaining allowance, and poll timing.
+    // Only the Worker can start a real poll; this client must never invent votes or percentages.
+    this.onlineSocket.send(JSON.stringify({ type: 'audience_poll_start' }));
+    this.showToast('Audience poll requested. Spectators have 30 seconds to vote.', 2500);
   }
 
   // Online poll, modelled on "Ask the Audience": while the audience votes the contestant sees the

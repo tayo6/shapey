@@ -1951,8 +1951,7 @@ class GameScene extends Phaser.Scene {
     return Math.max(0, 3 - this.getAudiencePollsUsed());
   }
 
-  // Each non-Play-Alone player gets three free polls per game. Online uses are enforced by the Worker;
-  // Player-vs-AI uses its clearly labelled practice audience.
+  // Three free polls per player per game are enforced by the online Worker.
   showAudiencePoll() {
     this.closeAudiencePoll();
     if (this.gameOver) return;
