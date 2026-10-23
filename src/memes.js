@@ -22,10 +22,14 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function createShapeyMemes(root) {
   'use strict';
 
+  // The staging page sets window.SHAPEY_ENV = { memesStandardWindow: 3 } to fire commentary a
+  // little more often while testing. Every other page (and Node, in the tests) keeps the default.
+  const envWindow = Number(root && root.SHAPEY_ENV && root.SHAPEY_ENV.memesStandardWindow);
+
   const CONFIG = Object.freeze({
     assetBase: 'assets/memes',
     manifestUrl: 'assets/memes/manifest.json',
-    standardWindow: 4,   // one win/lose meme per four attempts, per human player
+    standardWindow: Number.isFinite(envWindow) && envWindow > 0 ? envWindow : 4, // one win/lose meme per this many attempts, per human player
     tagWinWindow: 4,     // Tag: one team-win meme per this many attempts, per human player
     delayAtMs: 10000,    // Delay meme when this much of an idle player's pick countdown is left
     maxAudioMs: 5000,    // audio memes never play longer than this
