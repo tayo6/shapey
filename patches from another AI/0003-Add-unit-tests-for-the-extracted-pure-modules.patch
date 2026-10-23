@@ -1,0 +1,484 @@
+From f10514686d6e3f5ebd1927e754715a49c4865516 Mon Sep 17 00:00:00 2001
+From: Shapey Refactor <refactor@local>
+Date: Fri, 23 Oct 2026 05:07:27 +0000
+Subject: [PATCH 3/4] Add unit tests for the extracted pure modules
+
+31 new tests (node --test) covering the modules that used to be trapped
+inside main.js and untestable:
+
+- tests/utils.test.mjs     shuffle/randomItem/formatClock/planShuffle/
+                           randomBoardShape, with seeded rngs
+- tests/board.test.mjs     makeInitialBoard guarantees (grid size, exact
+                           hazard share, starting triples) + ShapeBag
+                           no-repeat and scarce-boost rules
+- tests/trackers.test.mjs  Countdown (incl. the stop() park-at-submit
+                           semantics), RevealTracker batches,
+                           InventoryLimiter rolling windows
+- tests/ai.test.mjs        AIPlayer memory (recall/mistake/forget rolls
+                           via injected rand), groups/chooseGroup/guess
+                           policies, aiCanTap truth table
+
+Total suite: 73 tests, all passing.
+---
+ tests/ai.test.mjs       | 160 ++++++++++++++++++++++++++++++++++++++++
+ tests/board.test.mjs    |  73 ++++++++++++++++++
+ tests/trackers.test.mjs | 104 ++++++++++++++++++++++++++
+ tests/utils.test.mjs    |  88 ++++++++++++++++++++++
+ 4 files changed, 425 insertions(+)
+ create mode 100644 tests/ai.test.mjs
+ create mode 100644 tests/board.test.mjs
+ create mode 100644 tests/trackers.test.mjs
+ create mode 100644 tests/utils.test.mjs
+
+diff --git a/tests/ai.test.mjs b/tests/ai.test.mjs
+new file mode 100644
+index 0000000..c35ceab
+--- /dev/null
++++ b/tests/ai.test.mjs
+@@ -0,0 +1,160 @@
++// Unit tests for src/ai.js (the AI opponent's memory and decisions).
++// AIPlayer takes an injected rand, so recall/mistake/forget rolls are exact.
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { AIPlayer, aiCanTap } from '../src/ai.js';
++import { AI_LEVELS, SHAPE_KEYS, MIN_MATCH } from '../src/constants.js';
++
++// A tile stub with the fields aiCanTap and the memory read: active/selected/swapping/faceUp/shape.
++function tile(shape = 'star', over = {}) {
++  return { shape, active: true, selected: false, swapping: false, faceUp: false, ...over };
++}
++
++// Sequence rng: returns the given values in order, then repeats the last one.
++function seq(values) {
++  let i = 0;
++  return () => values[Math.min(i++, values.length - 1)];
++}
++
++test('aiCanTap accepts only available face-down tiles', () => {
++  assert.equal(aiCanTap(tile()), true);
++  assert.equal(aiCanTap(tile('star', { active: false })), false);
++  assert.equal(aiCanTap(tile('star', { selected: true })), false);
++  assert.equal(aiCanTap(tile('star', { swapping: true })), false);
++  assert.equal(aiCanTap(tile('star', { faceUp: true })), false);
++});
++
++test('certain glimpses (its own taps) are always remembered correctly', () => {
++  const ai = new AIPlayer(AI_LEVELS.easy, seq([1]));
++  const t = tile('circle');
++  ai.see(t, true);
++  assert.equal(ai.memory.get(t), 'circle');
++});
++
++test('glimpses beyond the rolled recall share are forgotten', () => {
++  // recall rolls to ~0.6 (Easy); a later roll of 0.99 fails the recall check.
++  const ai = new AIPlayer(AI_LEVELS.easy, seq([0.5, 0.99]));
++  const t = tile('circle');
++  ai.see(t);
++  assert.equal(ai.memory.has(t), false);
++});
++
++test('a remembered glimpse may be recalled as the wrong shape (mistake)', () => {
++  const realRandom = Math.random;
++  try {
++    // Easy mistake chance 0.1: roll 0.05 passes recall (recall = 0.525) and slips.
++    Math.random = () => 0; // randomItem then picks SHAPE_KEYS[0]
++    const ai = new AIPlayer(AI_LEVELS.easy, seq([0.5, 0.05]));
++    const t = tile('star');
++    ai.see(t);
++    assert.equal(ai.memory.get(t), SHAPE_KEYS[0]);
++    assert.notEqual(ai.memory.get(t), 'star');
++  } finally {
++    Math.random = realRandom;
++  }
++});
++
++test('forgetSwapped drops a tile only forgetOnSwap-share of the time', () => {
++  const kept = new AIPlayer(AI_LEVELS.pro, seq([0.5, 0.9])); // pro forgetOnSwap 0.1
++  const a = tile();
++  kept.see(a, true);
++  kept.forgetSwapped(a);
++  assert.equal(kept.memory.has(a), true, '0.9 >= 0.1: the memory survives the swap');
++
++  const forgotten = new AIPlayer(AI_LEVELS.easy, seq([0.5, 0.05])); // easy forgetOnSwap 0.5
++  const b = tile();
++  forgotten.see(b, true);
++  forgotten.forgetSwapped(b);
++  assert.equal(forgotten.memory.has(b), false, '0.05 < 0.5: the swap wiped the memory');
++});
++
++test('known() lists remembered tappable tiles of one shape and forgets dead ones', () => {
++  const ai = new AIPlayer(AI_LEVELS.pro, seq([1]));
++  const t1 = tile('star');
++  const t2 = tile('star');
++  const t3 = tile('star', { selected: true }); // remembered but currently picked
++  const dead = tile('circle', { active: false });
++  [t1, t2, t3, dead].forEach((t) => ai.see(t, true));
++  assert.deepEqual(ai.known('star'), [t1, t2]);
++  assert.equal(ai.memory.has(dead), false, 'dead tiles are pruned from memory');
++  assert.deepEqual(ai.known('circle'), []);
++});
++
++test('groups() never offers dummies, hazards, cancels or untappable tiles', () => {
++  const ai = new AIPlayer(AI_LEVELS.pro, seq([1]));
++  const stars = [tile('star'), tile('star'), tile('star')];
++  const dummies = [tile('dummy'), tile('dummy')];
++  const hazard = tile('hazard');
++  const cancel = tile('cancel');
++  const shown = tile('square', { faceUp: true });
++  [...stars, ...dummies, hazard, cancel, shown].forEach((t) => ai.see(t, true));
++  const groups = ai.groups();
++  assert.equal(groups.length, 1, 'only the star group is offered');
++  assert.deepEqual(groups[0], stars);
++});
++
++test('chooseGroup reaches for a full match; Professional always takes the biggest', () => {
++  const ai = new AIPlayer(AI_LEVELS.pro, seq([0.99])); // 0.99 < bestGroupChance 1 -> biggest group
++  const three = [tile('circle'), tile('circle'), tile('circle')];
++  const four = [tile('square'), tile('square'), tile('square'), tile('square')];
++  [...three, ...four].forEach((t) => ai.see(t, true));
++  assert.deepEqual(ai.chooseGroup(), four); // same tiles; groups() builds fresh arrays
++  // With nothing at MIN_MATCH remembered, there is nothing to choose.
++  const fresh = new AIPlayer(AI_LEVELS.pro, seq([1]));
++  const pair = [tile('circle'), tile('circle')];
++  pair.forEach((t) => fresh.see(t, true));
++  assert.equal(fresh.chooseGroup(), null);
++  assert.ok(pair.length < MIN_MATCH);
++});
++
++test('guess() avoids remembered specials and tiles remembered as another shape', () => {
++  const realRandom = Math.random;
++  try {
++    Math.random = () => 0; // randomItem picks the first pool candidate: deterministic
++    const ai = new AIPlayer(AI_LEVELS.pro, seq([1]));
++    const unrememberedCircle = tile('circle');
++    const rememberedDummy = tile('dummy');
++    const rememberedStar = tile('star');
++    ai.see(rememberedDummy, true);
++    ai.see(rememberedStar, true);
++    const board = [[unrememberedCircle, rememberedDummy, rememberedStar]];
++    // Reaching for stars: the star it remembers is the best start; the remembered
++    // dummy is never a candidate. An unremembered tile may also be guessed at.
++    const forStars = ai.guess('star', board);
++    assert.ok(forStars === rememberedStar || forStars === unrememberedCircle);
++    assert.notEqual(forStars, rememberedDummy);
++    // Reaching for circles: the tile remembered as a star is excluded, the remembered dummy too.
++    const forCircles = ai.guess('circle', board);
++    assert.equal(forCircles, unrememberedCircle);
++    // Open-ended guess never returns the remembered dummy either.
++    for (let i = 0; i < 20; i++) {
++      Math.random = () => i / 20;
++      assert.notEqual(ai.guess(null, board), rememberedDummy);
++    }
++  } finally {
++    Math.random = realRandom;
++  }
++});
++
++test('guess() with preferUnknown starts on tiles it can still learn from', () => {
++  const realRandom = Math.random;
++  try {
++    Math.random = () => 0; // randomItem picks the first candidate
++    const ai = new AIPlayer(AI_LEVELS.pro, seq([1])); // preferUnknown: true
++    const known = tile('circle');
++    ai.see(known, true);
++    const board = [[known, tile('square')]];
++    assert.equal(ai.guess(null, board), board[0][1], 'the unknown tile is preferred');
++    const easy = new AIPlayer(AI_LEVELS.easy, seq([1])); // preferUnknown: false
++    assert.equal(easy.guess(null, board), known, 'Easy just takes the first plausible tile');
++  } finally {
++    Math.random = realRandom;
++  }
++});
++
++test('guess() returns null when nothing is plausible', () => {
++  const ai = new AIPlayer(AI_LEVELS.pro, seq([1]));
++  assert.equal(ai.guess(null, []), null);
++  const dead = [[tile('circle', { faceUp: true })]];
++  assert.equal(ai.guess(null, dead), null);
++});
+diff --git a/tests/board.test.mjs b/tests/board.test.mjs
+new file mode 100644
+index 0000000..8ecd4e0
+--- /dev/null
++++ b/tests/board.test.mjs
+@@ -0,0 +1,73 @@
++// Unit tests for src/board.js (makeInitialBoard, ShapeBag).
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { makeInitialBoard, ShapeBag } from '../src/board.js';
++import { SHAPE_KEYS, MATCH_SHAPE_KEYS, MIN_MATCH } from '../src/constants.js';
++
++const VALID = new Set([...SHAPE_KEYS, 'hazard', 'dummy']); // the board spawns shape keys, hazards and dummies
++
++test('makeInitialBoard builds a rows x cols grid of valid tiles', () => {
++  for (const [rows, cols] of [[7, 7], [6, 6], [5, 5]]) {
++    const board = makeInitialBoard(rows, cols, 0.1);
++    assert.equal(board.length, rows);
++    board.forEach((row) => assert.equal(row.length, cols));
++    const flat = board.flat();
++    assert.equal(flat.length, rows * cols);
++    flat.forEach((shape) => assert.ok(VALID.has(shape), `unexpected tile ${shape}`));
++  }
++});
++
++test('makeInitialBoard keeps the requested hazard share (rounded)', () => {
++  // 49 tiles at 10% -> Math.round(4.9) = 5 hazards; the rest are shapes/dummies.
++  assert.equal(makeInitialBoard(7, 7, 0.1).flat().filter((s) => s === 'hazard').length, 5);
++  assert.equal(makeInitialBoard(5, 5, 0).flat().filter((s) => s === 'hazard').length, 0);
++  assert.equal(makeInitialBoard(6, 6, 1).flat().filter((s) => s === 'hazard').length, 36);
++});
++
++test('makeInitialBoard guarantees three copies of several scoring shapes', () => {
++  const counts = {};
++  for (const shape of makeInitialBoard(7, 7, 0.1).flat()) counts[shape] = (counts[shape] || 0) + 1;
++  const guaranteed = Object.entries(counts)
++    .filter(([shape]) => MATCH_SHAPE_KEYS.includes(shape) && counts[shape] >= MIN_MATCH);
++  // (49 - 5 hazards) / 3 = 14 slots -> up to 11 shapes get an exact triple to start from.
++  assert.ok(guaranteed.length >= 8, `expected several guaranteed shapes, got ${guaranteed.length}`);
++});
++
++test('ShapeBag never deals the same shape twice in a row', () => {
++  const bag = new ShapeBag(['a', 'b', 'c']);
++  let last = null;
++  for (let i = 0; i < 200; i++) {
++    const shape = bag.next();
++    assert.ok(['a', 'b', 'c'].includes(shape));
++    assert.notEqual(shape, last, 'a shape is never dealt twice in a row');
++    last = shape;
++  }
++});
++
++test('ShapeBag keeps working with a single shape', () => {
++  const bag = new ShapeBag(['x']);
++  for (let i = 0; i < 10; i++) assert.equal(bag.next(), 'x');
++});
++
++test('ShapeBag boosts scarce shapes with an extra copy per round', () => {
++  // With three keys and 'a' scarce, every refill queue is [a, b, c, a]: each round deals
++  // every shape once plus one extra 'a' (the never-deal-twice rule only reorders, it
++  // cannot hide the boost with three or more keys). Seeded so the counts are stable.
++  const realRandom = Math.random;
++  let seed = 0x2a; // xorshift32
++  Math.random = () => {
++    seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5;
++    return ((seed >>> 0) / 4294967296);
++  };
++  try {
++    const bag = new ShapeBag(['a', 'b', 'c']);
++    const counts = { a: 0, b: 0, c: 0 };
++    for (let i = 0; i < 300; i++) counts[bag.next(['a'])] += 1;
++    assert.equal(counts.a + counts.b + counts.c, 300);
++    assert.ok(counts.a > 130, `scarce 'a' should be dealt roughly half the time: ${JSON.stringify(counts)}`);
++    assert.ok(counts.b < counts.a && counts.c < counts.a, `both others behind 'a': ${JSON.stringify(counts)}`);
++    // Without the scarce boost the three shapes would even out around 100 each.
++  } finally {
++    Math.random = realRandom;
++  }
++});
+diff --git a/tests/trackers.test.mjs b/tests/trackers.test.mjs
+new file mode 100644
+index 0000000..0d93f6f
+--- /dev/null
++++ b/tests/trackers.test.mjs
+@@ -0,0 +1,104 @@
++// Unit tests for src/trackers.js (Countdown, RevealTracker, InventoryLimiter).
++// All three take an injected clock, so time is simulated exactly.
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { Countdown, RevealTracker, InventoryLimiter } from '../src/trackers.js';
++
++// A controllable clock: a closure (not a method) so it survives being passed around.
++function fakeClock(startAt = 0) {
++  const state = { now: startAt };
++  return { state, fn: () => state.now };
++}
++
++test('Countdown tracks its deadline and expires exactly at it', () => {
++  const { state, fn } = fakeClock(1000);
++  const c = new Countdown(fn);
++  assert.equal(c.expired(), true, 'a fresh countdown has never started');
++  c.start(5000);
++  assert.equal(c.expired(), false);
++  assert.equal(c.remaining(), 5000);
++  state.now = 5000; // 4s later
++  assert.equal(c.remaining(), 1000);
++  assert.equal(c.expired(), false);
++  state.now = 6000;
++  assert.equal(c.expired(), true);
++  assert.equal(c.remaining(), 0, 'remaining never goes negative');
++});
++
++test('Countdown.stop parks the outgoing clock at the submit instant', () => {
++  // Used by submit(): the outgoing player's clock must not consume the time spent
++  // resolving the move, so stop() pins the deadline to now. From that moment the
++  // countdown reads zero/expired and never shows time again until a new start().
++  const { state, fn } = fakeClock(0);
++  const c = new Countdown(fn);
++  c.start(10000);
++  state.now = 4000;
++  c.stop();
++  assert.equal(c.remaining(), 0);
++  assert.equal(c.expired(), true);
++  state.now = 9000; // resolution takes another 5s...
++  assert.equal(c.remaining(), 0, 'the parked clock does not run down further');
++  assert.equal(c.expired(), true);
++  c.start(3000); // the next player gets a fresh deadline
++  assert.equal(c.remaining(), 3000);
++  assert.equal(c.expired(), false);
++});
++
++test('RevealTracker reports the longest remaining reveal and hands due batches back once', () => {
++  const { state, fn } = fakeClock(0);
++  const t = new RevealTracker(fn);
++  const opening = [{ id: 1 }, { id: 2 }];
++  const spawned = [{ id: 3 }];
++  t.add(opening, 15000, true);
++  state.now = 10000; // 5s before the opening flips, a spawned tile appears
++  t.add(spawned, 5000, true);
++  assert.equal(t.remaining(), 5000);
++  state.now = 15000;
++  assert.equal(t.remaining(), 0);
++  const due = t.takeDue();
++  assert.equal(due.length, 2);
++  assert.deepEqual(due[0].tiles, opening);
++  assert.equal(due[0].shuffle, true);
++  assert.equal(due[1].tiles[0].id, 3);
++  assert.deepEqual(t.takeDue(), [], 'a due batch is removed when taken');
++  assert.equal(t.remaining(), 0);
++});
++
++test('RevealTracker.cancelShuffles keeps flipping but stops shuffling', () => {
++  const { state, fn } = fakeClock(0);
++  const t = new RevealTracker(fn);
++  t.add([{ id: 1 }], 1000, true);
++  t.cancelShuffles();
++  state.now = 1000;
++  const [batch] = t.takeDue();
++  assert.equal(batch.shuffle, false, 'pending batches flip face-down but are no longer shuffled');
++});
++
++test('InventoryLimiter enforces a rolling per-player window', () => {
++  const { state, fn } = fakeClock(0);
++  const limiter = new InventoryLimiter(2, 60000, 2, fn);
++  assert.deepEqual(limiter.tryOpen(0), { allowed: true, left: 1, retryInMs: 0 });
++  state.now = 5000;
++  assert.deepEqual(limiter.tryOpen(0), { allowed: true, left: 0, retryInMs: 0 });
++  const refused = limiter.tryOpen(0);
++  assert.equal(refused.allowed, false);
++  assert.ok(refused.retryInMs > 0 && refused.retryInMs <= 60000);
++  // The other player has their own budget.
++  assert.equal(limiter.tryOpen(1).allowed, true);
++  // At 60.001s the first open (t=0) has rolled out of the window, the second (t=5s) is still in.
++  state.now = 60001;
++  assert.equal(limiter.tryOpen(0).allowed, true);
++  assert.equal(limiter.tryOpen(0).allowed, false); // the t=5s open is still inside the window
++  // At 65.001s that one has rolled out too.
++  state.now = 65001;
++  assert.equal(limiter.tryOpen(0).allowed, true);
++});
++
++test('InventoryLimiter refused opens are not recorded', () => {
++  const { state, fn } = fakeClock(0);
++  const limiter = new InventoryLimiter(1, 1000, 1, fn);
++  limiter.tryOpen(0);
++  for (let i = 0; i < 5; i++) assert.equal(limiter.tryOpen(0).allowed, false);
++  state.now = 1001; // window passed; the refusals did not extend it
++  assert.equal(limiter.tryOpen(0).allowed, true);
++});
+diff --git a/tests/utils.test.mjs b/tests/utils.test.mjs
+new file mode 100644
+index 0000000..c5ebbd0
+--- /dev/null
++++ b/tests/utils.test.mjs
+@@ -0,0 +1,88 @@
++// Unit tests for src/utils.js (pure helpers: shuffle, randomItem, formatClock,
++// planShuffle, randomBoardShape). Run with: node --test tests/
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { shuffle, randomItem, formatClock, planShuffle, randomBoardShape } from '../src/utils.js';
++import { SHAPE_KEYS, DUMMY_SPAWN_CHANCE, SHUFFLE_SKIP_CHANCE } from '../src/constants.js';
++
++// Deterministic PRNG (mulberry32) so shuffle/planShuffle tests are reproducible.
++function seeded(seed) {
++  let a = seed >>> 0;
++  return () => {
++    a |= 0; a = (a + 0x6d2b79f5) | 0;
++    let t = Math.imul(a ^ (a >>> 15), 1 | a);
++    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
++    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
++  };
++}
++
++test('shuffle returns a permutation without mutating the input', () => {
++  const input = [1, 2, 3, 4, 5, 6, 7, 8];
++  const copy = input.slice();
++  const out = shuffle(input);
++  assert.deepEqual(input, copy, 'input must not be mutated');
++  assert.deepEqual([...out].sort((a, b) => a - b), copy, 'output is a permutation');
++});
++
++test('shuffle of empty and single-element lists is safe', () => {
++  assert.deepEqual(shuffle([]), []);
++  assert.deepEqual(shuffle(['x']), ['x']);
++});
++
++test('randomItem returns a member of the list', () => {
++  const list = ['a', 'b', 'c'];
++  for (let i = 0; i < 20; i++) assert.ok(list.includes(randomItem(list)));
++});
++
++test('formatClock rounds up, clamps at zero and pads to MM:SS', () => {
++  assert.equal(formatClock(0), '00:00');
++  assert.equal(formatClock(-5000), '00:00');      // never negative
++  assert.equal(formatClock(45000), '00:45');
++  assert.equal(formatClock(44001), '00:45');      // rounds up
++  assert.equal(formatClock(59999), '01:00');      // 59.999s rounds up to a minute
++  assert.equal(formatClock(60000), '01:00');
++  assert.equal(formatClock(3661000), '61:01');    // minutes are not capped at 59
++});
++
++test('planShuffle: fewer than 2 tiles plans nothing', () => {
++  assert.deepEqual(planShuffle(0), { steps: [], skipped: [] });
++  assert.deepEqual(planShuffle(1), { steps: [], skipped: [] });
++});
++
++test('planShuffle: N tiles give N-1 valid swap steps', () => {
++  for (const count of [2, 3, 4, 5, 8]) {
++    const rng = seeded(count * 7919);
++    const { steps, skipped } = planShuffle(count, rng, SHUFFLE_SKIP_CHANCE);
++    assert.equal(steps.length, count - 1, `${count} tiles`);
++    for (const [a, b] of steps) {
++      assert.ok(a !== b, 'a swap never pairs a tile with itself');
++      assert.ok(a >= 0 && a < count && b >= 0 && b < count, 'indexes stay inside the batch');
++    }
++    for (const i of skipped) assert.ok(i >= 0 && i < count);
++    // Same seed, same plan: the planner is fully driven by the injected rng.
++    assert.deepEqual(planShuffle(count, seeded(count * 7919), SHUFFLE_SKIP_CHANCE), { steps, skipped });
++  }
++});
++
++test('planShuffle: skipChance 0 involves everyone, skipChance 1 still involves at least 3', () => {
++  const none = planShuffle(5, seeded(1), 0);
++  assert.equal(none.skipped.length, 0);
++  assert.equal(none.steps.length, 4);
++  const all = planShuffle(5, seeded(2), 1);
++  // Every tile rolled a skip, but the minimum-player rule pulls (up to) 3 back in.
++  assert.ok(all.skipped.length <= 2, 'at most 2 of 5 tiles sit out when everything rolls a skip');
++  assert.equal(all.steps.length, 4);
++});
++
++test('randomBoardShape returns a dummy DUMMY_SPAWN_CHANCE-share of the time', () => {
++  const realRandom = Math.random;
++  try {
++    Math.random = () => 0; // below every threshold -> dummy
++    assert.equal(randomBoardShape(), 'dummy');
++    Math.random = () => 0.999; // above the dummy chance -> a spawnable shape key
++    assert.ok(SHAPE_KEYS.includes(randomBoardShape()));
++    assert.notEqual(randomBoardShape(), 'dummy');
++  } finally {
++    Math.random = realRandom;
++  }
++});
+-- 
+2.47.3
+

@@ -1,0 +1,283 @@
+From 05a9a5c2a772504f979536f5610f8e9f2c1c4a20 Mon Sep 17 00:00:00 2001
+From: Shapey Refactor <refactor@local>
+Date: Fri, 23 Oct 2026 05:07:27 +0000
+Subject: [PATCH 4/4] Update CI checks and developer docs for the module layout
+
+- every workflow now syntax-checks all src/*.js + src/scenes/*.js
+  (node --check handles ES modules on Node 22) and runs the whole
+  tests/ directory
+- the staging preview smoke fetches src/scenes/load.js instead of the
+  deleted staging/main.js (AUDIENCE_WATCH_CODE assertion preserved)
+- DEVELOPER_GUIDE/GAMEPLAY/worker STAGING.md file maps and module
+  references updated (constants.js/config.js/ai.js/scenes/)
+---
+ .github/workflows/local-gameplay-tests.yml | 30 ++++++++++------------
+ .github/workflows/pages.yml                | 18 +++++--------
+ .github/workflows/staging-preview.yml      | 14 +++++-----
+ .github/workflows/worker-tests.yml         |  9 +++----
+ DEVELOPER_GUIDE.md                         | 18 +++++++------
+ GAMEPLAY.md                                |  4 +--
+ tools/build-memes-manifest.js              |  2 +-
+ worker/STAGING.md                          |  2 +-
+ 8 files changed, 44 insertions(+), 53 deletions(-)
+
+diff --git a/.github/workflows/local-gameplay-tests.yml b/.github/workflows/local-gameplay-tests.yml
+index bdc7b2e..020efc1 100644
+--- a/.github/workflows/local-gameplay-tests.yml
++++ b/.github/workflows/local-gameplay-tests.yml
+@@ -3,14 +3,13 @@ name: Local gameplay regression tests
+ on:
+   pull_request:
+     paths:
+-      - "src/main.js"
+-      - "src/rules.js"
+-      - "staging/main.js"
+-      - "staging/memes.js"
++      - "src/**"
++      - "index.html"
++      - "staging/index.html"
++      - "staging/audience.js"
+       - "tools/build-memes-manifest.js"
+       - "assets/memes/**"
+-      - "tests/rules.test.js"
+-      - "tests/memes.test.js"
++      - "tests/**"
+       - ".github/workflows/local-gameplay-tests.yml"
+ 
+ permissions:
+@@ -28,19 +27,16 @@ jobs:
+         with:
+           node-version: 22
+ 
+-      - name: Test pure game rules including Star streak rewards
+-        run: node --test tests/rules.test.js tests/memes.test.js
++      - name: Run pure-rule and module unit tests (rules, memes, utils, board, trackers, AI)
++        run: node --test tests/
+ 
+-      - name: Check live frontend JavaScript syntax
+-        run: node --check src/main.js
+-
+-      - name: Check staging frontend JavaScript syntax
+-        run: node --check staging/main.js
+-
+-      - name: Check staging meme commentary JavaScript syntax
++      - name: Check every frontend and tool module's syntax (ES modules included)
+         run: |
+-          node --check staging/memes.js
+-          node --check tools/build-memes-manifest.js
++          set -e
++          for f in src/*.js src/scenes/*.js staging/audience.js tools/build-memes-manifest.js; do
++            echo "-- $f"
++            node --check "$f"
++          done
+ 
+       - name: Check the meme manifest lists every meme file
+         run: node tools/build-memes-manifest.js --check
+diff --git a/.github/workflows/pages.yml b/.github/workflows/pages.yml
+index 4d17438..34d593e 100644
+--- a/.github/workflows/pages.yml
++++ b/.github/workflows/pages.yml
+@@ -25,20 +25,14 @@ jobs:
+         uses: actions/checkout@v4
+ 
+       - name: Test extracted game rules
+-        run: node --test tests/rules.test.js tests/memes.test.js
++        run: node --test tests/
+ 
+-      - name: Check game JavaScript syntax
++      - name: Check game and staging JavaScript syntax (all ES modules)
+         run: |
+-          node --check src/main.js
+-          node --check src/rules.js
+-          node --check src/loading-bar.js
+-          node --check src/memes.js
+-
+-      - name: Check staging UI JavaScript syntax
+-        run: |
+-          node --check staging/main.js
+-          node --check staging/memes.js
+-          node --check staging/audience.js
++          set -e
++          for f in src/*.js src/scenes/*.js staging/audience.js; do
++            node --check "$f"
++          done
+ 
+       - name: Check the meme manifest lists every meme file
+         run: node tools/build-memes-manifest.js --check
+diff --git a/.github/workflows/staging-preview.yml b/.github/workflows/staging-preview.yml
+index 4bf6c54..9720765 100644
+--- a/.github/workflows/staging-preview.yml
++++ b/.github/workflows/staging-preview.yml
+@@ -29,11 +29,10 @@ jobs:
+ 
+       - name: Check JavaScript syntax
+         run: |
+-          node --check src/main.js
+-          node --check src/rules.js
+-          node --check staging/main.js
+-          node --check staging/audience.js
+-          node --check worker/src/index.js
++          set -e
++          for f in src/*.js src/scenes/*.js staging/audience.js worker/src/index.js; do
++            node --check "$f"
++          done
+ 
+       - name: Smoke-test the deployed preview
+         env:
+@@ -48,8 +47,9 @@ jobs:
+           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/audience.js" -o /tmp/audience.js
+           grep -q 'function startAiDemo()' /tmp/audience.js
+           grep -q "type: 'poll_vote', tileId" /tmp/audience.js
+-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/main.js" -o /tmp/staging-main.js
+-          grep -q 'AUDIENCE_WATCH_CODE' /tmp/staging-main.js
++          # The game page now loads the shared ES modules from src/ (staging/ has no forked copy).
++          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/src/scenes/load.js" -o /tmp/load-scene.js
++          grep -q 'AUDIENCE_WATCH_CODE' /tmp/load-scene.js
+           # The exact game-poll label is presentation copy and has changed over time; AUDIENCE_WATCH_CODE above verifies the relevant staging client path.
+           direct_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 1 -o /tmp/direct-health.json -w '%{http_code}' 'https://shapey-multiplayer-staging.hellohuman100.workers.dev/health')"
+           echo "Direct staging Worker health status: $direct_status"
+diff --git a/.github/workflows/worker-tests.yml b/.github/workflows/worker-tests.yml
+index 48a5ea7..2e63fe6 100644
+--- a/.github/workflows/worker-tests.yml
++++ b/.github/workflows/worker-tests.yml
+@@ -10,7 +10,6 @@ on:
+       - "tests/**"
+       - ".github/workflows/worker-tests.yml"
+       - "staging/audience.js"
+-      - "staging/main.js"
+       - "staging/index.html"
+   pull_request:
+     paths:
+@@ -20,7 +19,6 @@ on:
+       - ".github/workflows/worker-tests.yml"
+       - "staging/audience.html"
+       - "staging/audience.js"
+-      - "staging/main.js"
+       - "staging/index.html"
+       - ".github/workflows/staging-preview.yml"
+ jobs:
+@@ -114,6 +112,7 @@ jobs:
+       - name: Check frontend JavaScript syntax
+         working-directory: .
+         run: |
+-          node --check src/main.js
+-          node --check staging/main.js
+-          node --check staging/audience.js
++          set -e
++          for f in src/*.js src/scenes/*.js staging/audience.js; do
++            node --check "$f"
++          done
+diff --git a/DEVELOPER_GUIDE.md b/DEVELOPER_GUIDE.md
+index a47211c..bf49cab 100644
+--- a/DEVELOPER_GUIDE.md
++++ b/DEVELOPER_GUIDE.md
+@@ -16,11 +16,13 @@ Shapey is intended to be a competitive, turn-based memory-and-matching game with
+ - Audience Pick voting, eventually with real spectators.
+ - Match end, winner display, and rematch.
+ 
+-The current app is a static Phaser 3 browser prototype hosted on GitHub Pages. `src/main.js` owns scene/UI orchestration, while pure game decisions live in `src/rules.js` and are covered by `node --test tests/rules.test.js`. The design specification is `GAMEPLAY.md`. GitHub Pages serves files but does not provide authoritative multiplayer state, secure currency, or live voting.
++The current app is a static Phaser 3 browser prototype hosted on GitHub Pages. The client is split into ES modules under `src/` (no build step - GitHub Pages serves them directly): pure game decisions live in `src/rules.js` (with `src/board.js`, `src/trackers.js`, `src/ai.js` and `src/utils.js`), scene/UI orchestration lives in `src/scenes/`, and `src/main.js` is a thin entry that starts Phaser. All pure modules are covered by `node --test tests/`. The design specification is `GAMEPLAY.md`. GitHub Pages serves files but does not provide authoritative multiplayer state, secure currency, or live voting.
+ 
+ - Repository: https://github.com/tayo6/shapey
+ - Hosted prototype: https://tayo6.github.io/shapey/
+-- Main client: `src/main.js`
++- Main client: `src/main.js` (entry), `src/scenes/` (Boot/Load/Menu/Game scenes)
++- Pure logic: `src/rules.js`, `src/board.js`, `src/trackers.js`, `src/ai.js`, `src/utils.js` (all unit-tested)
++- Configuration: `src/constants.js` (pure data) and `src/config.js` (URL parameters, rules, multiplayer API)
+ - Rule specification: `GAMEPLAY.md`
+ 
+ ## 2. Board, tiles, and memory phase
+@@ -40,23 +42,23 @@ The current app is a static Phaser 3 browser prototype hosted on GitHub Pages. `
+ 
+ ### Scenes, modes and loading
+ 
+-- Loading is two stages. `BootScene` fetches only the two loading-screen images (`assets/ui/shapey logo.webp`, `assets/ui/load rectangle.webp`); `LoadScene` then draws the logo and the load bar (gold fill inside the bar's dark slot, with a bobbing logo and pulsing fill as the load animation), loads everything else, and opens `MenuScene` (or `GameScene` directly with `?mode=`). `index.html` shows the same logo and bar in plain HTML/CSS immediately, so the screen is never blank while Phaser downloads; keep its numbers in sync with `LOGO_*` / `LOAD_BAR_*` / `LOAD_TRACK` in `src/main.js`. The custom font loads in parallel and never blocks the game for more than 2.5 s.
++- Loading is two stages. `BootScene` fetches only the two loading-screen images (`assets/ui/shapey logo.webp`, `assets/ui/load rectangle.webp`); `LoadScene` then draws the logo and the load bar (gold fill inside the bar's dark slot, with a bobbing logo and pulsing fill as the load animation), loads everything else, and opens `MenuScene` (or `GameScene` directly with `?mode=`). `index.html` shows the same logo and bar in plain HTML/CSS immediately, so the screen is never blank while Phaser downloads; keep its numbers in sync with `LOGO_*` / `LOAD_BAR_*` / `LOAD_TRACK` in `src/constants.js`. The custom font loads in parallel and never blocks the game for more than 2.5 s.
+ - **Branding rule:** the Shapey logo image (`shapey logo.webp`) is used for every Shapey logo (loading screens, menu, README, favicon `shapey icon.webp`); do not draw "SHAPEY" as text. The load rectangle image is the only loading bar.
+ - Landing dust (`assets/fx/dusty.webp`) is 7 equal 304 x 156 cells, each puff centred on its cell's middle and sitting on the bottom edge, so the cloud grows in place instead of drifting sideways. If the sheet is replaced, repack it the same way (equal cells, shared anchor) rather than slicing on a guessed grid.
+ - Art is stored at about 1.5x its on-screen size (the canvas itself is 720 px wide) to keep downloads and GPU memory small. Keep that in mind before swapping in new art: `setDisplaySize`/`fitToWidth` do the scaling, so any size works, but oversized files slow loading on phones.
+-- `MODES` (top of `src/main.js`) defines the four modes. Pure rules in `src/rules.js` decide match scoring/size, whether a pick matches the current selection, hazard routing, penalty arithmetic, valid hazard URL overrides, and Play Alone score-floor checks and mode-specific versus targets. Phaser scene methods still own animations, UI updates and state changes. Run the rule tests with `node --test tests/rules.test.js`.
++- `MODES` (in `src/config.js`, targets from `src/rules.js`) defines the four modes. Pure rules in `src/rules.js` decide match scoring/size, whether a pick matches the current selection, hazard routing, penalty arithmetic, valid hazard URL overrides, and Play Alone score-floor checks and mode-specific versus targets. Phaser scene methods still own animations, UI updates and state changes. Run the tests with `node --test tests/`.
+ - **Sides vs players.** `activePlayer` is the *side* that is playing (0 or 1) and drives scores, planks, dimming and the AI. In Tag a side is a team, and `activeMember` (0 or 1, from `turnNumber`) says which partner is playing; `turnLabel()` turns the pair into "Team 1: Player 2" and `limiterSlot()` gives each of the four players their own inventory-limit slot. `startTurn()` is the only place that advances `turnNumber`. `TEAM_PLAYERS` holds the names.
+ - **Difficulty.** Player vs AI opens a "Choose difficulty" panel (`MenuScene.openDifficulty()`) built from `AI_LEVELS`, then starts `GameScene` with `{ mode: 'ai', difficulty }`. `GameScene.init()` stores it as `this.difficulty` and `this.ai` (the level's settings object); Restart and Play again pass it back so the level survives.
+ - **Flip-back safety net.** `healStuckTiles()` (run every frame) flips back down any tile that has been face-up for `STUCK_UP_MS` (2.5 s) without a legitimate reason: it is not picked, not in a reveal batch, not mid-swap. A wrong shape resets the picks as before; this only guarantees nothing is ever left showing, whatever the cause.
+ - Spawning: `pickShape()` rolls hazard, then dummy, then draws from `ShapeBag` (see GAMEPLAY.md). `ensureMatchPossible()` is the safety net after a refill.
+ - **Hazards.** `onTileTap()` routes a hazard to `hazardBlast()` when something is already picked, or always in Play alone (costs `HAZARD_BLAST_PENALTY` = 1 point in the two-player modes and nothing in Play alone; the hazard and all picked tiles are destroyed with no reward, then the board refills and the turn ends) and to `hazardHit()` when nothing is picked (no damage, the hazard flips back, the turn continues). The blast reuses `destroyTiles()` and `cascade()` from the submit path, and calls `cancelShuffles()` first for the same reason `submit()` does.
+-- The AI (`aiSee`, `aiGroups`, `aiChooseGroup`, `aiGuess`, `aiAttempt`, `runAITurn`) only uses tiles it has actually seen, keyed by tile object so memory follows tiles as they fall. Everything that differs between Easy and Professional is a field of the `AI_LEVELS` entry in `this.ai`; do not branch on the difficulty name in the code.
++- The AI's memory and decisions (`AIPlayer` in `src/ai.js`: `see`, `known`, `groups`, `chooseGroup`, `guess`) only use tiles it has actually seen, keyed by tile object so memory follows tiles as they fall. The scene keeps the timing and visible taps (`aiSee`, `aiAttempt`, `runAITurn` in `src/scenes/game.js`). Everything that differs between Easy and Professional is a field of the `AI_LEVELS` entry (in `src/constants.js`) held by `this.ai`; do not branch on the difficulty name in the code.
+ 
+ The memory challenge is based on tile identity and location. Do not show exact hidden positions to a player through UI, logs, AI logic, or audience polling.
+ 
+ ### Normal shape tiles
+ 
+-The assets are mapped in `SHAPE_FILES` in `src/main.js`. The current mapping includes:
++The assets are mapped in `SHAPE_FILES` in `src/constants.js`. The current mapping includes:
+ 
+ | Code key | Asset filename |
+ |---|---|
+@@ -257,7 +259,7 @@ Asset: `assets/shapes/cancel.webp`; code key: `cancel`.
+ 
+ ## 8. AI opponent design
+ 
+-The game offers **Easy** and **Professional** (the "Hard" design below) through a difficulty panel after Player vs AI is chosen. **Both are implemented**, except for using inventory items (power-ups have no in-match effect yet, for humans either). Both use the same board odds, score rules, timers, and item costs as a human. The exact numbers are in `AI_LEVELS` in `src/main.js` and are tabulated in `GAMEPLAY.md`.
++The game offers **Easy** and **Professional** (the "Hard" design below) through a difficulty panel after Player vs AI is chosen. **Both are implemented**, except for using inventory items (power-ups have no in-match effect yet, for humans either). Both use the same board odds, score rules, timers, and item costs as a human. The exact numbers are in `AI_LEVELS` in `src/constants.js` and are tabulated in `GAMEPLAY.md`.
+ 
+ ### Easy AI
+ 
+@@ -402,4 +404,4 @@ Before calling the core rules complete, test at least these cases:
+ 
+ ---
+ 
+-For current visual/layout details, start in `src/main.js`. For the shorter player-facing rule design and original feature decisions, see `GAMEPLAY.md`. Keep this guide updated whenever a rule changes, especially where implemented behavior differs from the design.
++For current visual/layout details, start in `src/scenes/game.js` (and `src/constants.js` for the numbers). For the shorter player-facing rule design and original feature decisions, see `GAMEPLAY.md`. Keep this guide updated whenever a rule changes, especially where implemented behavior differs from the design.
+diff --git a/GAMEPLAY.md b/GAMEPLAY.md
+index 71917f9..e9a42da 100644
+--- a/GAMEPLAY.md
++++ b/GAMEPLAY.md
+@@ -73,7 +73,7 @@ Tag is the online 2-vs-2 mode. Team 1 is Player 1 and Player 2; Team 2 is Player
+ - **Play alone:** a hazard never costs anything. Whether picked first or after shapes, it destroys itself and every shape currently picked (it is not counted as an attempt).
+ - In every mode the destroyed tiles burst with the normal effect, the board falls and refills, the new tiles get the usual 5-second reveal and shuffle, and the turn is spent like a match. A wrong shape only flips the picks back, and a match pays points.
+ 
+-In the two-player and Tag modes a hazard blast always costs 1 point, even at 0, so a score can go negative (set `TWO_PLAYER_SCORE_FLOOR` in `src/main.js` to 0 to stop that).
++In the two-player and Tag modes a hazard blast always costs 1 point, even at 0, so a score can go negative (set `TWO_PLAYER_SCORE_FLOOR` in `src/constants.js` to 0 to stop that).
+ 
+ | Mode | Hazard share of tiles |
+ |---|---:|
+@@ -83,7 +83,7 @@ The starting board gets about that share of hazards, and every newly spawned til
+ 
+ ### Play against AI
+ 
+-**Status:** both levels and the difficulty picker are implemented. After choosing Player vs AI the player picks **Easy** or **Professional** (the "Hard" design below, named Professional in the game). The level is shown on the AI's plank ("AI Easy" / "AI Pro") and is kept by Restart and Play again. Every number that differs between the levels lives in the `AI_LEVELS` table in `src/main.js` (see `aiSee`/`aiChooseGroup`/`aiAttempt`). The opponent takes a visible turn, reveals tiles with a short delay, submits its match, and then returns control to the player.
++**Status:** both levels and the difficulty picker are implemented. After choosing Player vs AI the player picks **Easy** or **Professional** (the "Hard" design below, named Professional in the game). The level is shown on the AI's plank ("AI Easy" / "AI Pro") and is kept by Restart and Play again. Every number that differs between the levels lives in the `AI_LEVELS` table in `src/constants.js` (see `AIPlayer` in `src/ai.js` and `aiAttempt` in `src/scenes/game.js`). The opponent takes a visible turn, reveals tiles with a short delay, submits its match, and then returns control to the player.
+ 
+ | | Easy | Professional |
+ |---|---|---|
+diff --git a/tools/build-memes-manifest.js b/tools/build-memes-manifest.js
+index 73dfe4f..9d61f2e 100644
+--- a/tools/build-memes-manifest.js
++++ b/tools/build-memes-manifest.js
+@@ -1,7 +1,7 @@
+ #!/usr/bin/env node
+ 'use strict';
+ 
+-// Lists the meme files for staging/memes.js. A browser cannot list a folder, so this writes
++// Lists the meme files for src/memes.js. A browser cannot list a folder, so this writes
+ // assets/memes/manifest.json:  { "audio": { "<folder>": [files] }, "gifs": { "<folder>": [files] } }
+ //
+ //   node tools/build-memes-manifest.js          write the manifest
+diff --git a/worker/STAGING.md b/worker/STAGING.md
+index e66175a..c2801a8 100644
+--- a/worker/STAGING.md
++++ b/worker/STAGING.md
+@@ -10,7 +10,7 @@ This test environment is separate from production.
+ - **Production Worker:** `shapey-multiplayer` — unchanged
+ - **Production Durable Object namespace:** `shapey-multiplayer_Room` — unchanged
+ 
+-The staging game page is an additional path on the site's static hosting and keeps its own copy of the game code in `staging/main.js`. The home page (`src/main.js`) now runs the same game and also connects to this Worker, so both pages share one backend. The Worker has its own namespace and does not share game-room storage with the old production Worker, which the game no longer uses.
++The staging game page is an additional path on the site's static hosting and runs the same shared modules from `src/` as the home page; `staging/index.html` only sets `window.SHAPEY_ENV = { staging: true, memesStandardWindow: 3 }` (relaxes the local `?api=` override and fires meme commentary a little more often) and shows the red staging banner. The home page (`src/main.js`) now runs the same game and also connects to this Worker, so both pages share one backend. The Worker has its own namespace and does not share game-room storage with the old production Worker, which the game no longer uses.
+ 
+ ## What to test
+ 
+-- 
+2.47.3
+
