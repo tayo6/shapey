@@ -14,7 +14,7 @@ const fontReady = Promise.race([
   new Promise((resolve) => setTimeout(resolve, 2500)),
 ]).catch(() => {});
 
-// Stage 2: shows the logo and the load bar (Phaser draws the same picture as index.html), then loads
+// Stage 2: shows the background, logo and clean load bar (matching index.html), then loads
 // everything else while the bar fills.
 export class LoadScene extends Phaser.Scene {
   constructor() {
@@ -22,7 +22,8 @@ export class LoadScene extends Phaser.Scene {
   }
 
   preload() {
-    this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x2b1a0f);
+    const bootBackground = this.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'bootBg');
+    bootBackground.setDisplaySize(GAME_WIDTH, GAME_HEIGHT);
     const logo = this.add.image(GAME_WIDTH / 2, LOGO_Y, 'logo');
     logo.setScale(LOGO_W / logo.width);
 
