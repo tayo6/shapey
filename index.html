@@ -21,7 +21,7 @@
 
     /* Shown instantly, while Phaser itself is still downloading. It uses the same layout as the in-game
        loading screen (a 720 x 1280 stage, logo centred at 470, load bar centred at 720), so the hand-over is seamless.
-       Keep these numbers in sync with LOGO_* / LOAD_BAR_* in src/main.js. */
+       Keep these numbers in sync with LOGO_* / LOAD_BAR_* in src/constants.js. */
     #boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
     #boot .stage { position: relative; width: min(100vw, 56.25vh); height: min(177.78vw, 100vh); }
     #boot img { position: absolute; left: 50%; transform: translate(-50%, -50%); height: auto; }
@@ -55,10 +55,13 @@
     <div class="bar"><img id="bootLoadRectangle" alt="" width="840" height="175" /><div class="fill"><div class="gloss"></div></div></div>
   </div></div>
   <div id="game"></div>
+  <!-- Classic scripts run first: boot bar, Phaser, then the UMD rule/meme globals.
+       The ES-module entry runs after them (modules are deferred), so window.ShapeyRules,
+       window.ShapeyMemes and window.ShapeyLoadingBar already exist when it evaluates. -->
   <script src="src/loading-bar.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.80.1/phaser.min.js"></script>
   <script src="src/rules.js"></script>
   <script src="src/memes.js"></script>
-  <script src="src/main.js"></script>
+  <script type="module" src="src/main.js"></script>
 </body>
 </html>
