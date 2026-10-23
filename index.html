@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin />
   <link rel="preload" href="assets/fonts/HAPPY%20SCHOOL.TTF" as="font" type="font/ttf" crossorigin />
   <link rel="preload" href="assets/ui/shapey%20logo.webp" as="image" type="image/webp" />
-  <link rel="preload" href="assets/ui/load%20rectangle%20staging.webp" as="image" type="image/webp" />
+  <link rel="preload" href="assets/backgrounds/BG.webp" as="image" type="image/webp" />
   <link rel="preload" href="assets/ui/load%20rectangle.jpeg" as="image" type="image/jpeg" />
   <style>
     @font-face {
@@ -19,11 +19,16 @@
     html, body { margin: 0; height: 100%; background: #2b1a0f; overflow: hidden; }
     #game { width: 100%; height: 100%; }
 
-    /* Shown instantly, while Phaser itself is still downloading. It uses the same layout as the in-game
-       loading screen (a 720 x 1280 stage, logo centred at 470, load bar centred at 720), so the hand-over is seamless.
+    /* The boot artwork is preloaded together and revealed in one frame while Phaser starts. It uses the same
+       background and layout as the in-game loading screen (720 x 1280; logo centred at 470, load bar at 720).
        Keep these numbers in sync with LOGO_* / LOAD_BAR_* in src/constants.js. */
-    #boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
-    #boot .stage { position: relative; width: min(100vw, 56.25vh); height: min(177.78vw, 100vh); }
+    #boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #2b1a0f; }
+    #boot .stage {
+      position: relative; width: min(100vw, 56.25vh); height: min(177.78vw, 100vh);
+      background: #2b1a0f url('assets/backgrounds/BG.webp') center center / 100% 100% no-repeat;
+      opacity: 0;
+    }
+    #boot.ready .stage { opacity: 1; }
     #boot img { position: absolute; left: 50%; transform: translate(-50%, -50%); height: auto; }
     #boot .logo {
       top: 36.72%; width: 72.22%;
