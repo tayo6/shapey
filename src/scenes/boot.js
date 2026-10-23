@@ -10,11 +10,12 @@ export class BootScene extends Phaser.Scene {
 
   preload() {
     this.load.setPath('assets');
+    this.load.image('bootBg', 'backgrounds/BG.webp');
     this.load.image('logo', 'ui/shapey logo.webp');
   }
 
   create() {
-    // Reuse the immediately available canvas; loading-bar.js cleans it in the background.
+    // Reuse the cleaned canvas created before Phaser starts, so the plank has no corrupted first frame.
     this.textures.addCanvas('loadRect', window.ShapeyLoadingBar.canvas);
     this.scene.start('LoadScene');
   }
