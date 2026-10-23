@@ -16,11 +16,13 @@ Shapey is intended to be a competitive, turn-based memory-and-matching game with
 - Audience Pick voting, eventually with real spectators.
 - Match end, winner display, and rematch.
 
-The current app is a static Phaser 3 browser prototype hosted on GitHub Pages. `src/main.js` owns scene/UI orchestration, while pure game decisions live in `src/rules.js` and are covered by `node --test tests/rules.test.js`. The design specification is `GAMEPLAY.md`. GitHub Pages serves files but does not provide authoritative multiplayer state, secure currency, or live voting.
+The current app is a static Phaser 3 browser prototype hosted on GitHub Pages. The client is split into ES modules under `src/` (no build step - GitHub Pages serves them directly): pure game decisions live in `src/rules.js` (with `src/board.js`, `src/trackers.js`, `src/ai.js` and `src/utils.js`), scene/UI orchestration lives in `src/scenes/`, and `src/main.js` is a thin entry that starts Phaser. All pure modules are covered by `node --test tests/*.test.js tests/*.test.mjs`. The design specification is `GAMEPLAY.md`. GitHub Pages serves files but does not provide authoritative multiplayer state, secure currency, or live voting.
 
 - Repository: https://github.com/tayo6/shapey
 - Hosted prototype: https://tayo6.github.io/shapey/
-- Main client: `src/main.js`
+- Main client: `src/main.js` (entry), `src/scenes/` (Boot/Load/Menu/Game scenes)
+- Pure logic: `src/rules.js`, `src/board.js`, `src/trackers.js`, `src/ai.js`, `src/utils.js` (all unit-tested)
+- Configuration: `src/constants.js` (pure data) and `src/config.js` (URL parameters, rules, multiplayer API)
 - Rule specification: `GAMEPLAY.md`
 
 ## 2. Board, tiles, and memory phase
@@ -40,23 +42,23 @@ The current app is a static Phaser 3 browser prototype hosted on GitHub Pages. `
 
 ### Scenes, modes and loading
 
-- Loading is two stages. `BootScene` fetches only the two loading-screen images (`assets/ui/shapey logo.webp`, `assets/ui/load rectangle.webp`); `LoadScene` then draws the logo and the load bar (gold fill inside the bar's dark slot, with a bobbing logo and pulsing fill as the load animation), loads everything else, and opens `MenuScene` (or `GameScene` directly with `?mode=`). `index.html` shows the same logo and bar in plain HTML/CSS immediately, so the screen is never blank while Phaser downloads; keep its numbers in sync with `LOGO_*` / `LOAD_BAR_*` / `LOAD_TRACK` in `src/main.js`. The custom font loads in parallel and never blocks the game for more than 2.5 s.
+- Loading is two stages. `BootScene` fetches only the two loading-screen images (`assets/ui/shapey logo.webp`, `assets/ui/load rectangle.webp`); `LoadScene` then draws the logo and the load bar (gold fill inside the bar's dark slot, with a bobbing logo and pulsing fill as the load animation), loads everything else, and opens `MenuScene` (or `GameScene` directly with `?mode=`). `index.html` shows the same logo and bar in plain HTML/CSS immediately, so the screen is never blank while Phaser downloads; keep its numbers in sync with `LOGO_*` / `LOAD_BAR_*` / `LOAD_TRACK` in `src/constants.js`. The custom font loads in parallel and never blocks the game for more than 2.5 s.
 - **Branding rule:** the Shapey logo image (`shapey logo.webp`) is used for every Shapey logo (loading screens, menu, README, favicon `shapey icon.webp`); do not draw "SHAPEY" as text. The load rectangle image is the only loading bar.
 - Landing dust (`assets/fx/dusty.webp`) is 7 equal 304 x 156 cells, each puff centred on its cell's middle and sitting on the bottom edge, so the cloud grows in place instead of drifting sideways. If the sheet is replaced, repack it the same way (equal cells, shared anchor) rather than slicing on a guessed grid.
 - Art is stored at about 1.5x its on-screen size (the canvas itself is 720 px wide) to keep downloads and GPU memory small. Keep that in mind before swapping in new art: `setDisplaySize`/`fitToWidth` do the scaling, so any size works, but oversized files slow loading on phones.
-- `MODES` (top of `src/main.js`) defines the four modes. Pure rules in `src/rules.js` decide match scoring/size, whether a pick matches the current selection, hazard routing, penalty arithmetic, valid hazard URL overrides, and Play Alone score-floor checks and mode-specific versus targets. Phaser scene methods still own animations, UI updates and state changes. Run the rule tests with `node --test tests/rules.test.js`.
+- `MODES` (in `src/config.js`, targets from `src/rules.js`) defines the four modes. Pure rules in `src/rules.js` decide match scoring/size, whether a pick matches the current selection, hazard routing, penalty arithmetic, valid hazard URL overrides, and Play Alone score-floor checks and mode-specific versus targets. Phaser scene methods still own animations, UI updates and state changes. Run the tests with `node --test tests/*.test.js tests/*.test.mjs` (Node 22; passing the bare `tests/` directory fails on Node 22).
 - **Sides vs players.** `activePlayer` is the *side* that is playing (0 or 1) and drives scores, planks, dimming and the AI. In Tag a side is a team, and `activeMember` (0 or 1, from `turnNumber`) says which partner is playing; `turnLabel()` turns the pair into "Team 1: Player 2" and `limiterSlot()` gives each of the four players their own inventory-limit slot. `startTurn()` is the only place that advances `turnNumber`. `TEAM_PLAYERS` holds the names.
 - **Difficulty.** Player vs AI opens a "Choose difficulty" panel (`MenuScene.openDifficulty()`) built from `AI_LEVELS`, then starts `GameScene` with `{ mode: 'ai', difficulty }`. `GameScene.init()` stores it as `this.difficulty` and `this.ai` (the level's settings object); Restart and Play again pass it back so the level survives.
 - **Flip-back safety net.** `healStuckTiles()` (run every frame) flips back down any tile that has been face-up for `STUCK_UP_MS` (2.5 s) without a legitimate reason: it is not picked, not in a reveal batch, not mid-swap. A wrong shape resets the picks as before; this only guarantees nothing is ever left showing, whatever the cause.
 - Spawning: `pickShape()` rolls hazard, then dummy, then draws from `ShapeBag` (see GAMEPLAY.md). `ensureMatchPossible()` is the safety net after a refill.
 - **Hazards.** `onTileTap()` routes a hazard to `hazardBlast()` when something is already picked, or always in Play alone (costs `HAZARD_BLAST_PENALTY` = 1 point in the two-player modes and nothing in Play alone; the hazard and all picked tiles are destroyed with no reward, then the board refills and the turn ends) and to `hazardHit()` when nothing is picked (no damage, the hazard flips back, the turn continues). The blast reuses `destroyTiles()` and `cascade()` from the submit path, and calls `cancelShuffles()` first for the same reason `submit()` does.
-- The AI (`aiSee`, `aiGroups`, `aiChooseGroup`, `aiGuess`, `aiAttempt`, `runAITurn`) only uses tiles it has actually seen, keyed by tile object so memory follows tiles as they fall. Everything that differs between Easy and Professional is a field of the `AI_LEVELS` entry in `this.ai`; do not branch on the difficulty name in the code.
+- The AI's memory and decisions (`AIPlayer` in `src/ai.js`: `see`, `known`, `groups`, `chooseGroup`, `guess`) only use tiles it has actually seen, keyed by tile object so memory follows tiles as they fall. The scene keeps the timing and visible taps (`aiSee`, `aiAttempt`, `runAITurn` in `src/scenes/game.js`). Everything that differs between Easy and Professional is a field of the `AI_LEVELS` entry (in `src/constants.js`) held by `this.ai`; do not branch on the difficulty name in the code.
 
 The memory challenge is based on tile identity and location. Do not show exact hidden positions to a player through UI, logs, AI logic, or audience polling.
 
 ### Normal shape tiles
 
-The assets are mapped in `SHAPE_FILES` in `src/main.js`. The current mapping includes:
+The assets are mapped in `SHAPE_FILES` in `src/constants.js`. The current mapping includes:
 
 | Code key | Asset filename |
 |---|---|
@@ -257,7 +259,7 @@ Asset: `assets/shapes/cancel.webp`; code key: `cancel`.
 
 ## 8. AI opponent design
 
-The game offers **Easy** and **Professional** (the "Hard" design below) through a difficulty panel after Player vs AI is chosen. **Both are implemented**, except for using inventory items (power-ups have no in-match effect yet, for humans either). Both use the same board odds, score rules, timers, and item costs as a human. The exact numbers are in `AI_LEVELS` in `src/main.js` and are tabulated in `GAMEPLAY.md`.
+The game offers **Easy** and **Professional** (the "Hard" design below) through a difficulty panel after Player vs AI is chosen. **Both are implemented**, except for using inventory items (power-ups have no in-match effect yet, for humans either). Both use the same board odds, score rules, timers, and item costs as a human. The exact numbers are in `AI_LEVELS` in `src/constants.js` and are tabulated in `GAMEPLAY.md`.
 
 ### Easy AI
 
@@ -402,4 +404,4 @@ Before calling the core rules complete, test at least these cases:
 
 ---
 
-For current visual/layout details, start in `src/main.js`. For the shorter player-facing rule design and original feature decisions, see `GAMEPLAY.md`. Keep this guide updated whenever a rule changes, especially where implemented behavior differs from the design.
+For current visual/layout details, start in `src/scenes/game.js` (and `src/constants.js` for the numbers). For the shorter player-facing rule design and original feature decisions, see `GAMEPLAY.md`. Keep this guide updated whenever a rule changes, especially where implemented behavior differs from the design.

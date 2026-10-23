@@ -73,7 +73,7 @@ Tag is the online 2-vs-2 mode. Team 1 is Player 1 and Player 2; Team 2 is Player
 - **Play alone:** a hazard never costs anything. Whether picked first or after shapes, it destroys itself and every shape currently picked (it is not counted as an attempt).
 - In every mode the destroyed tiles burst with the normal effect, the board falls and refills, the new tiles get the usual 5-second reveal and shuffle, and the turn is spent like a match. A wrong shape only flips the picks back, and a match pays points.
 
-In the two-player and Tag modes a hazard blast always costs 1 point, even at 0, so a score can go negative (set `TWO_PLAYER_SCORE_FLOOR` in `src/main.js` to 0 to stop that).
+In the two-player and Tag modes a hazard blast always costs 1 point, even at 0, so a score can go negative (set `TWO_PLAYER_SCORE_FLOOR` in `src/constants.js` to 0 to stop that).
 
 | Mode | Hazard share of tiles |
 |---|---:|
@@ -83,7 +83,7 @@ The starting board gets about that share of hazards, and every newly spawned til
 
 ### Play against AI
 
-**Status:** both levels and the difficulty picker are implemented. After choosing Player vs AI the player picks **Easy** or **Professional** (the "Hard" design below, named Professional in the game). The level is shown on the AI's plank ("AI Easy" / "AI Pro") and is kept by Restart and Play again. Every number that differs between the levels lives in the `AI_LEVELS` table in `src/main.js` (see `aiSee`/`aiChooseGroup`/`aiAttempt`). The opponent takes a visible turn, reveals tiles with a short delay, submits its match, and then returns control to the player.
+**Status:** both levels and the difficulty picker are implemented. After choosing Player vs AI the player picks **Easy** or **Professional** (the "Hard" design below, named Professional in the game). The level is shown on the AI's plank ("AI Easy" / "AI Pro") and is kept by Restart and Play again. Every number that differs between the levels lives in the `AI_LEVELS` table in `src/constants.js` (see `AIPlayer` in `src/ai.js` and `aiAttempt` in `src/scenes/game.js`). The opponent takes a visible turn, reveals tiles with a short delay, submits its match, and then returns control to the player.
 
 | | Easy | Professional |
 |---|---|---|

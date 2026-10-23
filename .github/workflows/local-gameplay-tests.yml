@@ -3,14 +3,13 @@ name: Local gameplay regression tests
 on:
   pull_request:
     paths:
-      - "src/main.js"
-      - "src/rules.js"
-      - "staging/main.js"
-      - "staging/memes.js"
+      - "src/**"
+      - "index.html"
+      - "staging/index.html"
+      - "staging/audience.js"
       - "tools/build-memes-manifest.js"
       - "assets/memes/**"
-      - "tests/rules.test.js"
-      - "tests/memes.test.js"
+      - "tests/**"
       - ".github/workflows/local-gameplay-tests.yml"
 
 permissions:
@@ -28,19 +27,16 @@ jobs:
         with:
           node-version: 22
 
-      - name: Test pure game rules including Star streak rewards
-        run: node --test tests/rules.test.js tests/memes.test.js
+      - name: Run pure-rule and module unit tests (rules, memes, utils, board, trackers, AI)
+        run: node --test tests/*.test.js tests/*.test.mjs
 
-      - name: Check live frontend JavaScript syntax
-        run: node --check src/main.js
-
-      - name: Check staging frontend JavaScript syntax
-        run: node --check staging/main.js
-
-      - name: Check staging meme commentary JavaScript syntax
+      - name: Check every frontend and tool module's syntax (ES modules included)
         run: |
-          node --check staging/memes.js
-          node --check tools/build-memes-manifest.js
+          set -e
+          for f in src/*.js src/scenes/*.js staging/audience.js tools/build-memes-manifest.js; do
+            echo "-- $f"
+            node --check "$f"
+          done
 
       - name: Check the meme manifest lists every meme file
         run: node tools/build-memes-manifest.js --check

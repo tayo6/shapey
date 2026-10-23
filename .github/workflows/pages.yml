@@ -24,21 +24,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Test extracted game rules
-        run: node --test tests/rules.test.js tests/memes.test.js
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
-      - name: Check game JavaScript syntax
-        run: |
-          node --check src/main.js
-          node --check src/rules.js
-          node --check src/loading-bar.js
-          node --check src/memes.js
+      - name: Test game rules and extracted modules
+        run: node --test tests/*.test.js tests/*.test.mjs
 
-      - name: Check staging UI JavaScript syntax
+      - name: Check game and staging JavaScript syntax (all ES modules)
         run: |
-          node --check staging/main.js
-          node --check staging/memes.js
-          node --check staging/audience.js
+          set -e
+          for f in src/*.js src/scenes/*.js staging/audience.js; do
+            node --check "$f"
+          done
 
       - name: Check the meme manifest lists every meme file
         run: node tools/build-memes-manifest.js --check

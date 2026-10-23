@@ -1,1103 +1,16 @@
-// Shapey - a memory game with candy-crush style cascades.
-// The game canvas is 720 x 1280 ("720p" width) and scales to fit any screen.
-const RULES = window.ShapeyRules;
-if (!RULES) throw new Error('Load src/rules.js before src/main.js.');
-
-const GAME_WIDTH = 720;
-const GAME_HEIGHT = 1280;
-
-// Move game messages into the free strip above the bottom navigation while a GIF is visible.
-const MEME_TOAST_Y = 1015;
-
-const urlParams = new URLSearchParams(window.location.search);
-if (urlParams.get('embed') === '1') document.body.classList.add('audience-embed');
-// This file is published only under /staging/ and is pinned to the isolated test Worker.
-// Keep the live site's src/main.js pointed at the production service until staging is approved.
-const requestedApi = urlParams.get('api');
-const MULTIPLAYER_API = /^http:\/\/(?:127\.0\.0\.1|localhost):8787$/i.test(requestedApi || '')
-  ? requestedApi
-  : 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
-
-const FONT = 'HappySchool';
-const BOARD_SIZES = Object.freeze([5, 6, 7]);
-function normalizeBoardSize(value) {
-  const size = Number(value);
-  return BOARD_SIZES.includes(size) ? size : 7;
-}
-const BASE_BOARD_SIZE = 7;
-const BASE_TILE_SIZE = 90;
-const BASE_TILE_PITCH = 91;
-// Updated for each match so smaller boards use the same full tray area as 7×7.
-let TILE_SIZE = BASE_TILE_SIZE;
-let TILE_PITCH = BASE_TILE_PITCH;
-// These are set from the chosen staging test size before each board is created.
-let GRID_COLS = normalizeBoardSize(urlParams.get('size'));
-let GRID_ROWS = GRID_COLS;
-
-// ---- Game rules -----------------------------------------------------------
-// For quick testing you can shorten the timers in the URL, e.g. index.html?review=3000&turn=10000
-const REVIEW_MS = Number(urlParams.get('review')) || 15000;      // the opening board stays face-up this long (study phase)
-// Tiles spawned after a match are shown only briefly, flip face-down, then shuffle places with each other.
-const SPAWN_REVEAL_MS = Number(urlParams.get('reveal')) || 5000;  // new tiles face-up
-const SHUFFLE_STEP_MS = Number(urlParams.get('swap')) || 2000;    // each swap takes this long; swaps run one after another
-const SHUFFLE_SKIP_CHANCE = 0.1;  // about 10% of new tiles sit the shuffle out
-const STUCK_UP_MS = 2500;         // a face-up tile with no reason to be face-up is flipped back down after this long
-const SHUFFLE_ARC_PX = 28;        // sideways bow of a swap path, so the two tiles pass each other instead of overlapping
-const MIN_MATCH = 3;          // smallest scoring match; points are calculated in src/rules.js
-
-// ---- Turn clock and inventory limits ----------------------------------------
-// Opening board reveal: 15 seconds. Newly spawned tiles: 5 seconds.
-// Pick clocks start after the opening reveal. Player vs AI: human gets 45s Easy / 30s Hard, AI gets 5s.
-// Player 1 vs Player 2: 45s per player. Tag: 30s per player. Play Alone has no pick clock.
-// Test overrides: ?turn=10000 (turn length) and ?invwindow=20000 (inventory window), in milliseconds.
-const TURN_MS = Number(urlParams.get('turn')) || 45000;
-const AI_TURN_MS = 5000; // every AI pick-turn has a fixed 5-second limit
-// Anti-stalling: a player may open the inventory at most 2 times in any rolling 5 minutes.
-// The turn clock keeps running while the inventory is open.
-const INVENTORY_OPEN_LIMIT = 2;
-const INVENTORY_WINDOW_MS = Number(urlParams.get('invwindow')) || 5 * 60 * 1000;
-const formatInventoryWindow = () => INVENTORY_WINDOW_MS % 60000 === 0
-  ? INVENTORY_WINDOW_MS / 60000 + ' min' : INVENTORY_WINDOW_MS / 1000 + ' s';
-const PLAYER_NAMES = ['Player 1', 'Player 2'];
-
-// Play Alone survival rules: no attempt-based checkpoints.
-const ALONE_SCORE_FLOOR = -15;  // reaching this score is game over
-const ALONE_MISS_PENALTY = 1;   // a wrong shape costs this much (a too-small submit is free)
-
-// ---- Game modes --------------------------------------------------------------
-// hazard = chance that a tile is a hazard (skull) tile: the same ~10% in every mode. Test override: ?hazard=0.5
-const HAZARD_CHANCE = 0.1;
-// Staging win targets: first to 50 for Play Alone / PvAI / PvP; first team to 100 for Tag.
-const MODE_TARGET_SCORE = Object.freeze({ alone: 50, ai: 50, pvp: 50, tag: 100 });
-// teams = Tag mode: two teams of two share the device, and each team's partners take turns (see turnLabel()).
-const MODES = {
-  alone: { label: 'PLAY ALONE', hint: 'Reach ' + MODE_TARGET_SCORE.alone + ' points to win. Lose when your score reaches ' + ALONE_SCORE_FLOOR + '.',
-           targetScore: MODE_TARGET_SCORE.alone, hazard: HAZARD_CHANCE, twoPlayers: false, turnClock: false, ai: false },
-  ai:    { label: 'PLAYER VS AI', hint: 'First to ' + MODE_TARGET_SCORE.ai + ' points wins. Choose Easy or Professional.',
-           targetScore: MODE_TARGET_SCORE.ai, hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: true },
-  pvp:   { label: 'PLAYER 1 VS PLAYER 2', hint: 'Online 2-player match. First to ' + MODE_TARGET_SCORE.pvp + ' points wins.',
-           targetScore: MODE_TARGET_SCORE.pvp, hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false },
-  tag:   { label: 'TAG: 2 VS 2', hint: 'Online team match · 2 vs 2. First team to ' + MODE_TARGET_SCORE.tag + ' points wins.',
-           targetScore: MODE_TARGET_SCORE.tag, hazard: HAZARD_CHANCE, twoPlayers: true, turnClock: true, ai: false, teams: true },
-};
-const TEAM_PLAYERS = [['Player 1', 'Player 2'], ['Player 3', 'Player 4']]; // Tag: Team 1 and Team 2
-const AUDIENCE_WATCH_CODE = /^[A-Z0-9]{6}$/.test(urlParams.get('watch') || '') ? urlParams.get('watch').toUpperCase() : '';
-const START_MODE = ['alone', 'ai'].includes(urlParams.get('mode')) ? urlParams.get('mode') : null; // only local modes may skip the menu; online modes must use their room lobby
-const HAZARD_OVERRIDE = RULES.parseProbabilityOverride(urlParams.get('hazard'), urlParams.has('hazard'));
-// Hazards are bombs: they always destroy themselves and every picked shape.
-// Only Play Alone loses 1 point for a Hazard; versus modes never subtract score for it.
-const HAZARD_BLAST_PENALTY = 1;
-const TWO_PLAYER_SCORE_FLOOR = -Infinity;
-
-// Play Alone attempts are tracked for statistics only. Hazards and wooden dummies are not attempts.
-
-// AI difficulty (see GAMEPLAY.md). Both levels play by the same rules and only ever know what they have seen;
-// they differ in memory and decisions. The picker in MenuScene is built from this table.
-//   recall       share of seen tiles it remembers (rolled once per game)
-//   mistake      a remembered tile is recalled as the wrong shape this often
-//   forgetOnSwap a shuffled tile is forgotten this often
-//   thinkMs / tapMs / gapMs / submitMs   human-like pauses (before the turn, per tap, between attempts, before Submit)
-//   maxAttempts  match attempts per turn before it passes
-//   bestGroupChance  chance it picks the biggest remembered group (otherwise a random one)
-//   goBig        always reaches for a 5-tile match when it remembers enough tiles (Easy only sometimes tries for 4)
-//   followHunch  with no full match remembered, starts from the shape it remembers most copies of
-//   preferUnknown  when exploring, flips tiles it has no memory of first
-const AI_LEVELS = {
-  easy: { label: 'EASY', tag: 'Easy', hint: 'Forgets a lot, guesses often and plays slowly.',
-          recall: [0.45, 0.6], mistake: 0.1, forgetOnSwap: 0.5,
-          thinkMs: 1400, tapMs: [700, 1200], gapMs: 700, submitMs: 700, maxAttempts: 3,
-          bestGroupChance: 0.2, goBig: false, followHunch: false, preferUnknown: false },
-  pro:  { label: 'HARD', tag: 'Hard', hint: 'Remembers almost every tile and goes for the biggest match.',
-          recall: [0.95, 1], mistake: 0.01, forgetOnSwap: 0.1,
-          thinkMs: 900, tapMs: [450, 800], gapMs: 400, submitMs: 450, maxAttempts: 5,
-          bestGroupChance: 1, goBig: true, followHunch: true, preferUnknown: true },
-};
-const AI_SPARE_MS = 6000; // the AI stops reaching for a bigger match when this little of its turn is left
-
-// "00:45" style clock text. Rounds up, so "00:00" only shows once time is really up.
-const formatClock = (ms) => {
-  const total = Math.max(0, Math.ceil(ms / 1000));
-  return String(Math.floor(total / 60)).padStart(2, '0') + ':' + String(total % 60).padStart(2, '0');
-};
-
-// texture key -> file in assets/shapes
-const SHAPE_FILES = {
-  mystery: 'Mystery.webp', // the hidden face (never a real shape)
-  dummy:   'dummy.webp',  // blank wooden tile: neutral, non-scoring, and ignored by matching
-  hazard:  'hazard.webp', // skull tile: never matchable; flipping it costs points
-  cancel:  'cancel.webp',
-  capsule: 'capsule.webp',
-  circle:  'circle.webp',
-  cross:   'cross.webp',
-  divide:  'divide.webp',
-  corner:  'four corner.webp',
-  marked:  'marked.webp',
-  pointer: 'shield.webp',   // orange gem (file names are swapped)
-  shield:  'pointer.webp',  // red gem
-  sphere:  'sphere.webp',
-  square:  'square.webp',
-  star:    'star .webp',    // note: space before the dot in the filename
-  x:       'x.webp',
-};
-const SHAPE_KEYS = Object.keys(SHAPE_FILES).filter((k) => !['mystery', 'dummy', 'hazard'].includes(k));
-// Cancel remains a spawnable special tile, but it is never a scoring/matchable shape.
-const MATCH_SHAPE_KEYS = SHAPE_KEYS.filter((shape) => shape !== 'cancel');
-const DUMMY_SPAWN_CHANCE = 0.08; // blank wooden tiles are occasional neutral decoys
-
-function randomBoardShape() {
-  return Math.random() < DUMMY_SPAWN_CHANCE ? 'dummy' : randomItem(SHAPE_KEYS);
-}
-
-// Frames of "tile destroy frame.webp" (x positions, each 256 x 241) - centred on the tile.
-const DESTROY_FRAME_X = [3, 292, 585, 877, 1172, 1467];
-
-// Frames of "dusty.webp" - landing dust for new shapes: 7 equal 304 x 156 cells in a 2128 x 156 sheet.
-// Every puff is centred on the same point (the middle of its base) and sits on the bottom edge of its cell,
-// so the cloud grows in place instead of drifting sideways. (The original sheet had unevenly spaced puffs.)
-const DUST_FRAME_COUNT = 7;
-const DUST_FRAME_WIDTH = 304;
-const DUST_FRAME_HEIGHT = 156;
-const DUST_SCALE = 0.4;      // on-screen size: 304 x 156 art -> about 122 x 62 px
-const DUST_FRAME_RATE = 10;
-
-// Shapey logo and the loading bar. index.html draws the same layout while Phaser is still downloading.
-const LOGO_W = 520, LOGO_Y = 470;
-const LOAD_BAR_W = 560, LOAD_BAR_Y = 720;
-// The dark slot of "load rectangle staging.webp", as fractions of the image: the progress fill goes inside it.
-const LOAD_TRACK = { x0: 0.0664, x1: 0.9326, y0: 0.283, y1: 0.7123 };
-const LOAD_MIN_FILL = 0.06; // share of the slot that is already filled at 0%, so the bar never looks empty
-
-const randomItem = (list) => list[Math.floor(Math.random() * list.length)];
-
-function shuffle(list) {
-  const a = list.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
-// Starting board: include at least three copies of each chosen scoring shape without
-// overflowing the smaller staging boards. Every board size keeps about 10% hazards.
-function makeInitialBoard(hazardChance = 0) {
-  const total = GRID_ROWS * GRID_COLS;
-  const wantedHazards = Math.min(total, Math.round(total * hazardChance));
-  const guaranteedShapeCount = Math.min(MATCH_SHAPE_KEYS.length, Math.floor((total - wantedHazards) / 3));
-  const startingShapes = shuffle(MATCH_SHAPE_KEYS).slice(0, guaranteedShapeCount);
-  const bag = [];
-  startingShapes.forEach((k) => bag.push(k, k, k));
-  const hazards = Math.min(total - bag.length, Math.round(total * hazardChance));
-  for (let i = 0; i < hazards; i++) bag.push('hazard');
-  while (bag.length < total) bag.push(randomBoardShape());
-  const flat = shuffle(bag);
-  return Array.from({ length: GRID_ROWS }, (_, r) => flat.slice(r * GRID_COLS, (r + 1) * GRID_COLS));
-}
-
-// Spawning uses a "shuffle bag" instead of pure randomness: every shape is dealt once per round in a
-// random order, so the same shape is never dealt twice in a row and no shape can dominate a refill.
-// Shapes that are short on the board (fewer than MIN_MATCH) get one extra copy per round, so
-// matches stay possible without flooding the board with the shape that was just removed.
-class ShapeBag {
-  constructor(keys) {
-    this.keys = keys;
-    this.queue = [];
-    this.last = null;
-  }
-  next(scarce = []) {
-    if (!this.queue.some((k) => k !== this.last)) {
-      this.queue.push(...shuffle([...this.keys, ...scarce.filter((k) => this.keys.includes(k))]));
-    }
-    let i = this.queue.length - 1;
-    while (this.queue[i] === this.last) i--; // skip a repeat of the previous shape
-    const [shape] = this.queue.splice(i, 1);
-    this.last = shape;
-    return shape;
-  }
-}
-
-// Styles for the room-code entry panel (MenuScene.askRoomCode). Same colours as the game's popups and wooden buttons:
-// panel 0x4b2d17 with a gold border, dark slot 0x25180f, wood buttons 0x754322 with a sand border, outlined Happy School text.
-const JOIN_MODAL_CSS = `
-#shapey-join-modal { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center;
-  padding: 16px; box-sizing: border-box; background: rgba(18, 10, 5, .84); font-family: ${FONT}, 'Comic Sans MS', cursive; }
-#shapey-join-modal .panel { box-sizing: border-box; width: min(100%, 460px); padding: 26px 22px 22px; background: #4b2d17;
-  border: 5px solid #d5ad72; display: flex; flex-direction: column; gap: 14px; text-align: center; }
-#shapey-join-modal h2 { margin: 0; font-weight: normal; font-size: 34px; line-height: 1.1; color: #fff2c7;
-  -webkit-text-stroke: .17em #3a2412; paint-order: stroke fill; stroke-linejoin: round; }
-#shapey-join-modal p { margin: 0; font-size: 19px; line-height: 1.3; color: #ffe9b8; }
-#shapey-join-modal input { box-sizing: border-box; width: 100%; height: 66px; padding: 0 12px; text-align: center; text-indent: .22em;
-  font: inherit; font-size: 36px; letter-spacing: .22em; text-transform: uppercase; color: #ffe36e; background: #25180f;
-  border: 4px solid #8b623a; border-radius: 0; outline: none; }
-#shapey-join-modal input:focus { border-color: #ffe36e; }
-#shapey-join-modal .err { min-height: 22px; font-size: 17px; line-height: 1.3; color: #ffb09e; }
-#shapey-join-modal .row { display: flex; gap: 12px; }
-#shapey-join-modal button { flex: 1; min-height: 58px; font: inherit; font-size: 26px; line-height: 1; color: #fff; background: #754322;
-  border: 4px solid #f3d29a; border-radius: 0; cursor: pointer; -webkit-text-stroke: .17em #3a2412; paint-order: stroke fill;
-  stroke-linejoin: round; transition: transform .07s; }
-#shapey-join-modal button:active { transform: scale(.96); }
-#shapey-join-modal button:focus-visible { outline: 3px solid #ffe36e; outline-offset: 2px; }
-`;
-
-// A wooden button used by the menu, the in-game panel and the game-over screen.
-function woodButton(scene, x, y, w, h, label, fontSize, onTap, depth = 0, sub = null) {
-  const bg = scene.add.rectangle(x, y, w, h, 0x754322, 1).setStrokeStyle(4, 0xf3d29a)
-    .setDepth(depth).setInteractive({ useHandCursor: true });
-  const text = scene.add.text(x, sub ? y - h * 0.17 : y, label, {
-    fontFamily: FONT, fontSize: fontSize + 'px', color: '#ffffff',
-    stroke: '#3a2412', strokeThickness: Math.round(fontSize / 6),
-  }).setOrigin(0.5).setDepth(depth + 1);
-  const objects = [bg, text];
-  if (sub) {
-    objects.push(scene.add.text(x, y + h * 0.25, sub, {
-      fontFamily: FONT, fontSize: '20px', color: '#ffe9b8', align: 'center', wordWrap: { width: w - 40 },
-    }).setOrigin(0.5).setDepth(depth + 1));
-  }
-  bg.on('pointerdown', () => {
-    scene.tweens.add({ targets: [bg, text], scale: 0.96, duration: 70, yoyo: true });
-    onTap();
-  });
-  return objects;
-}
-
-// Plans the shuffle of a batch of `count` new tiles as a list of swaps [i, j] (indexes into the batch).
-// - N tiles give N - 1 swaps (3 tiles = 2 swaps, 4 = 3, 5 = 4 ...), performed one after another.
-// - Chain rule: each newly involved tile swaps with a tile that has already been shuffled (A<->B, then C<->A or B).
-// - Already shuffled tiles can be shuffled again; once everyone is involved, the remaining swaps re-shuffle them.
-// - Each tile has a ~10% chance to sit out, but at least min(count, 3) tiles always take part.
-function planShuffle(count, rng = Math.random, skipChance = SHUFFLE_SKIP_CHANCE) {
-  if (count < 2) return { steps: [], skipped: [] };
-  const order = [];
-  for (let i = 0; i < count; i++) order.push(i);
-  for (let i = count - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [order[i], order[j]] = [order[j], order[i]];
-  }
-  const minPlayers = Math.min(count, 3);
-  const players = [];
-  const skipped = [];
-  for (const i of order) (rng() < skipChance ? skipped : players).push(i);
-  while (players.length < minPlayers) players.push(skipped.pop());
-
-  const pick = (list) => list[Math.floor(rng() * list.length)];
-  const steps = [[players[0], players[1]]];
-  const involved = [players[0], players[1]];
-  for (let k = 2; k < players.length; k++) {
-    steps.push([players[k], pick(involved)]);
-    involved.push(players[k]);
-  }
-  while (steps.length < count - 1) {
-    const last = steps[steps.length - 1];
-    let a, b;
-    do { a = pick(involved); b = pick(involved); }
-    while (a === b || (involved.length > 2 && ((a === last[0] && b === last[1]) || (a === last[1] && b === last[0]))));
-    steps.push([a, b]);
-  }
-  return { steps, skipped };
-}
-
-// A countdown to an absolute deadline (never a tick counter), so it stays correct however
-// often the screen redraws and can run alongside any other countdown.
-class Countdown {
-  constructor(clock = Date.now) {
-    this.clock = clock;
-    this.endsAt = 0;
-  }
-  start(ms) { this.endsAt = this.clock() + ms; }
-  // Freeze the outgoing turn clock while the submitted move is being resolved.
-  stop() { this.endsAt = this.clock(); }
-  remaining() { return Math.max(0, this.endsAt - this.clock()); }
-  expired() { return this.clock() >= this.endsAt; }
-}
-
-// Tracks the "memorize" countdown of every batch of newly revealed tiles. Each batch has its own
-// deadline (15s for the opening board, 5s for spawned tiles), independent of the turn clock.
-// `shuffle` says whether the batch is shuffled after it flips face-down.
-class RevealTracker {
-  constructor(clock = Date.now) {
-    this.clock = clock;
-    this.batches = [];
-  }
-  add(tiles, ms, shuffle = false) { this.batches.push({ tiles, shuffle, endsAt: this.clock() + ms }); }
-  // Pending batches will still flip face-down, but will no longer be shuffled.
-  cancelShuffles() { this.batches.forEach((b) => { b.shuffle = false; }); }
-  // Longest time left among the batches still being shown (0 when nothing is being revealed).
-  remaining() {
-    const now = this.clock();
-    return this.batches.reduce((most, b) => Math.max(most, b.endsAt - now), 0);
-  }
-  // Batches ({ tiles, shuffle }) whose reveal time is over; they are removed from the tracker.
-  takeDue() {
-    const now = this.clock();
-    const due = this.batches.filter((b) => b.endsAt <= now);
-    this.batches = this.batches.filter((b) => b.endsAt > now);
-    return due;
-  }
-}
-
-// Rolling-window cap on how often each player may open the inventory.
-class InventoryLimiter {
-  constructor(limit, windowMs, playerCount, clock = Date.now) {
-    this.limit = limit;
-    this.windowMs = windowMs;
-    this.clock = clock;
-    this.opens = Array.from({ length: playerCount }, () => []); // open timestamps per player
-  }
-  recent(player) {
-    const cutoff = this.clock() - this.windowMs;
-    this.opens[player] = this.opens[player].filter((t) => t > cutoff);
-    return this.opens[player];
-  }
-  // Records an open when allowed. When refused, nothing is recorded and retryInMs says how long to wait.
-  tryOpen(player) {
-    const recent = this.recent(player);
-    if (recent.length >= this.limit) {
-      const retryInMs = recent[recent.length - this.limit] + this.windowMs - this.clock();
-      return { allowed: false, left: 0, retryInMs: Math.max(0, retryInMs) };
-    }
-    recent.push(this.clock());
-    return { allowed: true, left: this.limit - recent.length, retryInMs: 0 };
-  }
-}
-
-// Starts loading the custom font right away (in parallel with Phaser and the art). A slow or failed
-// font load never blocks the game for more than 2.5 seconds.
-const fontReady = Promise.race([
-  document.fonts.load(`20px ${FONT}`),
-  new Promise((resolve) => setTimeout(resolve, 2500)),
-]).catch(() => {});
-
-// Stage 1: fetches only the logo and the loading bar (two small images), while the HTML placeholder is still up.
-class BootScene extends Phaser.Scene {
-  constructor() {
-    super('BootScene');
-  }
-
-  preload() {
-    this.load.setPath('assets');
-    this.load.image('logo', 'ui/shapey logo.webp');
-  }
-
-  create() {
-    // Reuse the already-cleaned transparent canvas instead of loading the old corrupted WebP.
-    this.textures.addCanvas('loadRect', window.ShapeyLoadingBar.canvas);
-    this.scene.start('LoadScene');
-  }
-}
-
-// Stage 2: shows the logo and the load bar (Phaser draws the same picture as index.html), then loads
-// everything else while the bar fills.
-class LoadScene extends Phaser.Scene {
-  constructor() {
-    super('LoadScene');
-  }
-
-  preload() {
-    this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x2b1a0f);
-    const logo = this.add.image(GAME_WIDTH / 2, LOGO_Y, 'logo');
-    logo.setScale(LOGO_W / logo.width);
-
-    const bar = this.add.image(GAME_WIDTH / 2, LOAD_BAR_Y, 'loadRect');
-    const k = LOAD_BAR_W / bar.width;
-    bar.setScale(k);
-    const left = bar.x - bar.displayWidth / 2;
-    const top = bar.y - bar.displayHeight / 2;
-    const slotX = left + LOAD_TRACK.x0 * bar.displayWidth;
-    const slotW = (LOAD_TRACK.x1 - LOAD_TRACK.x0) * bar.displayWidth;
-    const slotY = top + LOAD_TRACK.y0 * bar.displayHeight;
-    const slotH = (LOAD_TRACK.y1 - LOAD_TRACK.y0) * bar.displayHeight;
-    // gold fill with a lighter top half for a glossy look; both grow with the load progress
-    const fill = this.add.rectangle(slotX, slotY, slotW * LOAD_MIN_FILL, slotH, 0xf2b84b).setOrigin(0, 0);
-    const gloss = this.add.rectangle(slotX, slotY, slotW * LOAD_MIN_FILL, slotH * 0.45, 0xffe3a0, 0.7).setOrigin(0, 0);
-    const setProgress = (value) => {
-      const w = slotW * (LOAD_MIN_FILL + (1 - LOAD_MIN_FILL) * value);
-      fill.width = w;
-      gloss.width = w;
-    };
-    this.load.on('progress', setProgress);
-
-    // the load animation: the logo gently bobs and the fill pulses while the game downloads
-    this.tweens.add({ targets: logo, y: LOGO_Y - 8, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-    this.tweens.add({ targets: [fill, gloss], alpha: { from: 0.75, to: 1 }, duration: 500, yoyo: true, repeat: -1 });
-
-    // Hand over from the HTML placeholder only once this scene has been drawn, so there is no blank flash.
-    const boot = document.getElementById('boot');
-    if (boot) this.game.events.once('postrender', () => requestAnimationFrame(() => boot.remove()));
-
-    this.load.setPath('assets');
-
-    // backgrounds
-    this.load.image('bg', 'backgrounds/BG.webp');
-    this.load.image('headerShadow', 'backgrounds/header shadow.webp');
-    this.load.image('headerPlank1', 'backgrounds/header  plank 1.webp'); // two spaces in the filename
-    this.load.image('trayShadow', 'backgrounds/Tray Shadow.webp');
-    this.load.image('tray', 'backgrounds/tray.webp');
-    this.load.image('bottomNav', 'backgrounds/bottom navigation.webp');
-
-    // ui
-    this.load.image('playerPlank1', 'ui/player plank.webp');
-    this.load.image('playerPlank2', 'ui/player plank 2.webp');
-    this.load.image('timerPlank', 'ui/timer plank.webp');
-    this.load.image('starIcon', 'ui/Star.webp');
-    this.load.image('btnSettings', 'ui/settings.webp');
-    this.load.image('btnSubmit', 'ui/submit.webp');
-    this.load.image('btnPolls', 'ui/polls.webp');
-    this.load.image('btnInventory', 'ui/inventory.webp');
-
-    // shapes
-    for (const [key, file] of Object.entries(SHAPE_FILES)) {
-      this.load.image('shape_' + key, 'shapes/' + file);
-    }
-
-    // fx + audio
-    this.load.image('tileDestroy', 'fx/tile destroy frame.webp');
-    this.load.image('dust', 'fx/dusty.webp');
-    this.load.audio('flip', ['audio/tile_flip_short.ogg', 'audio/tile_flip_short.wav']);
-  }
-
-  async create() {
-    await fontReady; // usually already done by now
-    if (AUDIENCE_WATCH_CODE) {
-      this.startAudienceWatch();
-      return;
-    }
-    if (START_MODE) this.scene.start('GameScene', { mode: START_MODE });
-    else this.scene.start('MenuScene');
-  }
-
-  async startAudienceWatch() {
-    const code = AUDIENCE_WATCH_CODE;
-    // Audience links must use the audience wrapper so Chat, Polls, Settings and Back to game exist.
-    // Direct ?watch= links otherwise opened the game canvas without audience navigation.
-    if (urlParams.get('embed') !== '1') {
-      const audienceUrl = new URL('audience.html', window.location.href);
-      audienceUrl.searchParams.set('room', code);
-      const hintedMode = urlParams.get('mode');
-      if (hintedMode) audienceUrl.searchParams.set('mode', hintedMode);
-      window.location.replace(audienceUrl.href);
-      return;
-    }
-    const showError = (message) => {
-      this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, 620, 300, 0x4b2d17, 0.98).setStrokeStyle(5, 0xd5ad72).setDepth(200);
-      this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 45, message, {
-        fontFamily: FONT, fontSize: '28px', color: '#fff2c7', align: 'center',
-        stroke: '#3a2412', strokeThickness: 5, wordWrap: { width: 540 }
-      }).setOrigin(0.5).setDepth(201);
-    };
-    const roomModeFor = (message) => message.mode || message.state?.mode || urlParams.get('mode') || 'pvp';
-    const gameModeFor = (roomMode) => roomMode === 'tag' ? 'tag' : 'pvp';
-
-    // Embedded audience page owns the single real WebSocket. The iframe receives the same
-    // authorised spectator snapshots through postMessage, so each watcher counts only once.
-    if (urlParams.get('embed') === '1') {
-      class EmbeddedAudienceSocket extends EventTarget {
-        constructor() {
-          super();
-          this.readyState = WebSocket.OPEN;
-          this.parentMessageHandler = (event) => {
-            if (event.source !== window.parent || event.origin !== window.location.origin ||
-                event.data?.type !== 'shapey-audience-message') return;
-            const message = event.data.message;
-            if (message && typeof message.type === 'string') this.deliver(message);
-          };
-          window.addEventListener('message', this.parentMessageHandler);
-          try { window.parent.postMessage({ type: 'shapey-audience-ready' }, window.location.origin); } catch {}
-        }
-        send(data) {
-          try { window.parent.postMessage({ type: 'shapey-audience-socket-send', data }, window.location.origin); } catch {}
-        }
-        close() {
-          this.readyState = WebSocket.CLOSED;
-          window.removeEventListener('message', this.parentMessageHandler);
-          try { this.dispatchEvent(new CloseEvent('close')); } catch {}
-        }
-        deliver(message) {
-          try { this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) })); } catch {}
-        }
-      }
-      const socket = new EmbeddedAudienceSocket();
-      let started = false;
-      socket.addEventListener('message', (event) => {
-        let message;
-        try { message = JSON.parse(event.data); } catch { return; }
-        const isStartMessage = (message.type === 'spectator_welcome' || message.type === 'game_started' ||
-          message.type === 'game_state') && Boolean(message.state);
-        if (!started && isStartMessage) {
-          const roomMode = roomModeFor(message);
-          started = true;
-          this.scene.start('GameScene', {
-            mode: gameModeFor(roomMode),
-            online: true,
-            spectator: true,
-            audienceMode: roomMode,
-            onlineSocket: socket,
-            onlineRoomCode: code,
-            onlineState: message.state
-          });
-        } else if (!started && (message.type === 'error' || message.type === 'demo_ended')) {
-          showError(message.message || 'This room is no longer available.');
-        }
-      });
-      return;
-    }
-
-    // Direct watch links remain supported outside the embedded audience layout.
-    try {
-      const response = await fetch(MULTIPLAYER_API + '/api/rooms/' + code, { cache: 'no-store' });
-      const details = await response.json();
-      if (!response.ok) throw new Error(details.error || 'This room is no longer available.');
-      const roomMode = details.mode || urlParams.get('mode') || 'pvp';
-      const gameMode = gameModeFor(roomMode);
-      const wsBase = MULTIPLAYER_API.replace(/^http/, 'ws');
-      const socket = new WebSocket(wsBase + '/ws/' + code + '?mode=' + encodeURIComponent(roomMode) + '&role=spectator');
-      let started = false;
-      const handleMessage = (event) => {
-        let message;
-        try { message = JSON.parse(event.data); } catch { return; }
-        const isStartMessage = (message.type === 'spectator_welcome' || message.type === 'game_started' ||
-          message.type === 'game_state') && message.state;
-        if (message.type === 'error' && !started) {
-          showError(message.message || 'Could not connect to this room.');
-          try { socket.close(); } catch {}
-          return;
-        }
-        if (!started && isStartMessage) {
-          started = true;
-          this.scene.start('GameScene', {
-            mode: gameMode,
-            online: true,
-            spectator: true,
-            audienceMode: roomMode,
-            onlineSocket: socket,
-            onlineRoomCode: code,
-            onlineState: message.state
-          });
-        } else if (started) {
-          // GameScene registered its message handler after this callback; future messages are
-          // handled there once the transition has completed.
-        }
-      };
-      socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'spectate' })));
-      socket.addEventListener('message', handleMessage);
-      socket.addEventListener('error', () => { if (!started) showError('Could not connect to the room. Return to Live Games and try again.'); });
-      socket.addEventListener('close', () => { if (!started) showError('The room connection closed. Return to Live Games and try again.'); });
-    } catch (error) {
-      showError(error.message || 'Could not open this room.');
-    }
-  }
-}
-
-// Mode picker, shown before the game starts.
-class MenuScene extends Phaser.Scene {
-  constructor() {
-    super('MenuScene');
-  }
-
-  create() {
-    this.add.image(0, 0, 'bg').setOrigin(0, 0).setDisplaySize(GAME_WIDTH, GAME_HEIGHT);
-    const logo = this.add.image(GAME_WIDTH / 2, 150, 'logo');
-    logo.setScale(560 / logo.width);
-
-    // a little row of tiles for decoration
-    ['star', 'circle', 'hazard', 'sphere', 'cross'].forEach((key, i) => {
-      const tile = this.add.image(104 + i * 128, 352, 'shape_' + key).setDisplaySize(104, 104)
-        .setAngle([-6, 4, -3, 6, -5][i]);
-      this.tweens.add({ targets: tile, y: tile.y - 10, duration: 1100 + i * 140, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-    });
-
-    this.add.text(GAME_WIDTH / 2, 470, 'CHOOSE A MODE', {
-      fontFamily: FONT, fontSize: '38px', color: '#ffe36e', stroke: '#3a2412', strokeThickness: 7,
-    }).setOrigin(0.5);
-
-    // Four modes: 140px buttons every 165px. Player vs AI first asks for a difficulty.
-    this.pickerUI = [];
-    Object.entries(MODES).forEach(([mode, cfg], i) => {
-      woodButton(this, GAME_WIDTH / 2, 600 + i * 165, 620, 140, cfg.label, 42,
-        () => this.openBoardSize(mode), 10, cfg.hint);
-    });
-
-    // Spectating is deliberately separated from playable modes: it is a darker, secondary panel (the same brown fill
-    // and gold border the game's popups use) instead of the bright wood of the four playable modes.
-    const audienceButton = woodButton(this, GAME_WIDTH / 2, 1228, 620, 76, 'WATCH LIVE GAMES', 32,
-      () => this.openAudienceDirectory(), 10, 'SPECTATOR AREA · WATCH ONLY · NO GAME MOVES');
-    audienceButton[0].setFillStyle(0x4b2d17, 1).setStrokeStyle(4, 0xd5ad72);
-    audienceButton[1].setColor('#fff2c7');
-  }
-
-  // Every staging mode uses the same three board-size choices. 7×7 remains the default.
-  openBoardSize(mode) {
-    if (this.pickerUI.length) return;
-    // Tag is intentionally fixed at 7×7; only the other three modes offer smaller boards.
-    if (mode === 'tag') {
-      this.openOnlineLobby('tag', BASE_BOARD_SIZE);
-      return;
-    }
-    const add = (object) => { this.pickerUI.push(object); return object; };
-    add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.82)
-      .setDepth(50).setInteractive());
-    add(this.add.rectangle(GAME_WIDTH / 2, 675, 640, 820, 0x4b2d17, 1)
-      .setStrokeStyle(5, 0xd5ad72).setDepth(51));
-    add(this.add.text(GAME_WIDTH / 2, 365, 'CHOOSE BOARD SIZE', {
-      fontFamily: FONT, fontSize: '44px', color: '#fff2c7', stroke: '#3a2412', strokeThickness: 8,
-    }).setOrigin(0.5).setDepth(52));
-    add(this.add.text(GAME_WIDTH / 2, 430, 'Staging test · choose the number of rows and columns', {
-      fontFamily: FONT, fontSize: '20px', color: '#fff2c7', align: 'center',
-      wordWrap: { width: 540 }, stroke: '#3a2412', strokeThickness: 4,
-    }).setOrigin(0.5).setDepth(52));
-    BOARD_SIZES.forEach((size, index) => {
-      woodButton(this, GAME_WIDTH / 2, 555 + index * 145, 520, 112, size + ' × ' + size, 42,
-        () => {
-          this.closeBoardSize();
-          if (mode === 'ai') this.openDifficulty(size);
-          else if (mode === 'pvp' || mode === 'tag') this.openOnlineLobby(mode, size);
-          else this.scene.start('GameScene', { mode, boardSize: size });
-        }, 52, (size * size) + ' tiles on the board').forEach(add);
-    });
-    woodButton(this, GAME_WIDTH / 2, 1030, 520, 82, 'BACK', 34,
-      () => this.closeBoardSize(), 52).forEach(add);
-  }
-
-  closeBoardSize() {
-    this.pickerUI.forEach((object) => object.destroy());
-    this.pickerUI = [];
-  }
-
-  // Room creation and joining are attached to Player 1 vs Player 2 and Tag.
-  openOnlineLobby(mode, boardSize = BASE_BOARD_SIZE) {
-    if (this.onlineUI && this.onlineUI.length) return;
-    this.onlineMode = mode || 'pvp';
-    this.onlineBoardSize = this.onlineMode === 'tag' ? BASE_BOARD_SIZE : normalizeBoardSize(boardSize);
-    this.onlineUI = [];
-    const add = (object) => { this.onlineUI.push(object); return object; };
-    const modeTitle = (this.onlineMode === 'tag' ? 'ONLINE TAG · 2 VS 2' : 'ONLINE PLAYER 1 VS PLAYER 2') +
-      ' · ' + this.onlineBoardSize + '×' + this.onlineBoardSize;
-    add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.86)
-      .setDepth(80).setInteractive());
-    add(this.add.rectangle(GAME_WIDTH / 2, 650, 650, 820, 0x4b2d17, 1)
-      .setStrokeStyle(5, 0xd5ad72).setDepth(81));
-    add(this.add.text(GAME_WIDTH / 2, 330, modeTitle, {
-      fontFamily: FONT, fontSize: this.onlineMode === 'tag' ? '35px' : '33px',
-      color: '#fff2c7', stroke: '#3a2412', strokeThickness: 8, align: 'center',
-      wordWrap: { width: 590 },
-    }).setOrigin(0.5).setDepth(82));
-    const lobbyInstructions = this.onlineMode === 'tag'
-      ? 'Four devices. Team 1: Players 1 and 2. Team 2: Players 3 and 4. Invite your teammate first, then invite the other team.'
-      : 'Two devices. Take alternating turns; the first player to ' + MODE_TARGET_SCORE.pvp + ' points wins.';
-    const sizeInstruction = 'Board size: ' + this.onlineBoardSize + '×' + this.onlineBoardSize + '.';
-    this.onlineStatus = add(this.add.text(GAME_WIDTH / 2, 415,
-      lobbyInstructions + '\n' + sizeInstruction, {
-        fontFamily: FONT, fontSize: '23px', color: '#fff2c7', align: 'center',
-        wordWrap: { width: 560 }, stroke: '#3a2412', strokeThickness: 4,
-      }).setOrigin(0.5).setDepth(82));
-    this.onlineRoomCodeText = add(this.add.text(GAME_WIDTH / 2, 520, '', {
-      fontFamily: FONT, fontSize: '54px', color: '#ffe36e', align: 'center',
-      stroke: '#3a2412', strokeThickness: 8, letterSpacing: 8,
-    }).setOrigin(0.5).setDepth(83));
-
-    this.onlineCreateUI = woodButton(this, GAME_WIDTH / 2, 710, 530, 88, 'CREATE ROOM', 36,
-      () => this.createOnlineRoom(), 82, 'Generate a shareable room code');
-    this.onlineCreateUI.forEach(add);
-    this.onlineJoinUI = woodButton(this, GAME_WIDTH / 2, 810, 530, 88, 'JOIN ROOM', 36,
-      () => this.promptJoinRoom(), 82, 'Enter a friend’s room code');
-    this.onlineJoinUI.forEach(add);
-    this.onlineBackUI = woodButton(this, GAME_WIDTH / 2, 925, 530, 72, 'BACK', 32,
-      () => this.closeOnlineLobby(), 82);
-    this.onlineBackUI.forEach(add);
-  }
-
-  setOnlineStatus(message) {
-    if (this.onlineStatus && this.onlineStatus.active) this.onlineStatus.setText(message);
-  }
-
-  showOnlineRoomCode(code) {
-    this.currentRoomCode = code;
-    if (this.onlineRoomCodeText && this.onlineRoomCodeText.active) this.onlineRoomCodeText.setText(code);
-    for (const object of [...(this.onlineCreateUI || []), ...(this.onlineJoinUI || [])]) {
-      object.setVisible(false);
-      if (object.disableInteractive) object.disableInteractive();
-    }
-    if (!this.onlineCopyUI || !this.onlineCopyUI.length) {
-      this.onlineCopyUI = woodButton(this, GAME_WIDTH / 2, 600, 390, 68, 'COPY ROOM CODE', 28,
-        () => this.copyOnlineRoomCode(), 84);
-      this.onlineCopyUI.forEach((object) => this.onlineUI.push(object));
-      this.onlineCopyLabel = this.onlineCopyUI[1];
-    }
-    if (!this.onlineWatchUI || !this.onlineWatchUI.length) {
-      this.onlineWatchUI = woodButton(this, GAME_WIDTH / 2, 690, 390, 68, 'WATCH LIVE', 28,
-        () => this.openAudienceWatch(), 84);
-      this.onlineWatchUI.forEach((object) => this.onlineUI.push(object));
-      this.onlineCopyWatchUI = woodButton(this, GAME_WIDTH / 2, 775, 390, 68, 'COPY WATCH LINK', 27,
-        () => this.copyAudienceWatchLink(), 84);
-      this.onlineCopyWatchUI.forEach((object) => this.onlineUI.push(object));
-    }
-  }
-
-  // Opens the public room directory in this tab; the directory has its own way back to the game.
-  openAudienceDirectory() {
-    window.location.assign(new URL('staging/audience.html', document.baseURI).href);
-  }
-
-  audienceWatchUrl() {
-    if (!this.currentRoomCode) return null;
-    const url = new URL('staging/audience.html', document.baseURI);
-    url.searchParams.set('room', this.currentRoomCode);
-    url.searchParams.set('mode', this.onlineMode || this.mode || 'tag');
-    return url.href;
-  }
-
-  openAudienceWatch() {
-    const url = this.audienceWatchUrl();
-    if (!url) {
-      this.setOnlineStatus('Create or join a room first.');
-      return;
-    }
-    const opened = window.open(url, '_blank', 'noopener,noreferrer');
-    if (!opened) this.setOnlineStatus('The watch page was blocked. Use COPY WATCH LINK to share it.');
-  }
-
-  async copyAudienceWatchLink() {
-    const url = this.audienceWatchUrl();
-    if (!url) {
-      this.setOnlineStatus('Create or join a room first.');
-      return;
-    }
-    let copied = false;
-    try {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(url);
-        copied = true;
-      }
-    } catch {}
-    if (!copied) {
-      let field;
-      try {
-        field = document.createElement('textarea');
-        field.value = url;
-        field.setAttribute('readonly', '');
-        field.style.position = 'fixed';
-        field.style.left = '-9999px';
-        document.body.appendChild(field);
-        field.select();
-        copied = document.execCommand('copy');
-      } catch {}
-      if (field && field.parentNode) field.parentNode.removeChild(field);
-    }
-    if (copied) {
-      if (this.onlineCopyWatchUI && this.onlineCopyWatchUI[1]?.active) this.onlineCopyWatchUI[1].setText('LINK COPIED!');
-      this.setOnlineStatus('Watch link copied. Share it with your audience.');
-    } else {
-      this.setOnlineStatus('Copy failed. Share this link manually: ' + url);
-    }
-  }
-
-  async copyOnlineRoomCode() {
-    const code = this.currentRoomCode;
-    if (!code) {
-      this.setOnlineStatus('Create or join a room first.');
-      return;
-    }
-    let copied = false;
-    try {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(code);
-        copied = true;
-      }
-    } catch {}
-    if (!copied) {
-      let field;
-      try {
-        field = document.createElement('textarea');
-        field.value = code;
-        field.setAttribute('readonly', '');
-        field.style.position = 'fixed';
-        field.style.left = '-9999px';
-        document.body.appendChild(field);
-        field.select();
-        copied = document.execCommand('copy');
-      } catch {}
-      if (field && field.parentNode) field.parentNode.removeChild(field);
-    }
-    if (copied) {
-      if (this.onlineCopyLabel && this.onlineCopyLabel.active) this.onlineCopyLabel.setText('COPIED!');
-      this.setOnlineStatus('Room code copied. Send ' + code + ' to your friend.');
-    } else {
-      this.setOnlineStatus('Copy failed. Please select and copy the room code: ' + code);
-    }
-  }
-
-  async ensureGameplayService() {
-    const response = await fetch(MULTIPLAYER_API + '/health');
-    let status;
-    try { status = await response.json(); } catch {}
-    if (!response.ok || !status || status.stage !== 'authoritative-gameplay-v1' || status.protocolVersion !== 1) {
-      throw new Error('Online gameplay is not enabled on the live server yet. Please try again later; no room was created.');
-    }
-    return status;
-  }
-
-  async createOnlineRoom() {
-    this.setOnlineStatus('Checking multiplayer service...');
-    try {
-      await this.ensureGameplayService();
-      this.setOnlineStatus('Creating your room...');
-      const response = await fetch(MULTIPLAYER_API + '/api/rooms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: this.onlineMode, boardSize: this.onlineBoardSize || 7 }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.roomCode) throw new Error(data.error || 'Room creation failed.');
-      this.showOnlineRoomCode(data.roomCode);
-      this.connectOnlineRoom(data.roomCode, data.websocketUrl, this.onlineMode);
-    } catch (error) {
-      this.setOnlineStatus(error.message || 'Could not create a room. Check your connection and try again.');
-      console.error('Shapey room creation failed:', error);
-    }
-  }
-
-  // Room-code entry that looks like the rest of the menu (wood panel, gold border, Happy School text, wooden buttons)
-  // instead of the browser's own prompt box. Resolves with the code on JOIN / Enter, or null on CANCEL / Escape.
-  askRoomCode() {
-    return new Promise((resolve) => {
-      if (document.getElementById('shapey-join-modal')) { resolve(null); return; }
-      if (!document.getElementById('shapey-join-style')) {
-        const style = document.createElement('style');
-        style.id = 'shapey-join-style';
-        style.textContent = JOIN_MODAL_CSS;
-        document.head.appendChild(style);
-      }
-      const make = (tag, props, parent) => {
-        const node = document.createElement(tag);
-        Object.assign(node, props);
-        if (parent) parent.appendChild(node);
-        return node;
-      };
-      const overlay = make('div', { id: 'shapey-join-modal' });
-      // Prevent the dialog's pointer/click events from reaching the Phaser game underneath.
-      // In particular, clicking JOIN must not activate a game button behind this overlay.
-      for (const eventName of [
-        'pointerdown', 'pointerup', 'pointermove',
-        'mousedown', 'mouseup', 'click', 'touchstart', 'touchend'
-      ]) {
-        overlay.addEventListener(eventName, (event) => event.stopPropagation());
-      }
-      overlay.setAttribute('role', 'dialog');
-      overlay.setAttribute('aria-modal', 'true');
-      overlay.setAttribute('aria-labelledby', 'shapey-join-title');
-      const panel = make('div', { className: 'panel' }, overlay);
-      make('h2', { id: 'shapey-join-title', textContent: 'ENTER ROOM CODE' }, panel);
-      make('p', { textContent: 'Ask your friend for their room code.' }, panel);
-      const input = make('input', { type: 'text', autocomplete: 'off', spellcheck: false }, panel);
-      input.setAttribute('aria-label', 'Room code');
-      input.setAttribute('autocapitalize', 'characters');
-      input.setAttribute('autocorrect', 'off');
-      input.setAttribute('enterkeyhint', 'go');
-      const error = make('div', { className: 'err' }, panel);
-      error.setAttribute('role', 'alert');
-      const row = make('div', { className: 'row' }, panel);
-      const cancel = make('button', { type: 'button', textContent: 'CANCEL' }, row);
-      const join = make('button', { type: 'button', textContent: 'JOIN' }, row);
-
-      const onKey = (event) => {
-        if (event.key === 'Escape') { event.preventDefault(); close(null); }
-        else if (event.key === 'Enter' && event.target === input) { event.preventDefault(); submit(); }
-      };
-      const close = (value) => {
-        document.removeEventListener('keydown', onKey, true);
-        overlay.remove();
-        resolve(value);
-      };
-      const submit = () => {
-        const code = input.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
-        if (!/^[A-Z0-9]{6}$/.test(code)) {
-          error.textContent = 'Room codes have 6 letters or numbers.';
-          input.focus();
-          return;
-        }
-        close(code);
-      };
-      input.addEventListener('input', () => { error.textContent = ''; });
-      cancel.addEventListener('click', () => close(null));
-      join.addEventListener('click', submit);
-      document.addEventListener('keydown', onKey, true);
-      document.body.appendChild(overlay);
-      input.focus();
-    });
-  }
-
-  async promptJoinRoom() {
-    const entered = await this.askRoomCode();
-    if (entered == null) return;
-    const code = entered.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    if (!/^[A-Z0-9]{6}$/.test(code)) {
-      this.setOnlineStatus('That code is not valid. Room codes have 6 letters or numbers.');
-      return;
-    }
-    this.setOnlineStatus('Checking multiplayer service...');
-    try {
-      await this.ensureGameplayService();
-      this.setOnlineStatus('Checking room code...');
-      const response = await fetch(MULTIPLAYER_API + '/api/rooms/' + code);
-      const room = await response.json();
-      if (!response.ok) throw new Error(room.error || 'Room not found.');
-      if (room.mode !== this.onlineMode) {
-        this.setOnlineStatus('That code is for ' +
-          (room.mode === 'tag' ? 'Tag (2 vs 2)' : 'Player 1 vs Player 2') +
-          '. Go back and select that mode to join.');
-        return;
-      }
-      // A room's server-selected size is authoritative for every device that joins it.
-      this.onlineBoardSize = this.onlineMode === 'tag' ? BASE_BOARD_SIZE : normalizeBoardSize(room.boardSize);
-      this.showOnlineRoomCode(code);
-      this.connectOnlineRoom(code,
-        MULTIPLAYER_API.replace(/^http/, 'ws') + '/ws/' + code, this.onlineMode);
-    } catch (error) {
-      this.setOnlineStatus(error.message || 'Could not find that room. Check the code and try again.');
-    }
-  }
-
-  connectOnlineRoom(code, websocketUrl, mode) {
-    if (this.onlineSocket) {
-      try { this.onlineSocket.close(); } catch {}
-    }
-    const modeLabel = mode === 'tag' ? 'Tag · 2 vs 2' : 'Player 1 vs Player 2';
-    this.setOnlineStatus('Connecting to ' + modeLabel + ' room...');
-    const separator = websocketUrl.includes('?') ? '&' : '?';
-    const socket = new WebSocket(websocketUrl + separator + 'mode=' + encodeURIComponent(mode));
-    this.onlineSocket = socket;
-    let savedSeatToken = null;
-    try {
-      savedSeatToken = window.localStorage.getItem('shapey-seat-token:' + code);
-    } catch (_) {
-      // Storage may be disabled; the current session can still join, but won't retain a seat after reload.
-    }
-    socket.addEventListener('open', () => {
-      this.setOnlineStatus('Joining your player seat...');
-      try {
-        socket.send(JSON.stringify({ type: 'join', seatToken: savedSeatToken }));
-      } catch (_) {
-        this.setOnlineStatus('Could not join the room. Please reconnect.');
-        try { socket.close(); } catch {}
-      }
-    });
-    socket.addEventListener('message', (event) => {
-      let message;
-      try { message = JSON.parse(event.data); } catch { return; }
-      if (message.type === 'welcome') {
-        this.onlinePlayerNumber = message.playerNumber;
-        if (typeof message.seatToken === 'string') {
-          try { window.localStorage.setItem('shapey-seat-token:' + code, message.seatToken); } catch (_) {}
-        }
-        if (message.mode && message.mode !== mode) {
-          this.setOnlineStatus('This code belongs to a different game mode. Return and choose that mode.');
-          socket.close();
-          return;
-        }
-        this.setOnlineStatus('Room connected as Player ' + message.playerNumber + '.');
-      } else if (message.type === 'room_state') {
-        const count = (message.players || []).filter((player) => player.connected).length;
-        const maxPlayers = message.maxPlayers || (mode === 'tag' ? 4 : 2);
-        const actualMode = message.mode || mode;
-        if (actualMode !== mode) {
-          this.setOnlineStatus('This room is for a different game mode. Return and choose that mode.');
-          socket.close();
-          return;
-        }
-        if (count >= maxPlayers) {
-          this.setOnlineStatus('All ' + maxPlayers + ' players connected. Starting the match...');
-        } else {
-          this.setOnlineStatus(count + '/' + maxPlayers + ' players connected. Share the code with your friend/team.');
-        }
-      } else if (message.type === 'player_disconnected') {
-        const maxPlayers = message.maxPlayers || (mode === 'tag' ? 4 : 2);
-        const count = (message.players || []).filter((player) => player.connected).length;
-        this.setOnlineStatus('A player disconnected (' + count + '/' + maxPlayers + ' connected). They can rejoin with this code.');
-      } else if (message.type === 'game_started' && message.state) {
-        this.launchOnlineGame(code, mode, socket, message.state);
-      } else if (message.type === 'error') {
-        this.setOnlineStatus(message.message || 'The room reported an error.');
-      }
-    });
-    socket.addEventListener('error', () => {
-      this.setOnlineStatus('Could not connect to that room. Check the code and try again.');
-    });
-    socket.addEventListener('close', () => {
-      if (this.onlineSocket === socket && this.onlineUI && this.onlineUI.length) {
-        this.setOnlineStatus('Disconnected. You can create or join a room again.');
-      }
-    });
-  }
-
-  launchOnlineGame(code, mode, socket, initialState) {
-    if (!initialState || !socket) {
-      this.setOnlineStatus('The room could not start a match. Please create a new room.');
-      return;
-    }
-    const playerNumber = this.onlinePlayerNumber;
-    // Preserve the WebSocket while this scene changes from the lobby to the game board.
-    this.onlineSocket = null;
-    this.onlineStatus = null;
-    this.onlineUI = [];
-    this.onlineCopyUI = null;
-    this.onlineRoomCodeText = null;
-    this.currentRoomCode = null;
-    this.onlineMode = null;
-    this.scene.start('GameScene', {
-      mode,
-      online: true,
-      onlineSocket: socket,
-      onlinePlayerNumber: playerNumber,
-      onlineRoomCode: code,
-      onlineState: initialState
-    });
-  }
-
-  closeOnlineLobby() {
-    if (this.onlineSocket) {
-      const socket = this.onlineSocket;
-      this.onlineSocket = null;
-      try { socket.close(); } catch {}
-    }
-    if (this.onlineUI) this.onlineUI.forEach((object) => object.destroy());
-    this.onlineUI = [];
-    this.onlineStatus = null;
-    this.onlineRoomCodeText = null;
-    this.onlineCopyUI = null;
-    this.onlineCopyLabel = null;
-    this.currentRoomCode = null;
-    this.onlineMode = null;
-    this.onlineBoardSize = null;
-  }
-
-  // "Choose difficulty" panel for Player vs AI (Easy / Professional, built from AI_LEVELS).
-  openDifficulty(boardSize = 7) {
-    this.chosenBoardSize = normalizeBoardSize(boardSize);
-    if (this.pickerUI.length) return;
-    const add = (object) => { this.pickerUI.push(object); return object; };
-    add(this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x120a05, 0.8)
-      .setDepth(50).setInteractive()); // shield: taps must not reach the mode buttons underneath
-    add(this.add.rectangle(GAME_WIDTH / 2, 640, 640, 700, 0x4b2d17, 1).setStrokeStyle(5, 0xd5ad72).setDepth(51));
-    add(this.add.text(GAME_WIDTH / 2, 380, 'CHOOSE DIFFICULTY', {
-      fontFamily: FONT, fontSize: '46px', color: '#fff2c7', stroke: '#3a2412', strokeThickness: 8,
-    }).setOrigin(0.5).setDepth(52));
-    Object.entries(AI_LEVELS).forEach(([difficulty, level], i) => {
-      woodButton(this, GAME_WIDTH / 2, 530 + i * 190, 560, 160, level.label, 42,
-        () => this.scene.start('GameScene', { mode: 'ai', difficulty, boardSize: this.chosenBoardSize }), 52, level.hint).forEach(add);
-    });
-    woodButton(this, GAME_WIDTH / 2, 530 + Object.keys(AI_LEVELS).length * 190, 560, 90, 'BACK', 36,
-      () => {
-        this.closeDifficulty();
-        this.openBoardSize('ai');
-      }, 52).forEach(add);
-  }
-
-  closeDifficulty() {
-    this.pickerUI.forEach((object) => object.destroy());
-    this.pickerUI = [];
-  }
-}
-
-class GameScene extends Phaser.Scene {
+// Shapey - GameScene: the match itself - board, tiles, turns, scoring, hazards, inventory,
+// audience polls, the online client and the AI turn loop. Pure decisions live in
+// rules.js / board.js / trackers.js / ai.js; this scene owns Phaser orchestration only.
+
+import { GAME_WIDTH, GAME_HEIGHT, MEME_TOAST_Y, FONT, normalizeBoardSize, BASE_BOARD_SIZE, BASE_TILE_SIZE, STUCK_UP_MS, SHUFFLE_ARC_PX, MIN_MATCH, AI_TURN_MS, INVENTORY_OPEN_LIMIT, PLAYER_NAMES, ALONE_SCORE_FLOOR, ALONE_MISS_PENALTY, HAZARD_BLAST_PENALTY, TWO_PLAYER_SCORE_FLOOR, TEAM_PLAYERS, AI_LEVELS, AI_SPARE_MS, SHAPE_KEYS, MATCH_SHAPE_KEYS, DUMMY_SPAWN_CHANCE, DESTROY_FRAME_X, DUST_FRAME_COUNT, DUST_FRAME_WIDTH, DUST_FRAME_HEIGHT, DUST_SCALE, DUST_FRAME_RATE } from '../constants.js';
+import { RULES, urlParams, REVIEW_MS, SPAWN_REVEAL_MS, SHUFFLE_STEP_MS, TURN_MS, INVENTORY_WINDOW_MS, formatInventoryWindow, MODE_TARGET_SCORE, MODES, START_MODE, HAZARD_OVERRIDE, TILE_SIZE, TILE_PITCH, GRID_COLS, GRID_ROWS, setBoardMetrics } from '../config.js';
+import { formatClock, randomItem, shuffle, planShuffle } from '../utils.js';
+import { makeInitialBoard, ShapeBag } from '../board.js';
+import { Countdown, RevealTracker, InventoryLimiter } from '../trackers.js';
+import { woodButton } from '../ui.js';
+import { AIPlayer } from '../ai.js';
+
+export class GameScene extends Phaser.Scene {
   constructor() {
     super('GameScene');
   }
@@ -1115,12 +28,8 @@ class GameScene extends Phaser.Scene {
     const requestedBoardSize = normalizeBoardSize((data && data.boardSize) ||
       (this.onlineState && this.onlineState.boardSize) || urlParams.get('size'));
     this.boardSize = this.mode === 'tag' ? BASE_BOARD_SIZE : requestedBoardSize;
-    GRID_COLS = this.boardSize;
-    GRID_ROWS = this.boardSize;
-    const boardScale = BASE_BOARD_SIZE / this.boardSize;
-    TILE_PITCH = BASE_TILE_PITCH * boardScale;
-    // Keep the original 1px gap: all board sizes then occupy the same 636px visual footprint.
-    TILE_SIZE = TILE_PITCH - (BASE_TILE_PITCH - BASE_TILE_SIZE);
+    // Applies the chosen board size to the live metrics in config.js (TILE_SIZE/PITCH, GRID_COLS/ROWS).
+    setBoardMetrics(this.boardSize);
     this.modeCfg = MODES[this.mode];
     // Player vs AI difficulty comes from the picker (or ?level=pro for testing); Easy is the default.
     const level = (data && data.difficulty) || urlParams.get('level');
@@ -1159,8 +68,7 @@ class GameScene extends Phaser.Scene {
     this.pendingOnlineSubmitKey = null;
     this.onlineSubmitPending = false;
     this.totalAttempts = 0;          // Play Alone statistic only; never a loss condition
-    this.aiMemory = new Map();       // tile -> shape the AI believes it is
-    this.aiRecall = this.ai.recall[0] + Math.random() * (this.ai.recall[1] - this.ai.recall[0]);
+    this.aiPlayer = new AIPlayer(this.ai); // memory + decisions (src/ai.js); this.ai stays the level table
     this.starBalance = this.loadStarBalance();
     // Track streaks per player seat even though the local prototype shares its Star wallet.
     this.matchStreaks = new Map();
@@ -1184,7 +92,7 @@ class GameScene extends Phaser.Scene {
     // Limits are per player: two players normally, four in Tag.
     this.inventoryLimiter = new InventoryLimiter(INVENTORY_OPEN_LIMIT, INVENTORY_WINDOW_MS, this.modeCfg.teams ? 4 : PLAYER_NAMES.length);
 
-    // Meme commentary (staging/memes.js). Optional: the game plays the same without it.
+    // Meme commentary (src/memes.js). Optional: the game plays the same without it.
     this.memes = window.ShapeyMemes ? window.ShapeyMemes.attach(this) : null;
 
     this.createBackground();
@@ -1478,7 +386,7 @@ class GameScene extends Phaser.Scene {
   }
 
   // Ends the active player's turn exactly once (timeout or a submitted match) and hands over to the other player.
-  async endTurn(reason) {
+  async endTurn(reason, options = {}) {
     if (this.turnEnding || this.gameOver) return;
     this.turnEnding = true; // from here on, late taps and submits are ignored
     if (this.memes) this.memes.turnResult(reason); // win / lose commentary for the human who just played
@@ -1511,7 +419,7 @@ class GameScene extends Phaser.Scene {
     this.startTurn(next);
     const prefix = reason === 'timeout' ? 'Time is up. '
       : reason === 'pass' ? 'The AI passes. '
-      : reason === 'hazard' ? 'Hazard! No reward. '
+      : reason === 'hazard' && !options.suppressHazardCommentary ? 'Hazard! No reward. '
       : reason === 'mismatch' ? 'Mismatch. '
       : reason === 'submit' ? 'Turn submitted. ' : '';
     this.showTurnToast(prefix + this.turnLabel() + '’s turn');
@@ -1538,12 +446,8 @@ class GameScene extends Phaser.Scene {
       polls: 'btnPolls',
       inventory: 'btnInventory',
     };
-    const supportsAudiencePolling = this.mode === 'pvp' || this.mode === 'tag';
-    const actions = this.mode === 'alone'
-      ? ['settings', 'submit']
-      : supportsAudiencePolling
-        ? ['settings', 'submit', 'polls', 'inventory']
-        : ['settings', 'submit', 'inventory'];
+    // Which icons each mode gets is decided in src/rules.js. Polls are only shown for online Player 1 vs Player 2 and Tag.
+    const actions = RULES.navigationForMode(this.mode);
     // Keep each mode's icons centred and remove controls that mode does not support.
     const positions = actions.length === 2 ? [250, 470]
       : actions.length === 3 ? [175, 360, 545]
@@ -1570,7 +474,7 @@ class GameScene extends Phaser.Scene {
     settings.setInteractive({ useHandCursor: true });
     settings.on('pointerdown', () => this.openPanel());
 
-    // Polls are live-only and restricted to online Player 1 vs Player 2 and Tag; never simulate votes locally.
+    // Polls are a live audience feature for online Player 1 vs Player 2 and Tag only; never simulate votes locally.
     const polls = this.buttons.btnPolls;
     if (polls) {
       polls.setInteractive({ useHandCursor: true });
@@ -1600,7 +504,7 @@ class GameScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(252));
     woodButton(this, GAME_WIDTH / 2, 530, 440, 90, 'RESUME', 36, () => this.closePanel(), 252).forEach(add);
     woodButton(this, GAME_WIDTH / 2, 645, 440, 90, this.online ? 'LEAVE MATCH' : 'RESTART', 36,
-      () => this.online ? this.leaveOnlineMatch() : this.scene.restart({ mode: this.mode, difficulty: this.difficulty }), 252).forEach(add);
+      () => this.online ? this.leaveOnlineMatch() : this.scene.restart({ mode: this.mode, difficulty: this.difficulty, boardSize: this.boardSize }), 252).forEach(add);
     woodButton(this, GAME_WIDTH / 2, 760, 440, 90, 'MAIN MENU', 36,
       () => this.online ? this.leaveOnlineMatch() : this.scene.start('MenuScene'), 252).forEach(add);
     if (this.modeCfg.turnClock) {
@@ -1949,8 +853,7 @@ class GameScene extends Phaser.Scene {
     return Math.max(0, 3 - this.getAudiencePollsUsed());
   }
 
-  // Each non-Play-Alone player gets three free polls per game. Online uses are enforced by the Worker;
-  // Player-vs-AI uses its clearly labelled practice audience.
+  // Three free polls per player per game are enforced by the online Worker.
   showAudiencePoll() {
     this.closeAudiencePoll();
     if (this.gameOver) return;
@@ -2135,7 +1038,7 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
-    const layout = makeInitialBoard(this.hazardChance);
+    const layout = makeInitialBoard(this.boardSize, this.boardSize, this.hazardChance);
     this.tiles = [];
     const all = [];
     for (let r = 0; r < GRID_ROWS; r++) {
@@ -2595,7 +1498,7 @@ class GameScene extends Phaser.Scene {
       const py = (bx - ax) / len;
 
       // Watching tiles trade places confuses the AI: it may forget what it knew about them.
-      if (this.modeCfg.ai) [a, b].forEach((t) => { if (Math.random() < this.ai.forgetOnSwap) this.aiMemory.delete(t); });
+      if (this.modeCfg.ai) [a, b].forEach((t) => this.aiPlayer.forgetSwapped(t));
 
       // Board data changes first, so the grid always says where each tile belongs.
       const [aRow, aCol, bRow, bCol] = [a.row, a.col, b.row, b.col];
@@ -2673,7 +1576,7 @@ class GameScene extends Phaser.Scene {
     // Hazard is a bomb in every mode: destroy it and every shape already picked.
     // Only Play Alone loses one point; versus modes never lose points from Hazard.
     if (tile.shape === 'hazard') {
-      this.hazardBlast(tile);
+      this.hazardBlast(tile, { fromAI });
       return;
     }
 
@@ -2737,7 +1640,8 @@ class GameScene extends Phaser.Scene {
 
   // Hazards always detonate, destroying the bomb and all shapes/Dummies currently picked.
   // Play Alone loses one point per explosion; versus modes receive no Hazard penalty.
-  async hazardBlast(hazard) {
+  async hazardBlast(hazard, options = {}) {
+    const suppressHazardCommentary = Boolean(options.fromAI && this.mode === 'ai');
     this.busy = true;
     this.cancelShuffles();
     const tiles = [...this.selection, ...this.dummySelection, hazard];
@@ -2747,8 +1651,10 @@ class GameScene extends Phaser.Scene {
     hazard.selected = true;
     await this.flipTile(hazard, true);
     const lost = this.modeCfg.twoPlayers ? 0 : this.applyPenalty(HAZARD_BLAST_PENALTY);
-    this.showToast('Hazard! It destroys everything you picked.\n' +
-      (lost > 0 ? '−' + lost + ' point, no reward.' : 'No reward.'));
+    if (!suppressHazardCommentary) {
+      this.showToast('Hazard! It destroys everything you picked.\n' +
+        (lost > 0 ? '−' + lost + ' point, no reward.' : 'No reward.'));
+    }
     this.tweens.add({ targets: hazard, angle: { from: -8, to: 8 }, duration: 70, yoyo: true, repeat: 3,
       onComplete: () => { if (hazard.active) hazard.setAngle(0); } });
     await this.sleep(900);
@@ -2760,7 +1666,7 @@ class GameScene extends Phaser.Scene {
       this.endGame('Your score reached ' + ALONE_SCORE_FLOOR + '.');
       return;
     }
-    this.endTurn('hazard');
+    this.endTurn('hazard', { suppressHazardCommentary });
   }
 
   // Legacy internal alias retained for any existing callback: a standalone Hazard also detonates.
@@ -2964,7 +1870,7 @@ class GameScene extends Phaser.Scene {
         (this.modeCfg.targetScore ? '\nTarget: ' + this.modeCfg.targetScore : '');
     text(600, summary, 40, '#ffe36e');
     woodButton(this, GAME_WIDTH / 2, 810, 500, 110, this.online ? 'NEW ONLINE ROOM' : 'PLAY AGAIN', 44,
-      () => this.online ? this.leaveOnlineMatch() : this.scene.restart({ mode: this.mode, difficulty: this.difficulty }), 301);
+      () => this.online ? this.leaveOnlineMatch() : this.scene.restart({ mode: this.mode, difficulty: this.difficulty, boardSize: this.boardSize }), 301);
     woodButton(this, GAME_WIDTH / 2, 950, 500, 110, 'MAIN MENU', 44, () => this.scene.start('MenuScene'), 301);
   }
 
@@ -3077,67 +1983,12 @@ class GameScene extends Phaser.Scene {
 
   // ------------------------------------------------------------------ AI (Easy / Professional)
   // The AI only knows what it has seen: the opening board, new tiles while they are face-up, and every
-  // tile that gets flipped. How much of that it keeps depends on the level (this.ai, from AI_LEVELS):
-  // Easy remembers about half, sometimes wrongly; Professional remembers almost everything. Shuffled tiles
-  // may be forgotten. Memory is kept per tile (not per grid cell), so it follows tiles as they fall.
+  // tile that gets flipped. What it keeps and what it reaches for live in src/ai.js (AIPlayer, tested in
+  // tests/ai.test.mjs); this scene only owns the turn loop below (runAITurn / aiTap / aiAttempt) and
+  // records what the AI gets to see through this thin adapter.
   aiSee(tile, certain = false) {
     if (!this.modeCfg.ai || !tile.active) return;
-    if (!certain && Math.random() > this.aiRecall) return;
-    const slip = !certain && Math.random() < this.ai.mistake;
-    this.aiMemory.set(tile, slip ? randomItem(SHAPE_KEYS) : tile.shape);
-  }
-
-  aiCanTap(tile) {
-    return tile.active && !tile.selected && !tile.swapping && !tile.faceUp;
-  }
-
-  // Remembered, still available tiles of one shape.
-  aiKnown(shape) {
-    const list = [];
-    for (const [tile, remembered] of this.aiMemory) {
-      if (!tile.active) this.aiMemory.delete(tile);
-      else if (remembered === shape && this.aiCanTap(tile)) list.push(tile);
-    }
-    return list;
-  }
-
-  // Remembered, still available tiles grouped by shape: one list per shape (never dummies or hazards).
-  aiGroups() {
-    const groups = {};
-    for (const [tile, shape] of this.aiMemory) {
-      if (!tile.active) { this.aiMemory.delete(tile); continue; }
-      if (shape === 'dummy' || shape === 'hazard' || shape === 'cancel' || !this.aiCanTap(tile)) continue;
-      (groups[shape] = groups[shape] || []).push(tile);
-    }
-    return Object.values(groups);
-  }
-
-  // A shape it remembers at least 3 of. Easy rarely goes for the biggest group; Professional always does.
-  aiChooseGroup() {
-    const ready = this.aiGroups().filter((list) => list.length >= MIN_MATCH);
-    if (!ready.length) return null;
-    ready.sort((a, b) => b.length - a.length);
-    return Math.random() < this.ai.bestGroupChance ? ready[0] : randomItem(ready);
-  }
-
-  // A plausible guess: any hidden tile it doesn't remember as something else (and never a remembered dummy/hazard).
-  // Professional starts a fresh attempt on a tile it has no memory of, where it can still learn something.
-  aiGuess(shape = null) {
-    const pool = [];
-    for (const row of this.tiles) {
-      for (const tile of row) {
-        if (!tile || !this.aiCanTap(tile)) continue;
-        const remembered = this.aiMemory.get(tile);
-        if (remembered === 'dummy' || remembered === 'hazard' || remembered === 'cancel') continue;
-        if (shape && remembered && remembered !== shape) continue;
-        pool.push(tile);
-      }
-    }
-    if (!shape && this.ai.preferUnknown) {
-      const unknown = pool.filter((tile) => !this.aiMemory.has(tile));
-      if (unknown.length) return randomItem(unknown);
-    }
-    return pool.length ? randomItem(pool) : null;
+    this.aiPlayer.see(tile, certain);
   }
 
   async aiIdle(alive) {
@@ -3158,29 +2009,29 @@ class GameScene extends Phaser.Scene {
   // One match attempt. Returns true when it submitted a match (submit() then ends the turn).
   async aiAttempt(alive) {
     const alreadyPicking = this.selection.length > 0;
-    let group = alreadyPicking ? this.aiKnown(this.selectedShape) : this.aiChooseGroup();
+    let group = alreadyPicking ? this.aiPlayer.known(this.selectedShape) : this.aiPlayer.chooseGroup();
     if (!alreadyPicking && !group && this.ai.followHunch) {
       // No full match remembered: start from the shape it remembers most copies of (two or more), so it
       // has fewer new tiles left to find.
-      const partial = this.aiGroups().sort((a, b) => b.length - a.length)[0];
+      const partial = this.aiPlayer.groups().sort((a, b) => b.length - a.length)[0];
       if (partial && partial.length >= 2) group = partial;
     }
     const first = alreadyPicking
-      ? (group.length ? randomItem(group) : (this.aiGuess(this.selectedShape) || this.aiGuess()))
-      : (group ? group[0] : this.aiGuess());
+      ? (group.length ? randomItem(group) : (this.aiPlayer.guess(this.selectedShape, this.tiles) || this.aiPlayer.guess(null, this.tiles)))
+      : (group ? group[0] : this.aiPlayer.guess(null, this.tiles));
     if (!first || !(await this.aiTap(first, alive))) return false;
 
     // How many tiles it reaches for: 5 (the 5+ score) for Professional, 3 or sometimes 4 for Easy.
     const goal = this.ai.goBig ? 5 : (Math.random() < 0.3 ? 4 : MIN_MATCH);
     while (alive() && (this.selection.length > 0 || this.dummySelection.length > 0)) {
       const have = this.selection.length;
-      const known = have ? this.aiKnown(this.selectedShape) : [];
+      const known = have ? this.aiPlayer.known(this.selectedShape) : [];
       // Once it has a match it only keeps going while it remembers more tiles of that shape and has time to spare.
       if (have >= MIN_MATCH && (have >= goal || !known.length || this.turnClock.remaining() < AI_SPARE_MS)) break;
       // Dummies do not count: if a shape is already selected, keep seeking that shape. If none is known,
       // make a plausible guess (and a genuine mismatch ends the AI's turn like any other player's).
-      const next = have === 0 ? this.aiGuess()
-        : (known.length ? randomItem(known) : (this.aiGuess(this.selectedShape) || this.aiGuess()));
+      const next = have === 0 ? this.aiPlayer.guess(null, this.tiles)
+        : (known.length ? randomItem(known) : (this.aiPlayer.guess(this.selectedShape, this.tiles) || this.aiPlayer.guess(null, this.tiles)));
       if (!next || !(await this.aiTap(next, alive))) break;
     }
     if (!alive()) return false;
@@ -3208,21 +2059,3 @@ class GameScene extends Phaser.Scene {
     // The frame update resolves an expired clock, including any valid selection eligible for auto-submit.
   }
 }
-
-// Start Phaser once the clean loading-bar image is ready. The HTML placeholder remains visible
-// while its checkerboard background is removed, so both loading screens use the same clean artwork.
-window.ShapeyLoadingBar.ready.then(() => {
-  window.game = new Phaser.Game({
-    type: Phaser.AUTO,
-    parent: 'game',
-    width: GAME_WIDTH,
-    height: GAME_HEIGHT,
-    backgroundColor: '#2b1a0f',
-    banner: false,
-    scale: {
-      mode: Phaser.Scale.FIT,
-      autoCenter: Phaser.Scale.CENTER_BOTH,
-    },
-    scene: [BootScene, LoadScene, MenuScene, GameScene],
-  });
-});

@@ -10,7 +10,12 @@ on:
     paths:
       - staging/audience.html
       - staging/audience.js
-      - src/rules.js
+      - staging/index.html
+      - staging/*.js
+      - src/**
+      - assets/**
+      - worker/src/**
+      - tests/rules.test.js
       - .github/workflows/staging-preview.yml
 
 permissions:
@@ -18,63 +23,57 @@ permissions:
 
 jobs:
   check:
-    name: Test candidate without publishing to main
+    name: Test staging page and Worker
     runs-on: ubuntu-latest
     steps:
       - name: Check out candidate
         uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Run game-rule tests
         run: node --test tests/rules.test.js
 
       - name: Check JavaScript syntax
         run: |
-          node --check src/main.js
-          node --check src/rules.js
-          node --check staging/main.js
-          node --check staging/audience.js
-          node --check worker/src/index.js
+          set -e
+          for f in src/*.js src/scenes/*.js staging/*.js worker/src/index.js; do
+            node --check "$f"
+          done
 
-      - name: Smoke-test the deployed preview
-        env:
-          PREVIEW_URL: https://shapey-audience-preview.hellohuman100.workers.dev/staging/audience.html
+      - name: Smoke-test the candidate staging page and assets locally
         run: |
           set -euo pipefail
-          base="${PREVIEW_URL%/staging/audience.html}"
-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 -D /tmp/preview-headers "$PREVIEW_URL" -o /tmp/audience.html
-          grep -Fqi 'x-shapey-preview: 0003+0004' /tmp/preview-headers
+          python3 -m http.server 4173 --bind 127.0.0.1 --directory . >/tmp/shapey-static-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          base="http://127.0.0.1:4173"
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent "$base/staging/audience.html" -o /tmp/audience.html; then
+              break
+            fi
+            sleep 1
+          done
+          test -s /tmp/audience.html
           grep -q 'id="gameFrame"' /tmp/audience.html
           grep -q 'id="startDemo"' /tmp/audience.html
-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/audience.js" -o /tmp/audience.js
+
+          curl --fail --silent --show-error "$base/staging/audience.js" -o /tmp/audience.js
           grep -q 'function startAiDemo()' /tmp/audience.js
           grep -q "type: 'poll_vote', tileId" /tmp/audience.js
-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/main.js" -o /tmp/staging-main.js
-          grep -q 'AUDIENCE_WATCH_CODE' /tmp/staging-main.js
-          # The exact game-poll label is presentation copy and has changed over time; AUDIENCE_WATCH_CODE above verifies the relevant staging client path.
-          direct_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 1 -o /tmp/direct-health.json -w '%{http_code}' 'https://shapey-multiplayer-staging.hellohuman100.workers.dev/health')"
-          echo "Direct staging Worker health status: $direct_status"
-          cat /tmp/direct-health.json
-          proxy_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 1 -o /tmp/staging-health.json -w '%{http_code}' "$base/health")"
-          echo "Preview-proxied staging Worker health status: $proxy_status"
-          cat /tmp/staging-health.json
-          test "$direct_status" = 200
-          test "$proxy_status" = 200
-          grep -q '"stage":"authoritative-gameplay-v1"' /tmp/staging-health.json
-          grep -q '"audiencePollSeconds":30' /tmp/staging-health.json
-          grep -q '"pollResultsHiddenUntilClose":true' /tmp/staging-health.json
-          # Test the exact audience directory endpoint through both public entry points. The preview's /health is static,
-          # so it cannot substitute for checking a real GET /api/rooms response.
-          backend_rooms_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 1 -H 'Origin: https://shapey-audience-preview.hellohuman100.workers.dev' -o /tmp/backend-rooms.json -w '%{http_code}' 'https://shapey-multiplayer-staging.hellohuman100.workers.dev/api/rooms')"
-          echo "Direct staging room-directory status: $backend_rooms_status"
-          cat /tmp/backend-rooms.json
-          test "$backend_rooms_status" = 200
-          grep -q '"rooms":' /tmp/backend-rooms.json
           grep -Fq "https://shapey-multiplayer-staging.hellohuman100.workers.dev" /tmp/audience.js
-          grep -Fq "https://shapey-multiplayer-staging.hellohuman100.workers.dev" /tmp/staging-main.js
-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/src/rules.js" -o /tmp/rules.js
+
+          curl --fail --silent --show-error "$base/src/scenes/load.js" -o /tmp/load-scene.js
+          grep -q 'AUDIENCE_WATCH_CODE' /tmp/load-scene.js
+          curl --fail --silent --show-error "$base/src/config.js" -o /tmp/config.js
+          grep -Fq "https://shapey-multiplayer-staging.hellohuman100.workers.dev" /tmp/config.js
+          curl --fail --silent --show-error "$base/src/rules.js" -o /tmp/rules.js
           grep -q 'ShapeyRules' /tmp/rules.js
-          # Check assets through the exact preview URL used by the phone, not only on GitHub Pages.
-          assets_base="$base"
+
           for asset in \
             "assets/backgrounds/BG.webp" \
             "assets/backgrounds/header%20%20plank%201.webp" \
@@ -92,6 +91,38 @@ jobs:
             "assets/ui/player%20plank%202.webp" \
             "assets/ui/timer%20plank.webp" \
             "assets/shapes/circle.webp"; do
-            curl --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 1 "$assets_base/$asset" -o /dev/null
+            curl --fail --silent --show-error "$base/$asset" -o /dev/null
           done
-          echo "Preview page, demo scripts, rule script, and Shapey artwork assets are reachable."
+          echo "Candidate audience page, shared game modules, and artwork assets are reachable."
+
+      - name: Check the hosted static preview (informational)
+        env:
+          PREVIEW_URL: https://shapey-audience-preview.hellohuman100.workers.dev/staging/audience.html
+        run: |
+          base="${PREVIEW_URL%/staging/audience.html}"
+          if curl --fail --silent --max-time 15 -D /tmp/preview-headers "$PREVIEW_URL" -o /tmp/preview-audience.html &&
+             grep -Fqi 'x-shapey-preview: 0003+0004' /tmp/preview-headers &&
+             grep -q 'id="gameFrame"' /tmp/preview-audience.html &&
+             curl --fail --silent --max-time 15 "$base/src/scenes/load.js" -o /dev/null &&
+             curl --fail --silent --max-time 15 "$base/src/config.js" -o /dev/null; then
+            echo "Hosted preview is reachable and serves the shared game modules."
+          else
+            echo "::warning title=Hosted static preview unavailable::The separate Cloudflare-hosted audience preview is not serving the expected current page/modules. The candidate files are tested locally in this workflow, and the staging Worker is checked below. Restore or redeploy this preview to re-enable the external-page check."
+          fi
+
+      - name: Check the deployed staging Worker directly
+        run: |
+          set -euo pipefail
+          direct_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 1 -o /tmp/direct-health.json -w '%{http_code}' 'https://shapey-multiplayer-staging.hellohuman100.workers.dev/health')"
+          echo "Direct staging Worker health status: $direct_status"
+          cat /tmp/direct-health.json
+          test "$direct_status" = 200
+          grep -q '"stage":"authoritative-gameplay-v1"' /tmp/direct-health.json
+          grep -q '"audiencePollSeconds":30' /tmp/direct-health.json
+          grep -q '"pollResultsHiddenUntilClose":true' /tmp/direct-health.json
+
+          backend_rooms_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 1 -H 'Origin: https://shapey-audience-preview.hellohuman100.workers.dev' -o /tmp/backend-rooms.json -w '%{http_code}' 'https://shapey-multiplayer-staging.hellohuman100.workers.dev/api/rooms')"
+          echo "Direct staging room-directory status: $backend_rooms_status"
+          cat /tmp/backend-rooms.json
+          test "$backend_rooms_status" = 200
+          grep -q '"rooms":' /tmp/backend-rooms.json

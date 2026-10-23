@@ -10,7 +10,6 @@ on:
       - "tests/**"
       - ".github/workflows/worker-tests.yml"
       - "staging/audience.js"
-      - "staging/main.js"
       - "staging/index.html"
   pull_request:
     paths:
@@ -20,7 +19,6 @@ on:
       - ".github/workflows/worker-tests.yml"
       - "staging/audience.html"
       - "staging/audience.js"
-      - "staging/main.js"
       - "staging/index.html"
       - ".github/workflows/staging-preview.yml"
 jobs:
@@ -114,6 +112,7 @@ jobs:
       - name: Check frontend JavaScript syntax
         working-directory: .
         run: |
-          node --check src/main.js
-          node --check staging/main.js
-          node --check staging/audience.js
+          set -e
+          for f in src/*.js src/scenes/*.js staging/audience.js; do
+            node --check "$f"
+          done
