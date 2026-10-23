@@ -8,8 +8,8 @@
   <!-- Start the slow third-party connection, the font and the two loading-screen images as early as possible. -->
   <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin />
   <link rel="preload" href="assets/fonts/HAPPY%20SCHOOL.TTF" as="font" type="font/ttf" crossorigin />
+  <link rel="preload" href="assets/backgrounds/BG.webp" as="image" type="image/webp" />
   <link rel="preload" href="assets/ui/shapey%20logo.webp" as="image" type="image/webp" />
-  <link rel="preload" href="assets/ui/load%20rectangle%20staging.webp" as="image" type="image/webp" />
   <link rel="preload" href="assets/ui/load%20rectangle.jpeg" as="image" type="image/jpeg" />
   <style>
     @font-face {
@@ -19,29 +19,33 @@
     html, body { margin: 0; height: 100%; background: #2b1a0f; overflow: hidden; }
     #game { width: 100%; height: 100%; }
 
-    /* Shown instantly, while Phaser itself is still downloading. It uses the same layout as the in-game
-       loading screen (a 720 x 1280 stage, logo centred at 470, load bar centred at 720), so the hand-over is seamless.
-       Keep these numbers in sync with LOGO_* / LOAD_BAR_* in src/constants.js. */
+    /* The boot artwork is preloaded together and revealed in one frame while Phaser starts. It uses the same
+       background and layout as the in-game loading screen (720 x 1280; logo centred at 470, load bar at 720).
+       A safety reveal prevents a permanent blank screen if loading is unusually slow. Keep positions in sync
+       with LOGO_* / LOAD_BAR_* / LOAD_TRACK in src/constants.js. */
     #boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
-    #boot .stage { position: relative; width: min(100vw, 56.25vh); height: min(177.78vw, 100vh); }
+    #boot .stage {
+      position: relative; width: min(100vw, 56.25vh); height: min(177.78vw, 100vh);
+      visibility: hidden;
+      animation: bootSafetyReveal 0s linear 6.5s forwards;
+    }
+    #boot.ready .stage { visibility: visible; animation: none; }
     #boot img { position: absolute; left: 50%; transform: translate(-50%, -50%); height: auto; }
-    #boot .logo {
-      top: 36.72%; width: 72.22%;
-      animation: logoFloat 900ms ease-in-out infinite alternate;
-    } /* 520 / 720, 470 / 1280 */
+    #boot .bg { left: 0; top: 0; width: 100%; height: 100%; transform: none; }
+    #boot .logo { top: 36.72%; width: 72.22%; } /* 520 / 720, 470 / 1280 */
+    #boot.ready .logo { animation: logoFloat 900ms ease-in-out infinite alternate; }
     #boot .bar { position: absolute; left: 50%; top: 56.25%; width: 77.78%; transform: translate(-50%, -50%); } /* 560 / 720, 720 / 1280 */
-    #boot .bar img { position: static; transform: none; width: 100%; height: auto; display: block; visibility: hidden; }
-    #boot .bar.ready img { visibility: visible; }
-    #boot .bar .fill { visibility: hidden; }
-    #boot .bar.ready .fill { visibility: visible; }
+    #boot .bar canvas { display: block; width: 100%; height: auto; }
     #boot .fill {
       position: absolute; left: 6.637%; top: 28.302%; height: 42.925%; width: 5.197%;
-      background: #f2b84b; animation: pulse 500ms ease-in-out infinite alternate;
+      background: #f2b84b;
     }
+    #boot.ready .fill { animation: pulse 500ms ease-in-out infinite alternate; }
     #boot .gloss {
       position: absolute; top: 0; left: 0; width: 100%; height: 45%;
-      background: #ffe3a0; opacity: 1;
+      background: #ffe3a0; opacity: .7; /* same as the gloss in LoadScene */
     }
+    @keyframes bootSafetyReveal { to { visibility: visible; } }
     @keyframes pulse { from { opacity: .75; } to { opacity: 1; } }
     @keyframes logoFloat {
       from { transform: translate(-50%, -50%) translateY(0); }
@@ -51,8 +55,9 @@
 </head>
 <body>
   <div id="boot"><div class="stage">
+    <img class="bg" src="assets/backgrounds/BG.webp" alt="" width="720" height="1280" />
     <img class="logo" src="assets/ui/shapey%20logo.webp" alt="Shapey" width="1100" height="440" />
-    <div class="bar"><img id="bootLoadRectangle" alt="" width="840" height="175" /><div class="fill"><div class="gloss"></div></div></div>
+    <div class="bar"><canvas id="bootLoadRectangle" width="840" height="175"></canvas><div class="fill"><div class="gloss"></div></div></div>
   </div></div>
   <div id="game"></div>
   <!-- Classic scripts run first: boot bar, Phaser, then the UMD rule/meme globals.

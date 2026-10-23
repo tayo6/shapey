@@ -109,6 +109,6 @@ export const DUST_FRAME_RATE = 10;
 // Shapey logo and the loading bar. index.html draws the same layout while Phaser is still downloading.
 export const LOGO_W = 520, LOGO_Y = 470;
 export const LOAD_BAR_W = 560, LOAD_BAR_Y = 720;
-// The dark slot of "load rectangle staging.webp", as fractions of the image: the progress fill goes inside it.
+// The dark slot of the cleaned wood-frame image, as fractions of the cropped image.
 export const LOAD_TRACK = { x0: 0.0664, x1: 0.9326, y0: 0.283, y1: 0.7123 };
 export const LOAD_MIN_FILL = 0.06; // share of the slot that is already filled at 0%, so the bar never looks empty
