@@ -135,54 +135,54 @@
 
   window.ShapeyLoadingBar = {};
 
-  // Show a lightweight bar as soon as the small fallback image arrives. The expensive JPEG cleanup
-  // then runs in the background while Phaser starts loading the game assets.
-  window.ShapeyLoadingBar.ready = (async () => {
+  const logoUrl = new URL('assets/ui/shapey logo.webp', document.baseURI).href;
+  const backgroundUrl = new URL('assets/backgrounds/BG.webp', document.baseURI).href;
+  const fallbackUrl = new URL('assets/ui/load rectangle staging.webp', document.baseURI).href;
+
+  async function prepareFallback() {
     const fallback = await loadImage(fallbackUrl);
     const canvas = document.createElement('canvas');
     canvas.width = fallback.naturalWidth;
     canvas.height = fallback.naturalHeight;
-    const fallbackContext = canvas.getContext('2d');
-    if (!fallbackContext) throw new Error('Canvas is unavailable for the loading-bar fallback');
-    fallbackContext.drawImage(fallback, 0, 0);
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Canvas is unavailable for the loading-bar fallback');
+    context.drawImage(fallback, 0, 0);
 
     window.ShapeyLoadingBar.url = fallbackUrl;
     window.ShapeyLoadingBar.canvas = canvas;
     await showImage(fallbackUrl, fallback.naturalWidth, fallback.naturalHeight);
-
-    // Do not hold the game boot screen hostage while removing the checkerboard baked into the JPEG.
-      const clean = async () => {
-        try {
-        const source = await loadImage(sourceUrl);
-        const clean = cleanAndCrop(source);
-        const url = clean.canvas.toDataURL('image/webp', 0.95);
-
-        // Keep the same canvas object so a Phaser CanvasTexture already using it can be refreshed.
-        canvas.width = clean.width;
-        canvas.height = clean.height;
-        const cleanContext = canvas.getContext('2d');
-        if (!cleanContext) throw new Error('Canvas is unavailable for the cleaned loading bar');
-        cleanContext.drawImage(clean.canvas, 0, 0);
-
-        window.ShapeyLoadingBar.url = url;
-        await showImage(url, clean.width, clean.height);
-        const game = window.game;
-        if (game && game.textures && game.textures.exists('loadRect')) {
-          game.textures.get('loadRect').refresh();
-        }
-        return { url, width: clean.width, height: clean.height, canvas };
-        } catch (error) {
-          console.warn('Could not clean the loading-bar source; keeping the fast fallback.', error);
-          return { url: fallbackUrl, width: canvas.width, height: canvas.height, canvas, fallback: true };
-        }
-      };
-      // Let the browser paint the visible placeholder and let Phaser begin before the pixel cleanup runs.
-      window.ShapeyLoadingBar.cleaning = new Promise((resolve) => {
-        const schedule = () => window.setTimeout(async () => resolve(await clean()), 0);
-        if (window.requestAnimationFrame) window.requestAnimationFrame(schedule);
-        else schedule();
-      });
-
     return { url: fallbackUrl, width: fallback.naturalWidth, height: fallback.naturalHeight, canvas, fallback: true };
+  }
+
+  // Prepare all three visible pieces in parallel, but reveal the stage only once they are ready.
+  // In normal operation the clean JPEG is used from the first frame; the damaged legacy WebP is
+  // used only if the source image or canvas cleanup fails.
+  window.ShapeyLoadingBar.ready = (async () => {
+    const artworkReady = Promise.all([
+      loadImage(logoUrl),
+      loadImage(backgroundUrl),
+    ]).catch((error) => {
+      console.warn('Could not preload all boot artwork; continuing with what is available.', error);
+    });
+
+    let prepared;
+    try {
+      const source = await loadImage(sourceUrl);
+      const clean = cleanAndCrop(source);
+      const url = clean.canvas.toDataURL('image/webp', 0.95);
+
+      window.ShapeyLoadingBar.url = url;
+      window.ShapeyLoadingBar.canvas = clean.canvas;
+      await showImage(url, clean.width, clean.height);
+      prepared = { url, width: clean.width, height: clean.height, canvas: clean.canvas };
+    } catch (error) {
+      console.warn('Could not clean the loading-bar source; using the backup image.', error);
+      prepared = await prepareFallback();
+    }
+
+    await artworkReady;
+    const boot = document.getElementById('boot');
+    if (boot) boot.classList.add('ready');
+    return prepared;
   })();
 })();
