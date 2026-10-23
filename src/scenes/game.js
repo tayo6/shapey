@@ -100,6 +100,19 @@ export class GameScene extends Phaser.Scene {
     this.createBottomButtons();
     this.createFx();
     this.createBoard();
+
+    // Best-effort reveal privacy: if a player leaves the tab/app during a reveal,
+    // cover the board until that reveal would have ended. Browser pages cannot block
+    // OS screenshots, but this discourages tab-switching to inspect the revealed board.
+    this.revealPrivacyUntil = 0;
+    this.revealPrivacyCover = null;
+    this.revealPrivacyLabel = null;
+    this.revealVisibilityHandler = () => this.handleRevealVisibilityChange();
+    document.addEventListener('visibilitychange', this.revealVisibilityHandler);
+    this.events.once('shutdown', () => {
+      document.removeEventListener('visibilitychange', this.revealVisibilityHandler);
+      this.removeRevealPrivacyCover();
+    });
     if (this.spectator && urlParams.get('embed') === '1') {
       // Wait two animation frames so the first real board frame is painted before the parent
       // reveals Chat / Polls / Settings navigation.
@@ -139,9 +152,57 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  // Current opening/spawned reveal time, using the server's clock for online matches.
+  revealPrivacyRemainingMs() {
+    const now = Date.now();
+    if (this.online && this.onlineState) {
+      return Math.max(
+        0,
+        ...((this.onlineState.reveals || []).map((batch) => Number(batch.endsAt) - now)),
+        this.onlineState.status === 'study' && Number.isFinite(Number(this.onlineState.reviewEndsAt))
+          ? Number(this.onlineState.reviewEndsAt) - now : 0
+      );
+    }
+    return this.reveals ? this.reveals.remaining() : 0;
+  }
+
+  handleRevealVisibilityChange() {
+    if (!document.hidden) {
+      if (Date.now() >= this.revealPrivacyUntil) this.removeRevealPrivacyCover();
+      return;
+    }
+
+    const remaining = this.revealPrivacyRemainingMs();
+    if (remaining <= 0 || !this.tray) return;
+    this.revealPrivacyUntil = Math.max(this.revealPrivacyUntil, Date.now() + remaining);
+    if (!this.revealPrivacyCover) {
+      // Cover only the tile grid, leaving the scores, countdown and navigation visible.
+      this.revealPrivacyCover = this.add.rectangle(
+        this.tray.x, this.tray.y,
+        GRID_COLS * TILE_PITCH + 6, GRID_ROWS * TILE_PITCH + 6,
+        0x21160e, 0.99
+      ).setDepth(150);
+      this.revealPrivacyLabel = this.add.text(this.tray.x, this.tray.y, 'SHAPES HIDDEN', {
+        fontFamily: FONT, fontSize: '30px', color: '#fff2c7',
+        stroke: '#3a2412', strokeThickness: 6, align: 'center',
+      }).setOrigin(0.5).setDepth(151);
+    }
+  }
+
+  removeRevealPrivacyCover() {
+    if (this.revealPrivacyCover) this.revealPrivacyCover.destroy();
+    if (this.revealPrivacyLabel) this.revealPrivacyLabel.destroy();
+    this.revealPrivacyCover = null;
+    this.revealPrivacyLabel = null;
+    this.revealPrivacyUntil = 0;
+  }
+
   // Runs every frame: flips tiles whose reveal is over, redraws both clocks, and ends the turn on timeout.
   update() {
     if (!this.turnClock) return;
+    if (this.revealPrivacyCover && !document.hidden && Date.now() >= this.revealPrivacyUntil) {
+      this.removeRevealPrivacyCover();
+    }
     if (this.memes) this.memes.tick();
     // GIFs are attached only after loading, so reposition an existing message every frame too.
     if (this.toast) {
