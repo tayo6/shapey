@@ -24,6 +24,11 @@ jobs:
       - name: Check out candidate
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Run game-rule tests
         run: node --test tests/rules.test.js
 
@@ -70,7 +75,9 @@ jobs:
           test "$backend_rooms_status" = 200
           grep -q '"rooms":' /tmp/backend-rooms.json
           grep -Fq "https://shapey-multiplayer-staging.hellohuman100.workers.dev" /tmp/audience.js
-          grep -Fq "https://shapey-multiplayer-staging.hellohuman100.workers.dev" /tmp/staging-main.js
+          # The Worker URL now lives in src/config.js (staging/main.js no longer exists).
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/src/config.js" -o /tmp/config.js
+          grep -Fq "https://shapey-multiplayer-staging.hellohuman100.workers.dev" /tmp/config.js
           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/src/rules.js" -o /tmp/rules.js
           grep -q 'ShapeyRules' /tmp/rules.js
           # Check assets through the exact preview URL used by the phone, not only on GitHub Pages.

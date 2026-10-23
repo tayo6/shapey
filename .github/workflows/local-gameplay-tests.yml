@@ -28,7 +28,7 @@ jobs:
           node-version: 22
 
       - name: Run pure-rule and module unit tests (rules, memes, utils, board, trackers, AI)
-        run: node --test tests/
+        run: node --test tests/*.test.js tests/*.test.mjs
 
       - name: Check every frontend and tool module's syntax (ES modules included)
         run: |

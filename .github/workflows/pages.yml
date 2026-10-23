@@ -24,8 +24,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Test extracted game rules
-        run: node --test tests/
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Test game rules and extracted modules
+        run: node --test tests/*.test.js tests/*.test.mjs
 
       - name: Check game and staging JavaScript syntax (all ES modules)
         run: |
