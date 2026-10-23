@@ -1,11 +1,23 @@
-// Builds a clean transparent loading-bar texture from the repository's high-quality JPEG.
-// The JPEG has a checkerboard baked into its background; remove the connected light-neutral pixels
-// and crop to the wood frame so neither HTML nor Phaser shows the damaged older WebP asset.
+// Shapey - boot screen controller. A classic script: index.html runs it before Phaser has downloaded.
+//
+// The boot screen (#boot in index.html) stays hidden until everything on it is ready - the textured
+// background, the Shapey logo and the load-bar plank - and is then revealed in a single step, so the
+// pieces never pop in one after another.
+//
+// The plank is cut out of "load rectangle.jpeg", whose background has a checkerboard baked in: connected
+// light-neutral pixels are removed and the picture is cropped to the wooden frame. That happens once, before
+// the reveal, and the same cleaned canvas is used by the HTML boot screen and by Phaser
+// (window.ShapeyLoadingBar.canvas), so the plank never changes after it is shown. The old WebP version of the
+// plank ("load rectangle staging.webp") is damaged along its bottom edge and is no longer used. If the JPEG
+// cannot be prepared, a plain drawn plank with the same proportions is used instead.
 (() => {
+  // Reveal the boot screen after this long even if something is slow (a plain plank is drawn if the JPEG is late).
+  const REVEAL_TIMEOUT_MS = 6000;
   const sourceUrl = new URL('assets/ui/load rectangle.jpeg', document.baseURI).href;
-  const fallbackUrl = new URL('assets/ui/load rectangle staging.webp', document.baseURI).href;
+  const boot = document.getElementById('boot');
   const bar = document.querySelector('#boot .bar');
-  const displayImage = document.getElementById('bootLoadRectangle');
+  const bgImage = document.querySelector('#boot .bg');
+  const logoImage = document.querySelector('#boot .logo');
 
   function loadImage(url) {
     return new Promise((resolve, reject) => {
@@ -14,6 +26,17 @@
       img.onerror = () => reject(new Error('Could not load image: ' + url));
       img.src = url;
       if (img.complete && img.naturalWidth > 0) resolve(img);
+    });
+  }
+
+  // Resolves once an <img> on the boot screen is downloaded and decoded (or has failed - never rejects).
+  function imageReady(img) {
+    if (!img) return Promise.resolve();
+    const decoded = () => (typeof img.decode === 'function' ? img.decode().catch(() => {}) : Promise.resolve());
+    if (img.complete) return img.naturalWidth > 0 ? decoded() : Promise.resolve();
+    return new Promise((resolve) => {
+      img.addEventListener('load', () => resolve(decoded()), { once: true });
+      img.addEventListener('error', () => resolve(), { once: true });
     });
   }
 
@@ -115,73 +138,103 @@
     return { canvas: output, width: output.width, height: output.height };
   }
 
-  function showImage(url, width, height) {
-    return new Promise((resolve) => {
-      let finished = false;
-      const done = () => {
-        if (finished) return;
-        finished = true;
-        displayImage.width = width;
-        displayImage.height = height;
-        bar.classList.add('ready');
-        resolve();
-      };
-      displayImage.onload = done;
-      displayImage.onerror = done;
-      displayImage.src = url;
-      if (displayImage.complete && displayImage.naturalWidth > 0) done();
-    });
-  }
-
-  window.ShapeyLoadingBar = {};
-
-  const logoUrl = new URL('assets/ui/shapey logo.webp', document.baseURI).href;
-  const backgroundUrl = new URL('assets/backgrounds/BG.webp', document.baseURI).href;
-
-  async function prepareFallback() {
-    const fallback = await loadImage(fallbackUrl);
+  // Last resort if the JPEG cannot be prepared: a plain wooden plank with the same proportions and the same
+  // dark slot as the real one (LOAD_TRACK in src/constants.js).
+  function makeFallbackPlank() {
+    const w = 840;
+    const h = 175;
     const canvas = document.createElement('canvas');
-    canvas.width = fallback.naturalWidth;
-    canvas.height = fallback.naturalHeight;
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('Canvas is unavailable for the loading-bar fallback');
-    context.drawImage(fallback, 0, 0);
-
-    window.ShapeyLoadingBar.url = fallbackUrl;
-    window.ShapeyLoadingBar.canvas = canvas;
-    await showImage(fallbackUrl, fallback.naturalWidth, fallback.naturalHeight);
-    return { url: fallbackUrl, width: fallback.naturalWidth, height: fallback.naturalHeight, canvas, fallback: true };
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      const wood = ctx.createLinearGradient(0, 0, 0, h);
+      wood.addColorStop(0, '#a8662f');
+      wood.addColorStop(1, '#6b3a1a');
+      ctx.fillStyle = wood;
+      ctx.fillRect(0, 0, w, h);
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = '#3d2210';
+      ctx.strokeRect(3, 3, w - 6, h - 6);
+      const grow = 6; // the slot is a little bigger than the gold fill that goes inside it
+      const x = 0.0664 * w - grow;
+      const y = 0.283 * h - grow;
+      const slotW = (0.9326 - 0.0664) * w + grow * 2;
+      const slotH = (0.7123 - 0.283) * h + grow * 2;
+      ctx.fillStyle = '#24150b';
+      ctx.fillRect(x, y, slotW, slotH);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#d5ad72';
+      ctx.strokeRect(x, y, slotW, slotH);
+    }
+    return { canvas, width: w, height: h };
   }
 
-  // Prepare all three visible pieces in parallel, but reveal the stage only once they are ready.
-  // In normal operation the clean JPEG is used from the first frame; the damaged legacy WebP is
-  // used only if the source image or canvas cleanup fails.
-  window.ShapeyLoadingBar.ready = (async () => {
-    const artworkReady = Promise.all([
-      loadImage(logoUrl),
-      loadImage(backgroundUrl),
-    ]).catch((error) => {
-      console.warn('Could not preload all boot artwork; continuing with what is available.', error);
-    });
-
-    let prepared;
-    try {
-      const source = await loadImage(sourceUrl);
-      const clean = cleanAndCrop(source);
-      const url = clean.canvas.toDataURL('image/webp', 0.95);
-
-      window.ShapeyLoadingBar.url = url;
-      window.ShapeyLoadingBar.canvas = clean.canvas;
-      await showImage(url, clean.width, clean.height);
-      prepared = { url, width: clean.width, height: clean.height, canvas: clean.canvas };
-    } catch (error) {
-      console.warn('Could not clean the loading-bar source; using the backup image.', error);
-      prepared = await prepareFallback();
+  // The canvas that shows the plank inside the HTML boot screen. index.html provides it; if an older page
+  // has an <img> there instead, it is swapped for a canvas.
+  function getDisplayCanvas() {
+    if (!bar) return null;
+    let canvas = document.getElementById('bootLoadRectangle');
+    if (!canvas || canvas.tagName !== 'CANVAS') {
+      const replacement = document.createElement('canvas');
+      replacement.id = 'bootLoadRectangle';
+      replacement.setAttribute('aria-hidden', 'true');
+      replacement.style.cssText = 'display:block;width:100%;height:auto;';
+      if (canvas && canvas.parentNode) canvas.parentNode.replaceChild(replacement, canvas);
+      else bar.insertBefore(replacement, bar.firstChild);
+      canvas = replacement;
     }
+    return canvas;
+  }
 
-    await artworkReady;
-    const boot = document.getElementById('boot');
+  // Draws the plank into the boot screen and shows the whole screen in one step.
+  function reveal(plank) {
+    const canvas = getDisplayCanvas();
+    if (canvas) {
+      canvas.width = plank.width;
+      canvas.height = plank.height;
+      const context = canvas.getContext('2d');
+      if (context) context.drawImage(plank.canvas, 0, 0);
+    }
+    if (bar) bar.classList.add('ready');
     if (boot) boot.classList.add('ready');
-    return prepared;
+  }
+
+  const state = { canvas: null, width: 0, height: 0 };
+  window.ShapeyLoadingBar = state;
+
+  // Resolves (it never rejects) once the boot screen has been revealed. src/main.js starts Phaser after this,
+  // and BootScene turns state.canvas into the 'loadRect' texture.
+  state.ready = (async () => {
+    let plank = null;
+    let abandoned = false;
+    const plankPrepared = loadImage(sourceUrl)
+      .then((img) => {
+        if (!abandoned) plank = cleanAndCrop(img);
+      })
+      .catch((error) => {
+        console.warn('Could not prepare the loading-bar plank; using a plain one.', error);
+      });
+    const timeout = new Promise((resolve) => setTimeout(resolve, REVEAL_TIMEOUT_MS));
+
+    try {
+      await Promise.race([
+        Promise.all([plankPrepared, imageReady(bgImage), imageReady(logoImage)]),
+        timeout,
+      ]);
+    } catch (error) {
+      console.warn('Boot screen assets were not all ready.', error);
+    }
+    abandoned = true;
+
+    const final = plank || makeFallbackPlank();
+    state.canvas = final.canvas;
+    state.width = final.width;
+    state.height = final.height;
+    try {
+      reveal(final);
+    } catch (error) {
+      console.warn('Could not show the boot screen.', error);
+    }
   })();
 })();
