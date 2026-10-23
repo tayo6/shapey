@@ -137,7 +137,6 @@
 
   const logoUrl = new URL('assets/ui/shapey logo.webp', document.baseURI).href;
   const backgroundUrl = new URL('assets/backgrounds/BG.webp', document.baseURI).href;
-  const fallbackUrl = new URL('assets/ui/load rectangle staging.webp', document.baseURI).href;
 
   async function prepareFallback() {
     const fallback = await loadImage(fallbackUrl);
