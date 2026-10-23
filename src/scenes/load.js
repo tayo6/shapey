@@ -14,7 +14,7 @@ const fontReady = Promise.race([
   new Promise((resolve) => setTimeout(resolve, 2500)),
 ]).catch(() => {});
 
-// Stage 2: shows the background, logo and clean load bar (matching index.html), then loads
+// Stage 2: shows the same background, logo and clean load bar as the HTML placeholder, then loads
 // everything else while the bar fills.
 export class LoadScene extends Phaser.Scene {
   constructor() {
@@ -22,8 +22,9 @@ export class LoadScene extends Phaser.Scene {
   }
 
   preload() {
-    const bootBackground = this.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'bootBg');
-    bootBackground.setDisplaySize(GAME_WIDTH, GAME_HEIGHT);
+    this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x2b1a0f);
+    // The textured background was loaded by BootScene, so it is visible with the logo and load bar.
+    if (this.textures.exists('bg')) this.add.image(0, 0, 'bg').setOrigin(0, 0).setDisplaySize(GAME_WIDTH, GAME_HEIGHT);
     const logo = this.add.image(GAME_WIDTH / 2, LOGO_Y, 'logo');
     logo.setScale(LOGO_W / logo.width);
 
@@ -57,7 +58,7 @@ export class LoadScene extends Phaser.Scene {
     this.load.setPath('assets');
 
     // backgrounds
-    this.load.image('bg', 'backgrounds/BG.webp');
+    if (!this.textures.exists('bg')) this.load.image('bg', 'backgrounds/BG.webp');
     this.load.image('headerShadow', 'backgrounds/header shadow.webp');
     this.load.image('headerPlank1', 'backgrounds/header  plank 1.webp'); // two spaces in the filename
     this.load.image('trayShadow', 'backgrounds/Tray Shadow.webp');
