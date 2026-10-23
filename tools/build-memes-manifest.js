@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// Lists the meme files for staging/memes.js. A browser cannot list a folder, so this writes
+// Lists the meme files for src/memes.js. A browser cannot list a folder, so this writes
 // assets/memes/manifest.json:  { "audio": { "<folder>": [files] }, "gifs": { "<folder>": [files] } }
 //
 //   node tools/build-memes-manifest.js          write the manifest

@@ -10,7 +10,7 @@ This test environment is separate from production.
 - **Production Worker:** `shapey-multiplayer` — unchanged
 - **Production Durable Object namespace:** `shapey-multiplayer_Room` — unchanged
 
-The staging game page is an additional path on the site's static hosting and keeps its own copy of the game code in `staging/main.js`. The home page (`src/main.js`) now runs the same game and also connects to this Worker, so both pages share one backend. The Worker has its own namespace and does not share game-room storage with the old production Worker, which the game no longer uses.
+The staging game page is an additional path on the site's static hosting and runs the same shared modules from `src/` as the home page; `staging/index.html` only sets `window.SHAPEY_ENV = { staging: true, memesStandardWindow: 3 }` (relaxes the local `?api=` override and fires meme commentary a little more often) and shows the red staging banner. The home page (`src/main.js`) now runs the same game and also connects to this Worker, so both pages share one backend. The Worker has its own namespace and does not share game-room storage with the old production Worker, which the game no longer uses.
 
 ## What to test
 

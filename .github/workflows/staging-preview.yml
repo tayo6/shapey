@@ -29,11 +29,10 @@ jobs:
 
       - name: Check JavaScript syntax
         run: |
-          node --check src/main.js
-          node --check src/rules.js
-          node --check staging/main.js
-          node --check staging/audience.js
-          node --check worker/src/index.js
+          set -e
+          for f in src/*.js src/scenes/*.js staging/audience.js worker/src/index.js; do
+            node --check "$f"
+          done
 
       - name: Smoke-test the deployed preview
         env:
@@ -48,8 +47,9 @@ jobs:
           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/audience.js" -o /tmp/audience.js
           grep -q 'function startAiDemo()' /tmp/audience.js
           grep -q "type: 'poll_vote', tileId" /tmp/audience.js
-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/staging/main.js" -o /tmp/staging-main.js
-          grep -q 'AUDIENCE_WATCH_CODE' /tmp/staging-main.js
+          # The game page now loads the shared ES modules from src/ (staging/ has no forked copy).
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$base/src/scenes/load.js" -o /tmp/load-scene.js
+          grep -q 'AUDIENCE_WATCH_CODE' /tmp/load-scene.js
           # The exact game-poll label is presentation copy and has changed over time; AUDIENCE_WATCH_CODE above verifies the relevant staging client path.
           direct_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 1 -o /tmp/direct-health.json -w '%{http_code}' 'https://shapey-multiplayer-staging.hellohuman100.workers.dev/health')"
           echo "Direct staging Worker health status: $direct_status"
