@@ -1,0 +1,48 @@
+name: Extract AI update 4 review package
+
+on:
+  push:
+    paths:
+      - ".github/workflows/extract-ai-update4.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  extract-package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract package into the requested folder
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEST="patch from ai update 4"
+          ARCHIVE="$RUNNER_TEMP/shapey-review-and-patches-v4.zip"
+
+          if [ -e "$DEST" ]; then
+            echo "Destination already exists; refusing to overwrite it."
+            exit 1
+          fi
+
+          git show "27dad1e74fef619b532a1464b0edf3fb17338acf:shapey-review-and-patches-v4.zip" > "$ARCHIVE"
+          mkdir -p "$DEST"
+          unzip -q "$ARCHIVE" -d "$DEST"
+
+          # Confirm key package files exist before committing.
+          test -f "$DEST/README.md"
+          test -f "$DEST/REVIEW.md"
+          test -f "$DEST/TEST-RESULTS.md"
+          test -d "$DEST/changed-files"
+          test -d "$DEST/patches"
+
+          git add -- "$DEST"
+          git rm -- ".github/workflows/extract-ai-update4.yml"
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "Extract AI update 4 review package"
+          git push
