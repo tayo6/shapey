@@ -136,3 +136,18 @@ jobs:
           cat /tmp/backend-rooms.json
           test "$backend_rooms_status" = 200
           grep -q '"rooms":' /tmp/backend-rooms.json
+
+          # The same PR now routes the live game to production, so verify its deployed API too.
+          production_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 1 -o /tmp/production-health.json -w '%{http_code}' 'https://shapey-multiplayer.hellohuman100.workers.dev/health')"
+          echo "Direct production Worker health status: $production_status"
+          cat /tmp/production-health.json
+          test "$production_status" = 200
+          grep -q '"stage":"authoritative-gameplay-v1"' /tmp/production-health.json
+          grep -q '"audiencePollSeconds":30' /tmp/production-health.json
+          grep -q '"pollResultsHiddenUntilClose":true' /tmp/production-health.json
+
+          production_rooms_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 1 -H 'Origin: https://tayo6.github.io' -o /tmp/production-rooms.json -w '%{http_code}' 'https://shapey-multiplayer.hellohuman100.workers.dev/api/rooms')"
+          echo "Direct production room-directory status: $production_rooms_status"
+          cat /tmp/production-rooms.json
+          test "$production_rooms_status" = 200
+          grep -q '"rooms":' /tmp/production-rooms.json
