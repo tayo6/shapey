@@ -1,53 +1,55 @@
 # Shapey multiplayer Worker
 
-This directory contains the source retrieved from the deployed `shapey-multiplayer` Cloudflare Worker and the Wrangler configuration for its existing `ROOMS` Durable Objects class.
+This folder contains the Cloudflare Worker and Durable Object source for Shapey's online rooms and audience experience. The Worker is authoritative for online boards, scores, turn order, deadlines, hazards, room membership, polls, and reconnect state.
 
-## Current development-branch scope
+## Supported room types and rules
 
-The `feat/authoritative-online-gameplay` branch now contains an early authoritative game-state engine, Worker WebSocket wiring, and a Phaser client integration for the existing online-only modes:
-- PvP: 2 devices, target 100.
-- Tag: 4 devices; Team 1 = Players 1 and 2, Team 2 = Players 3 and 4; turn order P1 → P3 → P2 → P4; target 200.
-- The server owns the canonical board, active turn, score, hazards, timeout resolution, and the currently supported Extra Time and Double Play actions.
-- Hidden tile shapes are omitted from player snapshots while tiles are face-down.
-- Room creation requires an allowed origin and is limited to 5 requests per client IP per rolling 10 minutes. This is a basic abuse barrier, not full DDoS protection.
+- **Player 1 vs Player 2:** two separate devices; first side to **50 points** wins; a normal player turn has a 45-second deadline.
+- **Tag: 2 vs 2:** four separate devices; Team 1 is Players 1 + 2 and Team 2 is Players 3 + 4; partners rotate **P1 → P3 → P2 → P4**; first team to **100 points** wins; each player turn has a 30-second deadline. Tag uses a 7×7 board.
+- **AI-vs-AI audience demo:** a server-run sample match for spectators, with a deliberately short target of 10 points and a **five-second turn deadline**. This demo target is not the Player 1 vs Player 2 target.
+- **Play Alone and Player vs AI:** local client modes; the Worker is not the authority for these local games.
 
-This is **not yet approved for production release**. CI exercises the local Worker with two PvP clients and four Tag clients and runs a local Playwright smoke test using separate browser contexts; those checks are not a substitute for real-device and staging tests. Reconnecting clients use a random per-room seat token: the browser stores the token locally and the Worker stores only its hash, so a returning player receives the same seat and current match state. If browser storage is cleared or unavailable, the seat cannot be recovered; create a new room. A seat stays reserved for that room's lifetime. The isolated `shapey-multiplayer-staging` Worker was deployed with the public Live Games directory, spectator watch snapshots, room chat, and live audience polls (Player 1 vs Player 2 and Tag) on 2026-10-15. The production `shapey-multiplayer` Worker remains unchanged. Score Strike and Cancel Counter are not supported online.
+The opening study phase is 15 seconds. Newly spawned tiles are revealed for 5 seconds before they flip down and shuffle. Audience polls run for 30 seconds and are limited to three free uses per player per game; polls are not purchasable with Stars. A Hazard always destroys itself and all selected tiles, including Dummies. Online modes do not lose points for a Hazard; only Play Alone applies the one-point penalty.
 
-## Changes in this source-controlled version
-
-- The Worker module was retrieved from the live Cloudflare script and brought under version control before deployment changes.
-- New room seats receive 256-bit random reconnect tokens. Only SHA-256 token hashes are persisted in the Durable Object; the token is not placed in a URL. A reconnect with the token restores the original player number and the current match snapshot.
-- WebSocket handshakes explicitly validate the `Origin` header against the same allowlist used for CORS.
-- WebSocket messages are capped at 4 KiB and throttled to 60 messages per connection per 10-second window; the first message beyond this limit closes that socket.
-- Empty rooms expire after 30 minutes of inactivity. Rooms have a six-hour hard maximum lifetime. Expiry uses Durable Object alarms; the idle timeout does not remove active connected rooms.
-- Existing mode capacities remain unchanged: PvP = 2; Tag = 4. No new game mode is introduced.
+The server hides unrevealed tile shapes from player and spectator snapshots. WebSocket handshakes validate the request origin, messages are size- and rate-limited, room creation is limited to five requests per client IP per rolling 10 minutes, and inactive rooms expire. The origin check is a browser-abuse barrier, not authentication or full DDoS protection.
 
 ## Local tests
 
-Use Node.js 22 or later for the current Wrangler runtime. Install the test dependency once:
+Use Node.js 22 or later. From this folder, install the pinned dependencies and run the Worker unit tests:
 
 ```sh
-npm install --no-audit --no-fund
+npm ci
 npm test
 ```
 
-`npm test` runs the unit tests for protocol policy and (on the authoritative-gameplay branch) server game rules. To run the Worker WebSocket smoke test locally, start a local Worker in one terminal and run the smoke script in another:
+The browser smoke tests use Playwright. Install Chromium once:
 
 ```sh
-npx --yes wrangler@4.151.0 dev --local --ip 127.0.0.1 --port 8787
-node integration-smoke.mjs
+npx playwright install chromium
 ```
 
-The integration test exercises local PvP/Tag sockets, seat-token reconnect/state recovery, and does not deploy a Worker. CI also drives two browser contexts through a PvP match. Both run against a local Worker only. They still need to be complemented by real-device staging tests.
+To run the Worker locally, start this from the `worker/` folder:
 
-## Existing Cloudflare binding
+```sh
+npx --yes wrangler@4.151.0 dev --config wrangler.jsonc --local --ip 127.0.0.1 --port 8787
+```
 
-`wrangler.jsonc` describes the production Worker and its existing `ROOMS` Durable Objects class. It was not deployed. `wrangler.staging.jsonc` describes the separate staging Worker and namespace; the staging Worker was updated through the Cloudflare API while preserving its existing `ROOMS` namespace binding and compatibility settings. No production deployment or migration was performed. Before any future production deployment, verify Wrangler's remote migration comparison and dry-run output against the live account. Stop if Wrangler proposes creating a replacement namespace, an unexpected migration, or deleting/migrating existing state.
+In another terminal, serve the repository root on port 8080:
 
-Before a future production deployment:
-1. Run the local tests and config validation.
-2. Inspect the Wrangler dry-run/binding plan and verify the existing `ROOMS` namespace is reused without creating a new migration.
-3. Run integration smoke tests in a staging Worker using two PvP clients and four Tag clients.
-4. Deploy production only after gameplay, reconnection, lifecycle, and regression tests are passing.
+```sh
+python3 -m http.server 8080 --bind 127.0.0.1 --directory .
+```
 
-Never put API tokens or secret values in this directory.
+From `worker/`, the local Worker suites are:
+
+- `node integration-smoke.mjs` — Worker policy, scoring, polls, chat, and reconnects.
+- `node browser-smoke.mjs` — two-browser Player 1 vs Player 2.
+- `node tag-browser-smoke.mjs` — four-browser Tag and P1 → P3 → P2 → P4 rotation.
+- `node clock-skew-smoke.mjs` — correct display of turn, study, poll, and movement timers on devices with clocks skewed by +25 and −25 seconds.
+- `node audience-smoke.mjs` — local audience directory, spectating, chat, Tag roster, poll expiry, reconnects, root `?watch=` redirection, and the five-second demo deadline.
+
+The room-creation rate limit is shared within a local Worker instance. The CI workflow runs the clock-skew and audience browser suites in a separate job with fresh Worker state.
+
+## Deployment boundary
+
+These source changes and local tests do **not** deploy either Cloudflare Worker. `wrangler.jsonc` and `wrangler.staging.jsonc` refer to different environments. Before a future deployment, compare Wrangler's migration/binding plan with the live account and verify that the existing Durable Object namespace is reused. Never switch to the production config as a shortcut for staging tests. Real-device testing of Player 1 vs Player 2 on two devices and Tag on four devices is still required before release.

@@ -6,7 +6,7 @@ on:
       - "src/**"
       - "index.html"
       - "staging/index.html"
-      - "staging/audience.js"
+      - "staging/audience/*.js"
       - "tools/build-memes-manifest.js"
       - "assets/memes/**"
       - "tests/**"
@@ -33,7 +33,7 @@ jobs:
       - name: Check every frontend and tool module's syntax (ES modules included)
         run: |
           set -e
-          for f in src/*.js src/scenes/*.js staging/audience.js tools/build-memes-manifest.js; do
+          for f in src/*.js src/scenes/*.js src/game/*.js staging/audience/*.js tools/build-memes-manifest.js; do
             echo "-- $f"
             node --check "$f"
           done

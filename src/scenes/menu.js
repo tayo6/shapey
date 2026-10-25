@@ -401,6 +401,10 @@ export class MenuScene extends Phaser.Scene {
       }
     });
     socket.addEventListener('message', (event) => {
+      // Arrival time first: the game_started snapshot below carries serverNow, and its receipt
+      // time is what the game scene needs to measure the device-clock offset (see
+      // src/game/clock-sync.js) - JSON.parse time would inflate the measured latency.
+      const receivedAt = Date.now();
       let message;
       try { message = JSON.parse(event.data); } catch { return; }
       if (message.type === 'welcome') {
@@ -433,7 +437,7 @@ export class MenuScene extends Phaser.Scene {
         const count = (message.players || []).filter((player) => player.connected).length;
         this.setOnlineStatus('A player disconnected (' + count + '/' + maxPlayers + ' connected). They can rejoin with this code.');
       } else if (message.type === 'game_started' && message.state) {
-        this.launchOnlineGame(code, mode, socket, message.state);
+        this.launchOnlineGame(code, mode, socket, message.state, receivedAt);
       } else if (message.type === 'error') {
         this.setOnlineStatus(message.message || 'The room reported an error.');
       }
@@ -448,7 +452,7 @@ export class MenuScene extends Phaser.Scene {
     });
   }
 
-  launchOnlineGame(code, mode, socket, initialState) {
+  launchOnlineGame(code, mode, socket, initialState, receivedAt = null) {
     if (!initialState || !socket) {
       this.setOnlineStatus('The room could not start a match. Please create a new room.');
       return;
@@ -468,7 +472,11 @@ export class MenuScene extends Phaser.Scene {
       onlineSocket: socket,
       onlinePlayerNumber: playerNumber,
       onlineRoomCode: code,
-      onlineState: initialState
+      onlineState: initialState,
+      // When this launch snapshot arrived: lets the scene measure the device-clock offset from
+      // the snapshot's serverNow the moment it replays it (a skewed clock would otherwise show
+      // the whole study countdown wrong until the first live broadcast arrives).
+      onlineStateReceivedAt: Number.isFinite(receivedAt) ? receivedAt : null
     });
   }
 

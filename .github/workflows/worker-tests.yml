@@ -10,6 +10,7 @@ on:
       - "tests/**"
       - ".github/workflows/worker-tests.yml"
       - "staging/audience.js"
+      - "staging/audience/**"
       - "staging/index.html"
   pull_request:
     paths:
@@ -19,6 +20,7 @@ on:
       - ".github/workflows/worker-tests.yml"
       - "staging/audience.html"
       - "staging/audience.js"
+      - "staging/audience/**"
       - "staging/index.html"
       - ".github/workflows/staging-preview.yml"
 jobs:
@@ -113,6 +115,73 @@ jobs:
         working-directory: .
         run: |
           set -e
-          for f in src/*.js src/scenes/*.js staging/audience.js; do
+          for f in src/*.js src/scenes/*.js staging/audience/*.js; do
             node --check "$f"
           done
+
+  # The clock-skew and audience smokes are a separate job with their own local Worker: the
+  # Worker rate-limits room creation (5 rooms per 10 minutes per client, one shared bucket for
+  # a local wrangler dev), and the integration/browser/tag smokes above already create exactly
+  # five rooms between them. A second job gets its own ephemeral Worker state and bucket.
+  worker-clock-and-audience-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install integration test dependency
+        run: npm install --no-audit --no-fund
+
+      - name: Install Chromium for browser smoke tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Run local Worker clock-skew and audience tests (no deployment)
+        run: |
+          if [ "${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}" = "staging/audience-room-ui-0003" ]; then CONFIG=wrangler.staging.jsonc; else CONFIG=wrangler.jsonc; fi
+          setsid npx --yes wrangler@4.151.0 dev --config "$CONFIG" --local --ip 127.0.0.1 --port 8787 > /tmp/shapey-local-worker.log 2>&1 &
+          WORKER_PID=$!
+          setsid python3 -m http.server 8080 --bind 127.0.0.1 --directory .. > /tmp/shapey-local-pages.log 2>&1 &
+          PAGES_PID=$!
+          cleanup() {
+            kill -- "-$WORKER_PID" 2>/dev/null || true
+            kill -- "-$PAGES_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          READY=0
+          for attempt in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:8787/health | grep -q 'authoritative-gameplay-v1' &&
+               curl -fsS http://127.0.0.1:8080/index.html >/dev/null; then
+              READY=1
+              break
+            fi
+            sleep 0.25
+          done
+          if [ "$READY" != "1" ]; then
+            echo "---- Local Worker log ----"
+            cat /tmp/shapey-local-worker.log
+            echo "---- Static Pages log ----"
+            cat /tmp/shapey-local-pages.log
+            exit 1
+          fi
+
+          node clock-skew-smoke.mjs || {
+            echo "---- Local Worker log after clock-skew browser failure ----"
+            cat /tmp/shapey-local-worker.log
+            echo "---- Static Pages log after clock-skew browser failure ----"
+            cat /tmp/shapey-local-pages.log
+            exit 1
+          }
+          node audience-smoke.mjs || {
+            echo "---- Local Worker log after audience browser failure ----"
+            cat /tmp/shapey-local-worker.log
+            echo "---- Static Pages log after audience browser failure ----"
+            cat /tmp/shapey-local-pages.log
+            exit 1
+          }

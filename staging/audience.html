@@ -88,6 +88,9 @@
     #toast.error { color:#ffb09e; }
     #toast, .veil p { text-transform:uppercase; }
     #board { position:absolute; left:calc(var(--u) * 36); top:calc(var(--u) * 316); width:calc(var(--u) * 648); height:calc(var(--u) * 648); overflow:hidden; z-index:9; }
+    /* Poll hint below the board; z-index keeps it above the embedded game iframe. */
+    #boardFootnote { position:absolute; left:50%; top:calc(var(--u) * 988); transform:translateX(-50%); width:calc(var(--u) * 648); z-index:31; margin:0; color:var(--sand); font-size:max(12px, calc(var(--u) * 20)); line-height:1.3; text-align:center; text-shadow:0 calc(var(--u) * 2) calc(var(--u) * 4) #000c; }
+    #boardFootnote[hidden] { display:none; }
     /* Transparent board tiles sit above the actual game iframe only to receive audience votes. */
     .stage.has-game-frame #board { border:0; background:transparent; box-shadow:none; }
     .stage.has-game-frame:not(.game-ready) #board { visibility:hidden; pointer-events:none; }
@@ -346,6 +349,7 @@
     <img class="fill" style="top:0;height:100%" src="assets/backgrounds/Tray%20Shadow.webp" alt="" draggable="false">
     <img class="fill" style="top:calc(var(--u) * 284)" src="assets/backgrounds/tray.webp" alt="" draggable="false">
     <div id="board" role="group" aria-label="Game board. During a poll, tap a cyan-outlined face-down tile to vote."></div>
+    <p id="boardFootnote" hidden></p>
     <div id="veil" class="veil">
       <p id="veilText" class="gt" style="--fs:30;--st:7">Connecting…</p>
       <button id="retryConnection" type="button" class="wood" style="--fs:32" hidden>RETRY</button>
@@ -398,6 +402,7 @@
   </form>
 </main>
 
-<script src="staging/audience.js"></script>
+<!-- The audience page is now an ES-module app: staging/audience/main.js wires every control. -->
+<script type="module" src="staging/audience/main.js"></script>
 </body>
 </html>

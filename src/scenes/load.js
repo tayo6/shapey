@@ -7,7 +7,7 @@
 // font load never blocks the game for more than 2.5 seconds.
 
 import { GAME_WIDTH, GAME_HEIGHT, FONT, SHAPE_FILES, LOGO_W, LOGO_Y, LOAD_BAR_W, LOAD_BAR_Y, LOAD_TRACK, LOAD_MIN_FILL } from '../constants.js';
-import { urlParams, MULTIPLAYER_API, AUDIENCE_WATCH_CODE, START_MODE } from '../config.js';
+import { urlParams, AUDIENCE_WATCH_CODE, START_MODE, API_OVERRIDDEN, MULTIPLAYER_API } from '../config.js';
 
 const fontReady = Promise.race([
   document.fonts.load(`20px ${FONT}`),
@@ -105,6 +105,8 @@ export class LoadScene extends Phaser.Scene {
       audienceUrl.searchParams.set('room', code);
       const hintedMode = urlParams.get('mode');
       if (hintedMode) audienceUrl.searchParams.set('mode', hintedMode);
+      // Preserve an explicitly validated localhost Worker override for local end-to-end tests.
+      if (API_OVERRIDDEN) audienceUrl.searchParams.set('api', MULTIPLAYER_API);
       window.location.replace(audienceUrl.href);
       return;
     }
@@ -120,7 +122,9 @@ export class LoadScene extends Phaser.Scene {
 
     // Embedded audience page owns the single real WebSocket. The iframe receives the same
     // authorised spectator snapshots through postMessage, so each watcher counts only once.
-    if (urlParams.get('embed') === '1') {
+    // (This scene only ever runs embedded: the non-embedded ?watch= case was redirected to
+    // staging/audience.html above, so no direct-connection fallback is needed here.)
+    {
       class EmbeddedAudienceSocket extends EventTarget {
         constructor() {
           super();
@@ -170,50 +174,6 @@ export class LoadScene extends Phaser.Scene {
         }
       });
       return;
-    }
-
-    // Direct watch links remain supported outside the embedded audience layout.
-    try {
-      const response = await fetch(MULTIPLAYER_API + '/api/rooms/' + code, { cache: 'no-store' });
-      const details = await response.json();
-      if (!response.ok) throw new Error(details.error || 'This room is no longer available.');
-      const roomMode = details.mode || urlParams.get('mode') || 'pvp';
-      const gameMode = gameModeFor(roomMode);
-      const wsBase = MULTIPLAYER_API.replace(/^http/, 'ws');
-      const socket = new WebSocket(wsBase + '/ws/' + code + '?mode=' + encodeURIComponent(roomMode) + '&role=spectator');
-      let started = false;
-      const handleMessage = (event) => {
-        let message;
-        try { message = JSON.parse(event.data); } catch { return; }
-        const isStartMessage = (message.type === 'spectator_welcome' || message.type === 'game_started' ||
-          message.type === 'game_state') && message.state;
-        if (message.type === 'error' && !started) {
-          showError(message.message || 'Could not connect to this room.');
-          try { socket.close(); } catch {}
-          return;
-        }
-        if (!started && isStartMessage) {
-          started = true;
-          this.scene.start('GameScene', {
-            mode: gameMode,
-            online: true,
-            spectator: true,
-            audienceMode: roomMode,
-            onlineSocket: socket,
-            onlineRoomCode: code,
-            onlineState: message.state
-          });
-        } else if (started) {
-          // GameScene registered its message handler after this callback; future messages are
-          // handled there once the transition has completed.
-        }
-      };
-      socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'spectate' })));
-      socket.addEventListener('message', handleMessage);
-      socket.addEventListener('error', () => { if (!started) showError('Could not connect to the room. Return to Live Games and try again.'); });
-      socket.addEventListener('close', () => { if (!started) showError('The room connection closed. Return to Live Games and try again.'); });
-    } catch (error) {
-      showError(error.message || 'Could not open this room.');
     }
   }
 }

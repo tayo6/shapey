@@ -61,19 +61,19 @@ Tag is the online 2-vs-2 mode. Team 1 is Player 1 and Player 2; Team 2 is Player
 - One player, no turn countdown, and no Player 2 score plank. The header shows the number of tries and the score floor.
 - A try is one attempt at a match: a submitted match, a wrong shape, or a submit with fewer than 3 tiles. Hazards and wooden-dummy flips do not count.
 - There is **no 15-attempt checkpoint or minimum-points requirement**. You can continue playing indefinitely regardless of how many points you earn in a series of attempts.
-- A wrong normal shape costs 1 point; submitting fewer than 3 tiles is free. Hazards never cost points in Play Alone. The game ends only when the score reaches **−15**.
+- A wrong normal shape costs 1 point, and a detonating Hazard costs 1 point (`HAZARD_BLAST_PENALTY`); submitting fewer than 3 tiles is free. The game ends only when the score reaches **−15**.
 - The end screen shows the final score and tries, with Play Again and Main Menu.
 - Constants: ALONE_SCORE_FLOOR and ALONE_MISS_PENALTY.
 
 ### Hazard tile (implemented)
 
-`hazard.webp` (skull and crossbones) is a special tile, not a normal shape: it never matches, never joins the selection and is excluded from the guaranteed-three distribution. What it does depends on whether other shapes are already picked:
+`hazard.webp` (skull and crossbones) is a special tile, not a normal shape: it never matches, never joins the selection and is excluded from the guaranteed-three distribution. A Hazard is a bomb in every mode and behaves the same wherever it is picked:
 
-- **Versus modes:** picked first it does no damage, reveals briefly and flips back, and the turn goes on. Picked after real shapes it costs **1 point** (`HAZARD_BLAST_PENALTY`) and destroys itself and all picked tiles without a reward. A Dummy does not count as a real shape; Dummy + Hazard destroys both without a penalty.
-- **Play alone:** a hazard never costs anything. Whether picked first or after shapes, it destroys itself and every shape currently picked (it is not counted as an attempt).
+- A Hazard **always destroys itself**.
+- Picked after other tiles it also destroys **every tile picked before it, including Dummy tiles**.
+- Picked first it still destroys itself, and the turn ends immediately: picking a Hazard first never grants the same player another attempt. In the versus modes the turn passes to the next player; in Play Alone the same player simply carries on.
+- Only **Play Alone** loses a point for a Hazard (**1 point**, `HAZARD_BLAST_PENALTY`). The versus modes never subtract score for a Hazard, and Dummy tiles never incur a penalty of their own - the −1 is the Hazard's alone.
 - In every mode the destroyed tiles burst with the normal effect, the board falls and refills, the new tiles get the usual 5-second reveal and shuffle, and the turn is spent like a match. A wrong shape only flips the picks back, and a match pays points.
-
-In the two-player and Tag modes a hazard blast always costs 1 point, even at 0, so a score can go negative (set `TWO_PLAYER_SCORE_FLOOR` in `src/constants.js` to 0 to stop that).
 
 | Mode | Hazard share of tiles |
 |---|---:|
@@ -96,7 +96,7 @@ The starting board gets about that share of hazards, and every newly spawned til
 | Reaches for | 3 tiles, sometimes 4 | 5 tiles (the 5+ score) |
 | With no full match remembered | guesses | starts from the shape it remembers most copies of, then explores tiles it has no memory of |
 
-Neither level reaches for a bigger match when under 6 seconds of the turn is left (`AI_SPARE_MS`). The AI keeps acting during its turn until it submits a match, makes a real mismatch, or the clock expires. At timeout, any valid selected match auto-submits. Double Play is usable by a human player; other power-up effects are not yet active.
+Neither level reaches for a bigger match when under 2 seconds of the turn is left (`AI_SPARE_MS`; the AI itself plays a fixed 5-second turn, `AI_TURN_MS`). The AI keeps acting during its turn until it submits a match, makes a real mismatch, or the clock expires. At timeout, any valid selected match auto-submits. Double Play is usable by a human player; other power-up effects are not yet active.
 
 **Easy**
 - Remembers roughly 45–60% of the tiles it saw, with intentional memory mistakes.

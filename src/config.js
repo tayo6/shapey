@@ -21,7 +21,8 @@ export const STAGING = Boolean(typeof window !== 'undefined' && window.SHAPEY_EN
 const requestedLocalApi = urlParams.get('api');
 const isLocalApiUrl = /^http:\/\/(?:127\.0\.0\.1|localhost):8787$/i.test(requestedLocalApi || '');
 const localApiAllowed = STAGING || ['localhost', '127.0.0.1'].includes(window.location.hostname);
-export const MULTIPLAYER_API = isLocalApiUrl && localApiAllowed
+export const API_OVERRIDDEN = isLocalApiUrl && localApiAllowed;
+export const MULTIPLAYER_API = API_OVERRIDDEN
   ? requestedLocalApi
   : 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
 

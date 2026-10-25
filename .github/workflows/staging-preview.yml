@@ -10,6 +10,7 @@ on:
     paths:
       - staging/audience.html
       - staging/audience.js
+      - staging/audience/**
       - staging/index.html
       - staging/*.js
       - src/**
@@ -40,7 +41,7 @@ jobs:
       - name: Check JavaScript syntax
         run: |
           set -e
-          for f in src/*.js src/scenes/*.js staging/*.js worker/src/index.js; do
+          for f in src/*.js src/scenes/*.js staging/audience/*.js worker/src/index.js; do
             node --check "$f"
           done
 
@@ -62,10 +63,15 @@ jobs:
           grep -q 'id="gameFrame"' /tmp/audience.html
           grep -q 'id="startDemo"' /tmp/audience.html
 
-          curl --fail --silent --show-error "$base/staging/audience.js" -o /tmp/audience.js
-          grep -q 'function startAiDemo()' /tmp/audience.js
-          grep -q "type: 'poll_vote', tileId" /tmp/audience.js
-          grep -Fq "https://shapey-multiplayer-staging.hellohuman100.workers.dev" /tmp/audience.js
+          # The audience page is an ES-module app now: check its entry and key modules.
+          curl --fail --silent --show-error "$base/staging/audience/main.js" -o /tmp/audience-main.js
+          curl --fail --silent --show-error "$base/staging/audience/watch.js" -o /tmp/audience-watch.js
+          curl --fail --silent --show-error "$base/staging/audience/board.js" -o /tmp/audience-board.js
+          curl --fail --silent --show-error "$base/staging/audience/state.js" -o /tmp/audience-state.js
+          grep -q 'startAiDemo' /tmp/audience-main.js
+          grep -q 'function startAiDemo()' /tmp/audience-watch.js
+          grep -q "type: 'poll_vote', tileId" /tmp/audience-board.js
+          grep -Fq "https://shapey-multiplayer-staging.hellohuman100.workers.dev" /tmp/audience-state.js
 
           curl --fail --silent --show-error "$base/src/scenes/load.js" -o /tmp/load-scene.js
           grep -q 'AUDIENCE_WATCH_CODE' /tmp/load-scene.js

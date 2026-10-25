@@ -16,9 +16,11 @@
     return selectionLength === 0 || pickedShape === selectedShape;
   }
 
-  // In Play Alone every hazard blasts; in multiplayer, a first-pick hazard is harmless.
-  function hazardAction(twoPlayerMode, selectedCount) {
-    return !twoPlayerMode || selectedCount > 0 ? 'blast' : 'hit';
+  // A Hazard is a bomb in every mode: it always destroys itself (and everything picked with
+  // it), and picking one first still ends the turn. Only Play Alone loses a point for it;
+  // versus modes never subtract score, and Dummy tiles never incur a penalty of their own.
+  function hazardPenalty(isPlayAlone, penalty = 1) {
+    return isPlayAlone ? penalty : 0;
   }
 
   function penaltyToApply(score, requestedPoints, floor = -Infinity) {
@@ -111,7 +113,7 @@
     scoreFor,
     isValidMatchSize,
     selectionMatches,
-    hazardAction,
+    hazardPenalty,
     penaltyToApply,
     targetScoreForMode,
     turnDurationForMode,
