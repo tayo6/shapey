@@ -71,12 +71,16 @@ jobs:
           grep -q 'startAiDemo' /tmp/audience-main.js
           grep -q 'function startAiDemo()' /tmp/audience-watch.js
           grep -q "type: 'poll_vote', tileId" /tmp/audience-board.js
-          grep -Fq "https://shapey-multiplayer-staging.hellohuman100.workers.dev" /tmp/audience-state.js
+          # Worker URLs live in the shared resolver: production and staging pages choose by environment.
+          curl --fail --silent --show-error "$base/src/game/api-environment.js" -o /tmp/api-environment.js
+          grep -Fq "https://shapey-multiplayer.hellohuman100.workers.dev" /tmp/api-environment.js
+          grep -Fq "https://shapey-multiplayer-staging.hellohuman100.workers.dev" /tmp/api-environment.js
 
           curl --fail --silent --show-error "$base/src/scenes/load.js" -o /tmp/load-scene.js
           grep -q 'AUDIENCE_WATCH_CODE' /tmp/load-scene.js
+          grep -q "searchParams.set('env', 'staging')" /tmp/load-scene.js
           curl --fail --silent --show-error "$base/src/config.js" -o /tmp/config.js
-          grep -Fq "https://shapey-multiplayer-staging.hellohuman100.workers.dev" /tmp/config.js
+          grep -q 'resolveMultiplayerApi' /tmp/config.js
           curl --fail --silent --show-error "$base/src/rules.js" -o /tmp/rules.js
           grep -q 'ShapeyRules' /tmp/rules.js
 
