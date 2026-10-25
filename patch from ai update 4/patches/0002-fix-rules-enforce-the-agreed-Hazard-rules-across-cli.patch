@@ -1,0 +1,294 @@
+From fb3200e1791c1b8f9c6b1621c5c9ba9f0ebdc033 Mon Sep 17 00:00:00 2001
+From: Shapey Review <review@shapey.local>
+Date: Sat, 24 Oct 2026 15:27:08 +0000
+Subject: [PATCH 02/11] fix(rules): enforce the agreed Hazard rules across
+ client, Worker, docs and tests
+
+The agreed gameplay rules for the Hazard (skull) tile are:
+
+- A Hazard always destroys itself.
+- Picked with other shapes, it destroys itself and all the other picked
+  shapes, including Dummy tiles.
+- Picking a Hazard first must not give the same player another chance:
+  the Hazard is resolved and the turn ends, switching to the next player
+  where applicable.
+- Only Play Alone receives the one-point Hazard penalty; the other modes
+  never lose points for a Hazard.
+- Dummy tiles never incur a score penalty of their own.
+
+The local game already played it this way; the documentation, the pure
+rules module, the online Worker and their tests described and enforced
+the opposite (harmless first-pick glimpse, versus penalty when real
+shapes were picked, free Hazard in Play Alone). Documentation and Worker
+behaviour do not override the agreed rules, so they are brought in line
+here instead of the game:
+
+- src/rules.js: hazardAction() (first-pick 'hit' routing, never called
+  by the scene) is replaced by hazardPenalty(isPlayAlone), which encodes
+  that only Play Alone loses a point; GameScene now routes the blast
+  penalty through it (versus modes pass 0 and applyPenalty is a no-op).
+- worker/src/game-engine.js: a first-pick Hazard now detonates
+  immediately (applyHazardBlast) instead of starting the 900 ms
+  'hazard-hit' pending glimpse, and applyHazardBlast no longer deducts
+  the point when real shapes were picked. Online modes never lose score
+  to a Hazard; Dummy + Hazard stays free as before.
+- GAMEPLAY.md / README.md / DEVELOPER_GUIDE.md: the Hazard tile section,
+  the Play Alone scoring bullet and the developer notes now describe the
+  agreed rules (the old text claimed a harmless first-pick glimpse, a
+  1-point versus blast and a free Play Alone Hazard - all removed).
+- tests: rules.test.js pins hazardPenalty; the Worker tests now pin
+  "first pick destroys itself and ends the turn", "blast after shapes
+  destroys them without a penalty" and the new "Dummy tiles are
+  destroyed but never cost points of their own".
+---
+ DEVELOPER_GUIDE.md              |  6 +++---
+ GAMEPLAY.md                     | 12 ++++++------
+ README.md                       |  2 +-
+ src/rules.js                    | 10 ++++++----
+ src/scenes/game.js              |  2 +-
+ tests/rules.test.js             | 10 +++++-----
+ worker/src/game-engine.js       | 18 +++++++-----------
+ worker/test/game-engine.test.js | 33 ++++++++++++++++++++++++---------
+ 8 files changed, 53 insertions(+), 40 deletions(-)
+
+diff --git a/DEVELOPER_GUIDE.md b/DEVELOPER_GUIDE.md
+index 788fd5b..b2d1bb3 100644
+--- a/DEVELOPER_GUIDE.md
++++ b/DEVELOPER_GUIDE.md
+@@ -46,12 +46,12 @@ The current app is a static Phaser 3 browser prototype hosted on GitHub Pages. T
+ - **Branding rule:** the Shapey logo image (`shapey logo.webp`) is used for every Shapey logo (loading screens, menu, README, favicon `shapey icon.webp`); do not draw "SHAPEY" as text. The load rectangle image is the only loading bar.
+ - Landing dust (`assets/fx/dusty.webp`) is 7 equal 304 x 156 cells, each puff centred on its cell's middle and sitting on the bottom edge, so the cloud grows in place instead of drifting sideways. If the sheet is replaced, repack it the same way (equal cells, shared anchor) rather than slicing on a guessed grid.
+ - Art is stored at about 1.5x its on-screen size (the canvas itself is 720 px wide) to keep downloads and GPU memory small. Keep that in mind before swapping in new art: `setDisplaySize`/`fitToWidth` do the scaling, so any size works, but oversized files slow loading on phones.
+-- `MODES` (in `src/config.js`, targets from `src/rules.js`) defines the four modes. Pure rules in `src/rules.js` decide match scoring/size, whether a pick matches the current selection, hazard routing, penalty arithmetic, valid hazard URL overrides, and Play Alone score-floor checks and mode-specific versus targets. Phaser scene methods still own animations, UI updates and state changes. Run the tests with `node --test tests/*.test.js tests/*.test.mjs` (Node 22; passing the bare `tests/` directory fails on Node 22).
++- `MODES` (in `src/config.js`, targets from `src/rules.js`) defines the four modes. Pure rules in `src/rules.js` decide match scoring/size, whether a pick matches the current selection, the Hazard penalty rule, penalty arithmetic, valid hazard URL overrides, and Play Alone score-floor checks and mode-specific versus targets. Phaser scene methods still own animations, UI updates and state changes. Run the tests with `node --test tests/*.test.js tests/*.test.mjs` (Node 22; passing the bare `tests/` directory fails on Node 22).
+ - **Sides vs players.** `activePlayer` is the *side* that is playing (0 or 1) and drives scores, planks, dimming and the AI. In Tag a side is a team, and `activeMember` (0 or 1, from `turnNumber`) says which partner is playing; `turnLabel()` turns the pair into "Team 1: Player 2" and `limiterSlot()` gives each of the four players their own inventory-limit slot. `startTurn()` is the only place that advances `turnNumber`. `TEAM_PLAYERS` holds the names.
+ - **Difficulty.** Player vs AI opens a "Choose difficulty" panel (`MenuScene.openDifficulty()`) built from `AI_LEVELS`, then starts `GameScene` with `{ mode: 'ai', difficulty }`. `GameScene.init()` stores it as `this.difficulty` and `this.ai` (the level's settings object); Restart and Play again pass it back so the level survives.
+ - **Flip-back safety net.** `healStuckTiles()` (run every frame) flips back down any tile that has been face-up for `STUCK_UP_MS` (2.5 s) without a legitimate reason: it is not picked, not in a reveal batch, not mid-swap. A wrong shape resets the picks as before; this only guarantees nothing is ever left showing, whatever the cause.
+ - Spawning: `pickShape()` rolls hazard, then dummy, then draws from `ShapeBag` (see GAMEPLAY.md). `ensureMatchPossible()` is the safety net after a refill.
+-- **Hazards.** `onTileTap()` routes a hazard to `hazardBlast()` when something is already picked, or always in Play alone (costs `HAZARD_BLAST_PENALTY` = 1 point in the two-player modes and nothing in Play alone; the hazard and all picked tiles are destroyed with no reward, then the board refills and the turn ends) and to `hazardHit()` when nothing is picked (no damage, the hazard flips back, the turn continues). The blast reuses `destroyTiles()` and `cascade()` from the submit path, and calls `cancelShuffles()` first for the same reason `submit()` does.
++- **Hazards.** `onTileTap()` sends every hazard to `hazardBlast()`: the Hazard always destroys itself together with everything currently picked (Dummy tiles included), the board refills and the turn ends - a first-pick Hazard is no exception, so the same player never gets another chance (in versus modes the turn passes on; in Play Alone play continues). Only Play Alone pays `HAZARD_BLAST_PENALTY` = 1 point (`hazardPenalty` in `src/rules.js`); versus modes never subtract score for a Hazard, and Dummy tiles never cost points of their own. `hazardHit()` survives only as a legacy alias of `hazardBlast()`. The blast reuses `destroyTiles()` and `cascade()` from the submit path, and calls `cancelShuffles()` first for the same reason `submit()` does.
+ - The AI's memory and decisions (`AIPlayer` in `src/ai.js`: `see`, `known`, `groups`, `chooseGroup`, `guess`) only use tiles it has actually seen, keyed by tile object so memory follows tiles as they fall. The scene keeps the timing and visible taps (`aiSee`, `aiAttempt`, `runAITurn` in `src/scenes/game.js`). Everything that differs between Easy and Professional is a field of the `AI_LEVELS` entry (in `src/constants.js`) held by `this.ai`; do not branch on the difficulty name in the code.
+ 
+ The memory challenge is based on tile identity and location. Do not show exact hidden positions to a player through UI, logs, AI logic, or audience polling.
+@@ -323,7 +323,7 @@ The following reflects the current repository state at the time this guide was w
+ - Four-mode menu: Play alone, Player vs AI, Player 1 vs Player 2 and **Tag: 2 vs 2**.
+ - **Tag mode:** two teams of two on one device, partners alternating (Player 1, 3, 2, 4), one shared score per team, a header line naming the active player, and a separate inventory limit for each of the four players.
+ - **AI difficulty picker** (Easy / Professional) and a distinct **Professional AI**; both levels are configured by `AI_LEVELS`.
+-- **Hazard rules:** hazards have a 10% spawn chance in every mode (`HAZARD_CHANCE`). Two-player modes: picked first = no damage; picked after shapes = -1 and destroys itself and the picked tiles, no reward (`hazardBlast()`). Play alone: always destroys, never costs.
++- **Hazard rules:** hazards have a 10% spawn chance in every mode (`HAZARD_CHANCE`). Every Hazard destroys itself and everything picked before it (Dummy tiles included) and ends the turn (`hazardBlast()`); only Play Alone pays the 1-point penalty, versus modes never lose points, and Dummy tiles never incur a penalty of their own.
+ 
+ ### Not yet implemented or incomplete
+ 
+diff --git a/GAMEPLAY.md b/GAMEPLAY.md
+index e9a42da..7d60980 100644
+--- a/GAMEPLAY.md
++++ b/GAMEPLAY.md
+@@ -61,20 +61,20 @@ Tag is the online 2-vs-2 mode. Team 1 is Player 1 and Player 2; Team 2 is Player
+ - One player, no turn countdown, and no Player 2 score plank. The header shows the number of tries and the score floor.
+ - A try is one attempt at a match: a submitted match, a wrong shape, or a submit with fewer than 3 tiles. Hazards and wooden-dummy flips do not count.
+ - There is **no 15-attempt checkpoint or minimum-points requirement**. You can continue playing indefinitely regardless of how many points you earn in a series of attempts.
+-- A wrong normal shape costs 1 point; submitting fewer than 3 tiles is free. Hazards never cost points in Play Alone. The game ends only when the score reaches **−15**.
++- A wrong normal shape costs 1 point, and a detonating Hazard costs 1 point (`HAZARD_BLAST_PENALTY`); submitting fewer than 3 tiles is free. The game ends only when the score reaches **−15**.
+ - The end screen shows the final score and tries, with Play Again and Main Menu.
+ - Constants: ALONE_SCORE_FLOOR and ALONE_MISS_PENALTY.
+ 
+ ### Hazard tile (implemented)
+ 
+-`hazard.webp` (skull and crossbones) is a special tile, not a normal shape: it never matches, never joins the selection and is excluded from the guaranteed-three distribution. What it does depends on whether other shapes are already picked:
++`hazard.webp` (skull and crossbones) is a special tile, not a normal shape: it never matches, never joins the selection and is excluded from the guaranteed-three distribution. A Hazard is a bomb in every mode and behaves the same wherever it is picked:
+ 
+-- **Versus modes:** picked first it does no damage, reveals briefly and flips back, and the turn goes on. Picked after real shapes it costs **1 point** (`HAZARD_BLAST_PENALTY`) and destroys itself and all picked tiles without a reward. A Dummy does not count as a real shape; Dummy + Hazard destroys both without a penalty.
+-- **Play alone:** a hazard never costs anything. Whether picked first or after shapes, it destroys itself and every shape currently picked (it is not counted as an attempt).
++- A Hazard **always destroys itself**.
++- Picked after other tiles it also destroys **every tile picked before it, including Dummy tiles**.
++- Picked first it still destroys itself, and the turn ends immediately: picking a Hazard first never grants the same player another attempt. In the versus modes the turn passes to the next player; in Play Alone the same player simply carries on.
++- Only **Play Alone** loses a point for a Hazard (**1 point**, `HAZARD_BLAST_PENALTY`). The versus modes never subtract score for a Hazard, and Dummy tiles never incur a penalty of their own - the −1 is the Hazard's alone.
+ - In every mode the destroyed tiles burst with the normal effect, the board falls and refills, the new tiles get the usual 5-second reveal and shuffle, and the turn is spent like a match. A wrong shape only flips the picks back, and a match pays points.
+ 
+-In the two-player and Tag modes a hazard blast always costs 1 point, even at 0, so a score can go negative (set `TWO_PLAYER_SCORE_FLOOR` in `src/constants.js` to 0 to stop that).
+-
+ | Mode | Hazard share of tiles |
+ |---|---:|
+ | All modes (`HAZARD_CHANCE`) | 10% |
+diff --git a/README.md b/README.md
+index 1170eb8..3d8739e 100644
+--- a/README.md
++++ b/README.md
+@@ -11,7 +11,7 @@ Pick a mode on the opening menu:
+ - **Player 1 vs Player 2** - online-only; two players on **two separate devices**, 45 seconds per turn; first to **50 points** wins.
+ - **Tag: 2 vs 2** - online-only; four players on **four separate devices**. Team 1 is Players 1 and 2; Team 2 is Players 3 and 4. Turns rotate Player 1 → Player 3 → Player 2 → Player 4, with 30 seconds per pick. First team to **100 points** wins.
+ 
+-Hazard (skull) tiles have a 10% spawn chance in every mode. In Player vs AI, Player vs Player and Tag, a hazard picked first does no damage and flips back; picked after other shapes it costs 1 point and destroys itself and the shapes picked before it, with no reward. In Play alone a hazard never costs anything: it always destroys itself and any picked shapes.
++Hazard (skull) tiles have a 10% spawn chance in every mode. A Hazard always destroys itself, together with every tile picked before it (Dummy tiles included), and picking one first still ends the turn - the same player never gets a free retry. Only Play Alone loses a point (1) when a Hazard detonates; the versus modes never subtract score for a Hazard, and Dummy tiles never cost points of their own.
+ 
+ Audience polls: Player vs AI, Player 1 vs Player 2 and Tag have a **Polls** button, with 3 free polls per player per game (never bought with Stars). Against the AI the votes are a labelled practice audience; online they are live spectator votes. Play Alone has no polls.
+ 
+diff --git a/src/rules.js b/src/rules.js
+index 0f45040..f07c7e0 100644
+--- a/src/rules.js
++++ b/src/rules.js
+@@ -16,9 +16,11 @@
+     return selectionLength === 0 || pickedShape === selectedShape;
+   }
+ 
+-  // In Play Alone every hazard blasts; in multiplayer, a first-pick hazard is harmless.
+-  function hazardAction(twoPlayerMode, selectedCount) {
+-    return !twoPlayerMode || selectedCount > 0 ? 'blast' : 'hit';
++  // A Hazard is a bomb in every mode: it always destroys itself (and everything picked with
++  // it), and picking one first still ends the turn. Only Play Alone loses a point for it;
++  // versus modes never subtract score, and Dummy tiles never incur a penalty of their own.
++  function hazardPenalty(isPlayAlone, penalty = 1) {
++    return isPlayAlone ? penalty : 0;
+   }
+ 
+   function penaltyToApply(score, requestedPoints, floor = -Infinity) {
+@@ -111,7 +113,7 @@
+     scoreFor,
+     isValidMatchSize,
+     selectionMatches,
+-    hazardAction,
++    hazardPenalty,
+     penaltyToApply,
+     targetScoreForMode,
+     turnDurationForMode,
+diff --git a/src/scenes/game.js b/src/scenes/game.js
+index c9ccbd0..3528d99 100644
+--- a/src/scenes/game.js
++++ b/src/scenes/game.js
+@@ -1650,7 +1650,7 @@ export class GameScene extends Phaser.Scene {
+     this.selectedShape = null;
+     hazard.selected = true;
+     await this.flipTile(hazard, true);
+-    const lost = this.modeCfg.twoPlayers ? 0 : this.applyPenalty(HAZARD_BLAST_PENALTY);
++    const lost = this.applyPenalty(RULES.hazardPenalty(!this.modeCfg.twoPlayers, HAZARD_BLAST_PENALTY));
+     if (!suppressHazardCommentary) {
+       this.showToast('Hazard! It destroys everything you picked.\n' +
+         (lost > 0 ? '−' + lost + ' point, no reward.' : 'No reward.'));
+diff --git a/tests/rules.test.js b/tests/rules.test.js
+index bc84788..0923395 100644
+--- a/tests/rules.test.js
++++ b/tests/rules.test.js
+@@ -26,11 +26,11 @@ test('first pick accepts any shape, later picks must match', () => {
+   assert.equal(rules.selectionMatches(1, 'circle', 'square'), false);
+ });
+ 
+-test('hazards always blast in Play Alone and only hit harmlessly when picked first in multiplayer', () => {
+-  assert.equal(rules.hazardAction(false, 0), 'blast');
+-  assert.equal(rules.hazardAction(false, 2), 'blast');
+-  assert.equal(rules.hazardAction(true, 0), 'hit');
+-  assert.equal(rules.hazardAction(true, 1), 'blast');
++test('only Play Alone loses a point to a Hazard; Dummy tiles never cost points of their own', () => {
++  assert.equal(rules.hazardPenalty(false), 0);
++  assert.equal(rules.hazardPenalty(false, 1), 0);
++  assert.equal(rules.hazardPenalty(true), 1);
++  assert.equal(rules.hazardPenalty(true, 2), 2);
+ });
+ 
+ test('penalty arithmetic respects the configured score floor', () => {
+diff --git a/worker/src/game-engine.js b/worker/src/game-engine.js
+index 5118e81..0dc10fa 100644
+--- a/worker/src/game-engine.js
++++ b/worker/src/game-engine.js
+@@ -360,10 +360,11 @@ function resolveSelectedMatch(state, now, rng) {
+ }
+ 
+ function applyHazardBlast(state, hazard, now, rng) {
+-  const activePlayer = state.activePlayerNumber;
+-  const hadRealShapes = state.selectedTileIds.length > 0;
++  // A Hazard always destroys itself and everything picked with it (Dummy tiles included),
++  // and picking one first still ends the turn. Online modes never subtract score for a
++  // Hazard and Dummy tiles never incur a penalty of their own (only local Play Alone pays
++  // the one-point Hazard penalty, see src/rules.js hazardPenalty).
+   const removedIds = [...state.selectedTileIds, ...state.dummyTileIds, hazard.id];
+-  if (hadRealShapes) scoreSide(state, sideForPlayer(state.mode, activePlayer), -1);
+   clearSelection(state, true);
+   cascade(state, removedIds, now, rng);
+   endTurn(state, now, { matched: false });
+@@ -377,9 +378,6 @@ function resolvePendingEffect(state, now, rng) {
+   if (pending.type === "mismatch") {
+     clearSelection(state, true);
+     endTurn(state, now, { matched: false });
+-  } else if (pending.type === "hazard-hit") {
+-    const tile = tileById(state, pending.tileId);
+-    if (tile) tile.faceUp = false;
+   } else if (pending.type === "cancel-dummy") {
+     clearSelection(state, true);
+   }
+@@ -484,11 +482,9 @@ function applyPick(state, playerNumber, tileId, now, rng) {
+ 
+   tile.faceUp = true;
+   if (tile.shape === "hazard") {
+-    if (state.selectedTileIds.length === 0 && state.dummyTileIds.length === 0) {
+-      startPending(state, "hazard-hit", tile.id, now, 900);
+-    } else {
+-      applyHazardBlast(state, tile, now, rng);
+-    }
++    // Every Hazard detonates immediately - including a first pick. The blast destroys the
++    // hazard itself (plus anything already picked), refills the board and ends the turn.
++    applyHazardBlast(state, tile, now, rng);
+     return;
+   }
+ 
+diff --git a/worker/test/game-engine.test.js b/worker/test/game-engine.test.js
+index b3f6322..42f0b09 100644
+--- a/worker/test/game-engine.test.js
++++ b/worker/test/game-engine.test.js
+@@ -179,31 +179,46 @@ test("a mismatched pick is shown briefly, then clears the selection and passes t
+   assert.equal(state.scores[0], 0);
+ });
+ 
+-test("a first-pick hazard is harmless and does not end the turn", () => {
++test("a first-pick hazard destroys itself and ends the turn without a penalty", () => {
+   let state = startPlaying();
+   state.tiles.find((tile) => tile.id === "t1").shape = "hazard";
+-  state = act(state, 1, { type: "pick", tileId: "t1" }).state;
+-  assert.equal(state.pendingEffect.type, "hazard-hit");
+-  advanceGameByTime(state, NOW + INITIAL_REVIEW_MS + 902, steadyRandom);
++  const result = act(state, 1, { type: "pick", tileId: "t1" });
++  assert.equal(result.accepted, true, result.error);
++  state = result.state;
+   assert.equal(state.pendingEffect, null);
+-  assert.equal(state.activePlayerNumber, 1);
+-  assert.equal(state.scores[0], 0);
+-  assert.equal(state.tiles.find((tile) => tile.id === "t1").faceUp, false);
++  assert.equal(state.activePlayerNumber, 2);
++  assert.deepEqual(state.scores, [0, 0]);
++  assert.equal(state.tiles.length, GRID_ROWS * GRID_COLS);
++  assert.equal(state.tiles.some((tile) => tile.id === "t1"), false);
+ });
+ 
+-test("a hazard after selected shapes deducts one point, refills the board and ends the turn", () => {
++test("a hazard after selected shapes destroys them, refills the board and ends the turn without a penalty", () => {
+   let state = startPlaying();
+   state.tiles.find((tile) => tile.id === "t1").shape = "circle";
+   state.tiles.find((tile) => tile.id === "t2").shape = "hazard";
+   state = act(state, 1, { type: "pick", tileId: "t1" }).state;
+   const result = act(state, 1, { type: "pick", tileId: "t2" });
+   assert.equal(result.accepted, true, result.error);
+-  assert.deepEqual(result.state.scores, [-1, 0]);
++  assert.deepEqual(result.state.scores, [0, 0]);
+   assert.equal(result.state.activePlayerNumber, 2);
+   assert.equal(result.state.tiles.length, GRID_ROWS * GRID_COLS);
+   assert.equal(result.state.tiles.some((tile) => tile.id === "t1" || tile.id === "t2"), false);
+ });
+ 
++test("a hazard destroys picked Dummy tiles, which never cost points of their own", () => {
++  let state = startPlaying();
++  state.tiles.find((tile) => tile.id === "t1").shape = "dummy";
++  state.tiles.find((tile) => tile.id === "t2").shape = "hazard";
++  state = act(state, 1, { type: "pick", tileId: "t1" }).state;
++  assert.deepEqual(state.dummyTileIds, ["t1"]);
++  const result = act(state, 1, { type: "pick", tileId: "t2" });
++  assert.equal(result.accepted, true, result.error);
++  assert.deepEqual(result.state.scores, [0, 0]);
++  assert.equal(result.state.activePlayerNumber, 2);
++  assert.deepEqual(result.state.dummyTileIds, []);
++  assert.equal(result.state.tiles.some((tile) => tile.id === "t1" || tile.id === "t2"), false);
++});
++
+ test("Double Play adds exactly one same-player turn and cannot chain", () => {
+   let state = startPlaying();
+   state.playerData["1"].stars = 4;
+-- 
+2.47.3
+

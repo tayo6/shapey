@@ -1,0 +1,11 @@
+
+ ⛅️ wrangler 4.151.0 (update available 4.152.0)
+───────────────────────────────────────────────
+Your Worker has access to the following bindings:
+Binding               Resource            Mode
+env.ROOMS (Room)      Durable Object      local
+
+⎔ Starting local server...
+[wrangler:info] Ready on http://127.0.0.1:8787
+[wrangler:info] GET /health 200 OK (6ms)
+[wrangler:info] POST /api/rooms 201 Created (19ms)
