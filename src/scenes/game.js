@@ -119,7 +119,7 @@ export class GameScene extends Phaser.Scene {
     this.createBottomButtons();
     this.createFx();
     this.createBoard();
-    this.initRevealPrivacy();
+    this.initRevealPrivacy({ gridCols: GRID_COLS, gridRows: GRID_ROWS, tilePitch: TILE_PITCH, fontFamily: FONT });
     if (this.spectator && urlParams.get('embed') === '1') {
       // Wait two animation frames so the first real board frame is painted before the parent
       // reveals Chat / Polls / Settings navigation.
