@@ -3,24 +3,22 @@
 // constants. Every other module imports { state, els } from here.
 
 import { createServerClockSync } from '../../src/game/clock-sync.js';
+import { resolveMultiplayerApi } from '../../src/game/api-environment.js';
 
 // Server wall-clock minus this device's clock, measured from each fresh snapshot's serverNow
 // (shared with the game client: see src/game/clock-sync.js for the latency analysis).
 export const serverClock = createServerClockSync();
-// The deployed multiplayer Worker documented in worker/STAGING.md is the production API and
-// the default for every deployed page. Test-only override, mirroring src/config.js: a page
-// served from localhost (or 127.0.0.1) may point at a local Worker with
-// ?api=http://127.0.0.1:8787 so the audience frontend can be tested against the refactored
-// local Worker instead of the deployed staging service. The override is restricted to
-// approved local testing environments - any other origin (including every deployed host)
-// ignores the parameter, so production traffic can never be redirected.
-const requestedLocalApi = new URLSearchParams(window.location.search).get('api');
-const isLocalApiUrl = /^http:\/\/(?:127\.0\.0\.1|localhost):8787$/i.test(requestedLocalApi || '');
-const localApiAllowed = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-export const API_OVERRIDDEN = isLocalApiUrl && localApiAllowed;
-export const MULTIPLAYER_API = API_OVERRIDDEN
-  ? requestedLocalApi
-  : 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
+// Audience links carry env=staging only when opened from the staging game. Main/live
+// audience links default to the production Worker; local smoke tests can override on localhost.
+const audienceParams = new URLSearchParams(window.location.search);
+const isStagingAudience = audienceParams.get('env') === 'staging';
+const apiResolution = resolveMultiplayerApi({
+  staging: isStagingAudience,
+  requestedApi: audienceParams.get('api'),
+  localApiAllowed: ['localhost', '127.0.0.1'].includes(window.location.hostname),
+});
+export const API_OVERRIDDEN = apiResolution.overridden;
+export const MULTIPLAYER_API = apiResolution.api;
 export const SHAPE_FILES = {
   mystery: 'Mystery.webp', dummy: 'dummy.webp', hazard: 'hazard.webp', cancel: 'cancel.webp',
   capsule: 'capsule.webp', circle: 'circle.webp', cross: 'cross.webp', divide: 'divide.webp',
