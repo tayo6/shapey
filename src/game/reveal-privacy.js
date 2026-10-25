@@ -1,7 +1,5 @@
 // Best-effort protection against tab-switching during visible shape reveals.
 // Browsers cannot prevent OS-level screenshots; this covers the board on focus/visibility loss.
-import { FONT } from '../constants.js';
-import { TILE_PITCH, GRID_COLS, GRID_ROWS } from '../config.js';
 
 export function getRevealPrivacyRemainingMs({
   online = false,
@@ -37,7 +35,8 @@ export function getRevealPrivacyRemainingMs({
 }
 
 export const RevealPrivacyMixin = {
-  initRevealPrivacy() {
+  initRevealPrivacy({ gridCols, gridRows, tilePitch, fontFamily } = {}) {
+    this.revealPrivacyConfig = { gridCols, gridRows, tilePitch, fontFamily };
     this.revealPrivacyUntil = 0;
     this.revealPrivacyCover = null;
     this.revealPrivacyLabel = null;
@@ -74,18 +73,21 @@ export const RevealPrivacyMixin = {
     this.revealPrivacyUntil = Math.max(this.revealPrivacyUntil || 0, Date.now() + remaining);
     if (this.revealPrivacyCover && this.revealPrivacyCover.active) return;
 
+    const { gridCols, gridRows, tilePitch, fontFamily } = this.revealPrivacyConfig || {};
+    if (![gridCols, gridRows, tilePitch].every((n) => Number.isFinite(n) && n > 0)) return;
+
     // Cover only the tile grid; scores, clocks, and navigation remain visible.
     this.revealPrivacyCover = this.add.rectangle(
       this.tray.x,
       this.tray.y,
-      GRID_COLS * TILE_PITCH + 6,
-      GRID_ROWS * TILE_PITCH + 6,
+      gridCols * tilePitch + 6,
+      gridRows * tilePitch + 6,
       0x21160e,
       0.99,
     ).setDepth(150).setInteractive();
 
     this.revealPrivacyLabel = this.add.text(this.tray.x, this.tray.y, 'SHAPES HIDDEN', {
-      fontFamily: FONT,
+      fontFamily: fontFamily || 'Comic Sans MS',
       fontSize: '30px',
       color: '#fff2c7',
       stroke: '#3a2412',
