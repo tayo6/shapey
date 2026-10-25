@@ -1,0 +1,38 @@
+name: Extract Shapey v6 ZIP once
+
+on:
+  push:
+    paths:
+      - ".github/workflows/extract-shapey-v6.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Extract ZIP without overwriting existing files
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="shapey review and patches v6/shapey-review-and-patches-v6.zip"
+          DEST="shapey review and patches v6"
+          test -f "$ZIP"
+          unzip -n -q "$ZIP" -d "$DEST"
+          git add "$DEST/shapey-review"
+          git rm ".github/workflows/extract-shapey-v6.yml"
+          if git diff --cached --quiet; then
+            echo "No new files to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Extract Shapey v6 review ZIP"
+          git push origin main
