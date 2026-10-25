@@ -38,20 +38,41 @@ export const RevealPrivacyMixin = {
   initRevealPrivacy({ gridCols, gridRows, tilePitch, fontFamily } = {}) {
     this.revealPrivacyConfig = { gridCols, gridRows, tilePitch, fontFamily };
     this.revealPrivacyUntil = 0;
+    this.revealPrivacyHiddenAt = 0;
     this.revealPrivacyCover = null;
     this.revealPrivacyLabel = null;
     this.revealVisibilityHandler = () => {
-      if (document.hidden) this.coverBoardDuringReveal();
-      else this.updateRevealPrivacy();
+      if (document.hidden) {
+        this.revealPrivacyHiddenAt = Date.now();
+        this.coverBoardDuringReveal();
+      } else {
+        if (this.revealPrivacyHiddenAt) this.coverBoardDuringReveal();
+        this.revealPrivacyHiddenAt = 0;
+        this.updateRevealPrivacy();
+      }
     };
-    this.revealBlurHandler = () => this.coverBoardDuringReveal();
+    this.revealBlurHandler = () => {
+      this.revealPrivacyHiddenAt = Date.now();
+      this.coverBoardDuringReveal();
+    };
+    this.revealFocusHandler = () => {
+      if (this.revealPrivacyHiddenAt) this.coverBoardDuringReveal();
+      this.revealPrivacyHiddenAt = 0;
+      this.updateRevealPrivacy();
+    };
 
     document.addEventListener('visibilitychange', this.revealVisibilityHandler);
     window.addEventListener('blur', this.revealBlurHandler);
+    window.addEventListener('focus', this.revealFocusHandler);
+    if (document.hidden) {
+      this.revealPrivacyHiddenAt = Date.now();
+      this.coverBoardDuringReveal();
+    }
 
     this.events.once('shutdown', () => {
       document.removeEventListener('visibilitychange', this.revealVisibilityHandler);
       window.removeEventListener('blur', this.revealBlurHandler);
+      window.removeEventListener('focus', this.revealFocusHandler);
       this.removeRevealPrivacyCover();
     });
   },
