@@ -154,9 +154,13 @@ async function run() {
 
   try {
     // --- Four players start an online Tag room ---------------------------------------------
-    await Promise.all(players.map((page) =>
-      page.goto(GAME_URL, { waitUntil: "domcontentloaded", timeout: TIMEOUT })));
-    await Promise.all(players.map(chooseTag));
+    // Do not cold-boot four Phaser/WebGL games at once on a constrained CI runner.
+    // Load each player page and wait until its menu has started before opening the next one;
+    // this avoids a startup race that leaves one page with no active scene.
+    for (const page of players) {
+      await page.goto(GAME_URL, { waitUntil: "domcontentloaded", timeout: TIMEOUT });
+      await chooseTag(page);
+    }
 
     await clickWorldUntil(players[0], 360, 710, () =>
       Boolean(window.game?.scene?.getScene("MenuScene")?.currentRoomCode),
