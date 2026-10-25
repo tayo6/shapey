@@ -4,6 +4,8 @@ import { chromium } from "playwright";
 const PAGE_URL = process.env.SHAPEY_BROWSER_URL ||
   "http://127.0.0.1:8080/staging/index.html?api=http://127.0.0.1:8787";
 const TIMEOUT = 45_000;
+const pageErrors = [];
+const consoleErrors = [];
 
 async function clickWorld(page, x, y) {
   const canvas = page.locator("canvas").first();
@@ -16,15 +18,22 @@ async function waitForScene(page, predicate, description, timeout = TIMEOUT, arg
   await page.waitForFunction(predicate, arg, { timeout }).catch(async (error) => {
     const info = await page.evaluate(() => ({
       url: location.href,
+      readyState: document.readyState,
+      phaserAvailable: typeof window.Phaser !== "undefined",
+      gameCreated: Boolean(window.game),
+      canvasCount: document.querySelectorAll("canvas").length,
+      bootOverlayPresent: Boolean(document.getElementById("boot")),
       activeScenes: window.game?.scene?.getScenes(true).map((scene) => scene.scene.key),
       lobbyMode: window.game?.scene?.getScene("MenuScene")?.onlineMode,
       lobbySeat: window.game?.scene?.getScene("MenuScene")?.onlinePlayerNumber,
       status: window.game?.scene?.getScene("MenuScene")?.onlineStatus?.text,
       gameState: window.game?.scene?.getScene("GameScene")?.onlineState?.status,
-      activePlayer: window.game?.scene?.getScene("GameScene")?.onlineState?.activePlayerNumber
+      activePlayer: window.game?.scene?.getScene("GameScene")?.onlineState?.activePlayerNumber,
     })).catch(() => null);
     throw new Error("Timed out waiting for " + description + ". Browser state: " +
-      JSON.stringify(info) + ". Original error: " + error.message);
+      JSON.stringify(info) + ". Page errors: " + JSON.stringify(pageErrors.slice(-8)) +
+      ". Console errors: " + JSON.stringify(consoleErrors.slice(-8)) +
+      ". Original error: " + error.message);
   });
 }
 
@@ -43,12 +52,26 @@ async function run() {
   const contexts = await Promise.all(Array.from({ length: 4 }, () =>
     browser.newContext({ viewport: { width: 720, height: 1280 } })));
   const pages = await Promise.all(contexts.map((context) => context.newPage()));
-  const pageErrors = [];
-  for (const page of pages) page.on("pageerror", (error) => pageErrors.push(error.message));
+  for (const page of pages) {
+    page.on("pageerror", (error) => {
+      pageErrors.push(`${page.url()}: ${error.message}`);
+    });
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(`${page.url()}: ${message.text()}`);
+    });
+  }
 
   try {
-    await Promise.all(pages.map((page) =>
-      page.goto(PAGE_URL, { waitUntil: "domcontentloaded", timeout: TIMEOUT })));
+    // Four simultaneous Phaser/WebGL boots can starve a CI runner during asset decoding.
+    // Bring each page fully to the menu before starting the next; this tests all four devices
+    // while avoiding a false "no active scene" timeout caused by concurrent cold starts.
+    for (let index = 0; index < pages.length; index++) {
+      const page = pages[index];
+      await page.goto(PAGE_URL, { waitUntil: "domcontentloaded", timeout: TIMEOUT });
+      await waitForScene(page, () =>
+        Boolean(window.game?.scene?.getScenes(true).some((scene) => scene.scene.key === "MenuScene")),
+      `mode menu ready for Tag Player ${index + 1}`);
+    }
     await Promise.all(pages.map(chooseTag));
 
     await clickWorld(pages[0], 360, 710); // Player 1 creates the Tag room.

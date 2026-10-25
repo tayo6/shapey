@@ -317,16 +317,37 @@ async function run() {
     // --- Audience poll: voting, countdown agreement under skew, server-side expiry -----------
     // Player 2 (whose turn it now is) selects one real tile and presses the polls button.
     await wakeLoop(players[1]);
-    {
-      const [x, y] = await players[1].evaluate((tile) => {
-        const scene = window.game.scene.getScene("GameScene");
-        return [scene.cellX(tile.col), scene.cellY(tile.row)];
-      }, pollTile);
-      await clickWorld(players[1], x, y);
-    }
-    await waitForScene(players[1], (expected) =>
-      window.game?.scene?.getScene("GameScene")?.onlineState?.selectedTileIds?.length === expected,
-      "server-confirmed single tile selection for the poll", 10_000, 1);
+    const pollTarget = await players[1].evaluate((tileId) => {
+      const scene = window.game.scene.getScene("GameScene");
+      const state = scene.onlineState;
+      const serverTile = state?.tiles?.find((tile) => tile.id === tileId);
+      const sprite = scene.tiles.flat().find((tile) => tile && tile.serverId === tileId);
+      return {
+        tileId,
+        x: sprite?.x ?? (serverTile ? scene.cellX(serverTile.col) : null),
+        y: sprite?.y ?? (serverTile ? scene.cellY(serverTile.row) : null),
+        status: state?.status,
+        activePlayerNumber: state?.activePlayerNumber,
+        remainingMs: scene.turnClock?.remaining?.() ?? null,
+        serverTileAvailable: Boolean(serverTile && !serverTile.faceUp && !serverTile.moving),
+        spriteAvailable: Boolean(sprite?.active && !sprite.faceUp && !sprite.moving),
+        selectedTileIds: state?.selectedTileIds || []
+      };
+    }, pollTile.id);
+    assert.ok(Number.isFinite(pollTarget.x) && Number.isFinite(pollTarget.y),
+      `the poll tile must still be present on the client board (got ${JSON.stringify(pollTarget)})`);
+    assert.equal(pollTarget.status, "playing", "Player 2 must be in a live turn before the poll pick");
+    assert.equal(pollTarget.activePlayerNumber, 2,
+      `Player 2 must own the turn for the poll pick (got ${JSON.stringify(pollTarget)})`);
+    assert.ok(pollTarget.serverTileAvailable,
+      `the chosen poll tile must be available on the server (got ${JSON.stringify(pollTarget)})`);
+    // Waking a sleeping Phaser loop may take a frame before pointer input is processed.
+    // Retry the real UI click until the server snapshot confirms this exact tile was selected.
+    await clickWorldUntil(players[1], pollTarget.x, pollTarget.y, (tileId) => {
+      const state = window.game?.scene?.getScene("GameScene")?.onlineState;
+      return state?.activePlayerNumber === 2 &&
+        state?.selectedTileIds?.includes(tileId);
+    }, "server-confirmed poll tile selection for Player 2", 6, pollTile.id);
     // Retry the press until the poll actually opens (a swallowed press or a momentarily
     // reconnecting socket would otherwise flake the phase; a real player presses again).
     await clickWorldUntil(players[1], 449, 1141, () =>
