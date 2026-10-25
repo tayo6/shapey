@@ -1,0 +1,2 @@
+=== Phase B7: ES module import resolution (static walk of every import) ===
+resolved 118 relative imports, 0 broken

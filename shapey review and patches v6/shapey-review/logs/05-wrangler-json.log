@@ -1,0 +1,3 @@
+=== Phase B5: wrangler JSON validation (worker-tests.yml step) ===
+wrangler.jsonc is valid JSON
+wrangler.staging.jsonc is valid JSON

@@ -1,0 +1,1 @@
+Clock-skew smoke test passed: two devices with clocks 25s apart displayed the true turn, study, poll and tile-movement timings, agreed with each other, and the turn switched at the server-authoritative deadline.

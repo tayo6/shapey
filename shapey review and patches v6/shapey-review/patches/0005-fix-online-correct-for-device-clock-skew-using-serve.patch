@@ -1,0 +1,311 @@
+From 2b2c821fbcc28412409d0a257650f1daca86e9b0 Mon Sep 17 00:00:00 2001
+From: Shapey Review <review@shapey.local>
+Date: Fri, 23 Oct 2026 20:13:52 +0000
+Subject: [PATCH 05/11] fix(online): correct for device clock skew using
+ serverNow
+
+Every online deadline (turnEndsAt, reviewEndsAt, reveals[].endsAt,
+pendingEffect, poll endsAt, tile movingUntil) is a server wall-clock
+timestamp, but both clients compared them against the device's own
+Date.now(). A phone with a wrong clock (minutes off is common) would
+see online turns expire early, freeze, or show wrong poll countdowns
+by exactly the skew.
+
+- worker: gameViewForPlayer/gameViewForSpectator/audiencePollSnapshot
+  now include serverNow (default Date.now()), passed once per
+  broadcast so all sockets in a room share one timestamp
+- game client: applyOnlineState() measures serverClockOffset from each
+  snapshot; every online deadline read (turn clock, study reveal,
+  spawn reveals, poll countdown, movingUntil, reconnect restores) goes
+  through serverToLocal()
+- audience page: same offset measurement in renderGameState(); HUD
+  clock, memorize cue and pollSecondsLeft convert through it
+- worker test pins the serverNow field on both view builders
+---
+ src/scenes/game.js              | 33 ++++++++++++++++++++++++---------
+ staging/audience.js             | 13 +++++++++----
+ worker/src/game-engine.js       |  9 ++++++---
+ worker/src/index.js             | 18 ++++++++++--------
+ worker/test/game-engine.test.js |  5 +++++
+ 5 files changed, 54 insertions(+), 24 deletions(-)
+
+diff --git a/src/scenes/game.js b/src/scenes/game.js
+index 3528d99..50f563c 100644
+--- a/src/scenes/game.js
++++ b/src/scenes/game.js
+@@ -18,6 +18,10 @@ export class GameScene extends Phaser.Scene {
+   init(data) {
+     this.online = Boolean(data && data.online);
+     this.spectator = Boolean(data && data.spectator);
++    // Server wall-clock minus local clock, refreshed from every online snapshot's serverNow.
++    // All Worker deadlines (turnEndsAt, reveals, polls, movingUntil) are server timestamps and
++    // must pass through serverToLocal() before being compared with Date.now().
++    this.serverClockOffset = 0;
+     this.audienceMode = data && data.audienceMode || '';
+     this.audienceSoundMuted = (() => { try { return localStorage.getItem('shapey-audience-muted') === 'true'; } catch { return false; } })();
+     this.onlineSocket = (data && data.onlineSocket) || null;
+@@ -297,11 +301,17 @@ export class GameScene extends Phaser.Scene {
+     textObject.setText(value);
+   }
+ 
++  // Converts a server-wall-clock timestamp to this device's clock, using the offset measured
++  // from the latest snapshot. Falls back to the raw value when no offset is known yet.
++  serverToLocal(at) {
++    return Number.isFinite(at) ? at - this.serverClockOffset : at;
++  }
++
+   // Both clocks are redrawn from their own deadlines, so they can never hold each other up.
+   refreshClocks() {
+     const now = Date.now();
+     const openingStudyLeft = this.online && this.onlineState
+-      ? Math.max(0, Number(this.onlineState.reviewEndsAt) - now)
++      ? Math.max(0, this.serverToLocal(Number(this.onlineState.reviewEndsAt)) - now)
+       : Number.isFinite(this.openingReviewEndsAt)
+         ? Math.max(0, this.openingReviewEndsAt - now) : 0;
+     const openingStudy = this.online
+@@ -324,9 +334,9 @@ export class GameScene extends Phaser.Scene {
+     }
+ 
+     const revealLeft = this.online && this.onlineState
+-      ? Math.max(0, ...((this.onlineState.reveals || []).map((batch) => batch.endsAt - now)),
++      ? Math.max(0, ...((this.onlineState.reveals || []).map((batch) => this.serverToLocal(batch.endsAt) - now)),
+           this.onlineState.status === 'study' && Number.isFinite(this.onlineState.reviewEndsAt)
+-            ? this.onlineState.reviewEndsAt - now : 0)
++            ? this.serverToLocal(this.onlineState.reviewEndsAt) - now : 0)
+       : this.reveals.remaining();
+     const onlineShuffling = Boolean(this.online && this.onlineState && this.onlineState.shuffling);
+     this.revealText.setVisible(revealLeft > 0 || this.shuffling > 0 || onlineShuffling);
+@@ -925,7 +935,7 @@ export class GameScene extends Phaser.Scene {
+     const counts = options.map((option) => Number((poll.counts || {})[option.tileId]) || 0);
+     const totalVotes = counts.reduce((sum, count) => sum + count, 0);
+     const best = Math.max(0, ...counts);
+-    const secondsLeft = () => Math.max(0, Math.ceil(((Number(poll.endsAt) || 0) - Date.now()) / 1000));
++    const secondsLeft = () => Math.max(0, Math.ceil((this.serverToLocal(Number(poll.endsAt) || NaN) - Date.now()) / 1000));
+     const positionLabel = (option) => 'ROW ' + (Number(option.row) + 1) + ', COLUMN ' + (Number(option.col) + 1);
+     const subtitle = () => {
+       if (poll.closed) return totalVotes > 0
+@@ -1088,7 +1098,7 @@ export class GameScene extends Phaser.Scene {
+         if (this.onlineSubmitPending) {
+           this.onlineSubmitPending = false;
+           if (this.onlineState && Number.isFinite(this.onlineState.turnEndsAt)) {
+-            this.turnClock.endsAt = this.onlineState.turnEndsAt;
++            this.turnClock.endsAt = this.serverToLocal(this.onlineState.turnEndsAt);
+           }
+         }
+         // The server may begin resolving a pick just before this client's snapshot arrives.
+@@ -1110,7 +1120,7 @@ export class GameScene extends Phaser.Scene {
+       if (this.onlineSubmitPending) {
+         this.onlineSubmitPending = false;
+         if (this.onlineState && Number.isFinite(this.onlineState.turnEndsAt)) {
+-          this.turnClock.endsAt = this.onlineState.turnEndsAt;
++          this.turnClock.endsAt = this.serverToLocal(this.onlineState.turnEndsAt);
+         }
+       }
+       if (this.online && !this.gameOver) this.showToast('Connection lost. Return to the main menu and reconnect.', 4500);
+@@ -1189,6 +1199,11 @@ export class GameScene extends Phaser.Scene {
+     if (!this.online || !state) return;
+     // The server snapshot contains the canonical owner and deadline for the new turn.
+     this.onlineSubmitPending = false;
++    // Deadlines are server timestamps: measure the clock skew from serverNow on every snapshot,
++    // so a device with a wrong clock still shows (and enforces) the true remaining time.
++    if (Number.isFinite(Number(state.serverNow))) {
++      this.serverClockOffset = Number(state.serverNow) - Date.now();
++    }
+     const oldInventorySignature = this.onlineInventorySignature || '';
+     const previousOnlineStars = this.onlineState && this.onlineState.me &&
+       Number.isFinite(Number(this.onlineState.me.stars))
+@@ -1201,10 +1216,10 @@ export class GameScene extends Phaser.Scene {
+     this.activeMember = this.modeCfg.teams ? Math.floor(this.turnNumber / 2) % 2 : 0;
+     this.isBonusTurn = Boolean(state.isBonusTurn);
+     this.doublePlayPendingPlayer = state.doublePlayPendingPlayer ?? null;
+-    this.turnClock.endsAt = Number.isFinite(state.turnEndsAt) ? state.turnEndsAt : Infinity;
++    this.turnClock.endsAt = Number.isFinite(state.turnEndsAt) ? this.serverToLocal(state.turnEndsAt) : Infinity;
+     this.currentTurnDurationMs = state.status === 'study'
+       ? this.turnDurationMs
+-      : Math.max(this.turnDurationMs, Number.isFinite(state.turnEndsAt) ? state.turnEndsAt - Date.now() : this.turnDurationMs);
++      : Math.max(this.turnDurationMs, Number.isFinite(state.turnEndsAt) ? this.serverToLocal(state.turnEndsAt) - Date.now() : this.turnDurationMs);
+     this.updateActivePlayerUI();
+     this.p1Score.setText(String(this.scores[0] || 0));
+     this.p2Score.setText(String(this.scores[1] || 0));
+@@ -1287,7 +1302,7 @@ export class GameScene extends Phaser.Scene {
+             });
+           } else {
+             const moveDuration = viewTile.moving && Number.isFinite(viewTile.movingUntil)
+-              ? Math.max(0, viewTile.movingUntil - Date.now())
++              ? Math.max(0, this.serverToLocal(viewTile.movingUntil) - Date.now())
+               : (initial ? 0 : 240);
+             const movingTargets = tile.shuffleOutline ? [tile, tile.shuffleOutline] : [tile];
+             this.tweens.add({ targets: movingTargets, x: targetX, y: targetY, duration: moveDuration, ease: 'Sine.easeInOut' });
+diff --git a/staging/audience.js b/staging/audience.js
+index 972d139..03608f5 100644
+--- a/staging/audience.js
++++ b/staging/audience.js
+@@ -66,6 +66,10 @@ let roomsLoadedAt = null;
+ let roomsLoadSeq = 0;    // only the newest room-list request may update the screen
+ let pollLockedId = null;
+ let latestGameFrameMessage = null;
++// Server wall-clock minus this device's clock, measured from each snapshot's serverNow.
++// Worker deadlines (turnEndsAt, reviewEndsAt, reveals, polls) are server timestamps.
++let serverClockOffset = 0;
++function serverToLocal(at) { return Number.isFinite(at) ? at - serverClockOffset : at; }
+ 
+ function api(path) { return MULTIPLAYER_API + path; }
+ function directoryUrl() { return new URL('staging/audience.html', document.baseURI); }
+@@ -625,12 +629,12 @@ function updateHud() {
+   const now = Date.now();
+   let clock;
+   if (state.status === 'study') clock = '--:--';
+-  else if (state.status === 'playing' && Number.isFinite(state.turnEndsAt)) clock = formatClock(state.turnEndsAt - now);
++  else if (state.status === 'playing' && Number.isFinite(state.turnEndsAt)) clock = formatClock(serverToLocal(state.turnEndsAt) - now);
+   else if (state.status === 'finished') clock = formatClock(0);
+   else clock = '--:--';
+   text(els.turnClock, clock);
+-  let left = state.status === 'study' && Number.isFinite(state.reviewEndsAt) ? state.reviewEndsAt - now : 0;
+-  (state.reveals || []).forEach((batch) => { left = Math.max(left, batch.endsAt - now); });
++  let left = state.status === 'study' && Number.isFinite(state.reviewEndsAt) ? serverToLocal(state.reviewEndsAt) - now : 0;
++  (state.reveals || []).forEach((batch) => { left = Math.max(left, serverToLocal(batch.endsAt) - now); });
+   if (left > 0) text(els.revealText, 'MEMORIZE ' + formatClock(left));
+   else if (state.shuffling) text(els.revealText, 'SHUFFLING');
+   else text(els.revealText, '');
+@@ -641,6 +645,7 @@ function renderGameState(state) {
+   currentState = state;
+   activeMode = state.mode || activeMode;
+   connectionLost = false;
++  if (Number.isFinite(Number(state.serverNow))) serverClockOffset = Number(state.serverNow) - Date.now();
+   applyModeUI();
+   renderBoard(state, previousState, Boolean(previousState));
+   renderScores(state);
+@@ -730,7 +735,7 @@ function percentSplit(values) {
+     .forEach(({ i }) => { if (left-- > 0) result[i]++; });
+   return result;
+ }
+-function pollSecondsLeft(poll) { return Math.max(0, Math.ceil(((Number(poll.endsAt) || 0) - Date.now()) / 1000)); }
++function pollSecondsLeft(poll) { return Math.max(0, Math.ceil((serverToLocal(Number(poll.endsAt) || NaN) - Date.now()) / 1000)); }
+ function pollIsOpen(poll) { return Boolean(poll) && !poll.closed && pollSecondsLeft(poll) > 0; }
+ function updatePollIntro() {
+   const poll = currentPoll;
+diff --git a/worker/src/game-engine.js b/worker/src/game-engine.js
+index 0dc10fa..177bd57 100644
+--- a/worker/src/game-engine.js
++++ b/worker/src/game-engine.js
+@@ -600,17 +600,19 @@ export function nextGameDeadline(state) {
+ 
+ // Spectator snapshots use the same hidden-tile privacy rules as player snapshots,
+  // but omit the active player's private inventory, Stars and streak data.
+-export function gameViewForSpectator(state) {
++export function gameViewForSpectator(state, now = Date.now()) {
+   if (!state || !Array.isArray(state.turnOrder) || !state.turnOrder.includes(state.activePlayerNumber)) {
+     return null;
+   }
+-  const view = gameViewForPlayer(state, state.activePlayerNumber);
++  const view = gameViewForPlayer(state, state.activePlayerNumber, now);
+   delete view.me;
+   return view;
+ }
+ 
+ // Never send hidden tile shapes to any browser. The backend keeps the actual shape privately.
+-export function gameViewForPlayer(state, playerNumber) {
++// Every deadline in the view is a server-wall-clock timestamp, so `serverNow` is included:
++// clients add (serverNow - their clock) once per snapshot and stay correct on skewed devices.
++export function gameViewForPlayer(state, playerNumber, now = Date.now()) {
+   if (!state.turnOrder.includes(playerNumber)) throw new Error("Player is not part of this match.");
+   const side = sideForPlayer(state.mode, playerNumber);
+   const ownData = clone(state.playerData[String(playerNumber)]);
+@@ -627,6 +629,7 @@ export function gameViewForPlayer(state, playerNumber) {
+     boardSize: state.boardSize || DEFAULT_BOARD_SIZE,
+     status: state.status,
+     revision: state.revision,
++    serverNow: now,
+     reviewEndsAt: state.reviewEndsAt,
+     turnIndex: state.turnIndex,
+     activePlayerNumber: state.activePlayerNumber,
+diff --git a/worker/src/index.js b/worker/src/index.js
+index 6cc3078..9644140 100644
+--- a/worker/src/index.js
++++ b/worker/src/index.js
+@@ -27,7 +27,7 @@ function cleanChatText(value) {
+   return value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, MAX_CHAT_CHARS);
+ }
+ 
+-function audiencePollSnapshot(poll) {
++function audiencePollSnapshot(poll, now = Date.now()) {
+   if (!poll) return null;
+   const counts = Object.fromEntries(poll.options.map(option => [option.tileId, 0]));
+   for (const vote of Object.values(poll.votes || {})) {
+@@ -38,6 +38,7 @@ function audiencePollSnapshot(poll) {
+     id: poll.id,
+     startedByPlayer: poll.startedByPlayer,
+     initialShape: poll.initialShape,
++    serverNow: now,
+     options: poll.options.map(option => ({ tileId: option.tileId, row: option.row, col: option.col })),
+     ...(closed ? {
+       counts,
+@@ -478,14 +479,15 @@ export class Room extends DurableObject {
+   async broadcastGameState(type = "game_state") {
+     const game = await this.ctx.storage.get("game");
+     if (!game) return;
++    const now = Date.now();
+     for (const ws of this.ctx.getWebSockets()) {
+       try {
+         if (ws.readyState !== WebSocket.OPEN) continue;
+         const attachment = ws.deserializeAttachment() || {};
+         if (Number.isInteger(attachment.playerNumber)) {
+-          ws.send(JSON.stringify({ type, state: gameViewForPlayer(game, attachment.playerNumber) }));
++          ws.send(JSON.stringify({ type, state: gameViewForPlayer(game, attachment.playerNumber, now) }));
+         } else if (attachment.role === "spectator" && attachment.spectatorReady) {
+-          const state = gameViewForSpectator(game);
++          const state = gameViewForSpectator(game, now);
+           const room = await this.ctx.storage.get("room");
+           if (state && room?.mode === "demo") state.mode = "demo";
+           ws.send(JSON.stringify({ type, state }));
+@@ -570,8 +572,8 @@ export class Room extends DurableObject {
+     this.broadcastAudiencePollState(closed);
+   }
+ 
+-  broadcastAudiencePollState(poll) {
+-    this.broadcast({ type: "audience_poll_state", poll: audiencePollSnapshot(poll) });
++  broadcastAudiencePollState(poll, now = Date.now()) {
++    this.broadcast({ type: "audience_poll_state", poll: audiencePollSnapshot(poll, now) });
+   }
+ 
+   async createAudiencePoll(game, playerNumber, now = Date.now()) {
+@@ -892,7 +894,7 @@ export class Room extends DurableObject {
+         try {
+           ws.send(JSON.stringify({
+             type: "game_started",
+-            state: gameViewForPlayer(existingGame, playerNumber)
++            state: gameViewForPlayer(existingGame, playerNumber, Date.now())
+           }));
+         } catch {}
+       }
+@@ -928,9 +930,9 @@ export class Room extends DurableObject {
+       status: game ? game.status : (this.connectedCount() >= room.maxPlayers ? "ready" : "waiting"),
+       players: this.playerList(),
+       spectatorCount: this.spectatorCount(),
+-      state: game ? { ...gameViewForSpectator(game), ...(room.mode === "demo" ? { mode: "demo" } : {}) } : null,
++      state: game ? { ...gameViewForSpectator(game, Date.now()), ...(room.mode === "demo" ? { mode: "demo" } : {}) } : null,
+       chatHistory: history,
+-      poll: poll && !poll.closed && poll.endsAt > Date.now() ? audiencePollSnapshot(poll) : null
++      poll: poll && !poll.closed && poll.endsAt > Date.now() ? audiencePollSnapshot(poll, Date.now()) : null
+     }));
+     this.broadcast({ type: "spectator_count", count: this.spectatorCount() });
+     await this.touchRoom();
+diff --git a/worker/test/game-engine.test.js b/worker/test/game-engine.test.js
+index 42f0b09..8851039 100644
+--- a/worker/test/game-engine.test.js
++++ b/worker/test/game-engine.test.js
+@@ -55,6 +55,11 @@ test("creates exact 5x5, 6x6 and 7x7 boards with playable matching groups", () =
+     assert.equal(state.nextTileNumber, total + 1);
+     assert.equal(gameViewForPlayer(state, 1).boardSize, boardSize);
+     assert.equal(gameViewForPlayer(state, 1).tiles.length, total);
++    // Views carry the server clock so clients can correct skewed device clocks.
++    const viewAt = gameViewForPlayer(state, 1, 12345);
++    assert.equal(viewAt.serverNow, 12345);
++    assert.equal(gameViewForSpectator(state, 12345).serverNow, 12345);
++    assert.ok(Number.isFinite(gameViewForPlayer(state, 1).serverNow));
+     assert.ok(state.tiles.every((tile) =>
+       Number.isInteger(tile.row) && tile.row >= 0 && tile.row < boardSize &&
+       Number.isInteger(tile.col) && tile.col >= 0 && tile.col < boardSize));
+-- 
+2.47.3
+

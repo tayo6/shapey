@@ -1,0 +1,15 @@
+=== Phase B9: rules-preservation constants ===
+AI_TURN_MS: export const AI_TURN_MS = 5000; // every AI pick-turn has a fixed 5-second limit
+TURN_MS (pvp): worker/src/game-engine.js:export const TURN_MS = 45_000;
+TAG_TURN_MS: export const TAG_TURN_MS = 30_000;
+INITIAL_REVIEW_MS: export const INITIAL_REVIEW_MS = 15_000;
+NEW_TILE_REVEAL_MS: export const NEW_TILE_REVEAL_MS = 5_000;
+SHUFFLE_STEP_MS: export const SHUFFLE_STEP_MS = 2_000;
+AUDIENCE_POLL_MS: export const AUDIENCE_POLL_MS = 30_000;
+polls per player: 26:export const MAX_AUDIENCE_POLLS_PER_PLAYER = 3;
+27:export function audiencePollsRemaining(playerData) {
+board sizes allowed: 15:export const SUPPORTED_BOARD_SIZES = Object.freeze([5, 6, 7]);
+17:export function isBoardSize(value) {
+target scores: src/config.js:64:export const MODE_TARGET_SCORE = Object.freeze({
+src/config.js:65:  alone: RULES.targetScoreForMode('alone'), ai: RULES.targetScoreForMode('ai'),
+src/config.js:66:  pvp: RULES.targetScoreForMode('pvp'), tag: RULES.targetScoreForMode('tag'),

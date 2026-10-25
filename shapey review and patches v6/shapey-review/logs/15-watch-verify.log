@@ -1,0 +1,7 @@
+PASS - W1 demo room created via the Worker API :: {"roomCode":"T6THJ4","mode":"demo"}
+PASS - W2 index.html?watch=CODE redirects to the audience wrapper with the same room code :: {"finalUrl":"/staging/audience.html?room=T6THJ4"}
+PASS - W3 the embedded game client renders the watched match in the iframe :: {"tiles":49,"mode":"pvp","scores":[0,0],"activePlayer":0}
+PASS - W4 the watched match progresses live (turn, attempts or score changed while watching) :: {"first":{"status":"study","active":1,"turn":0,"scores":"0,0","attempts":0,"over":false},"last":{"status":"playing","active":2,"turn":1,"scores":"1,0","attempts":0,"over":false}}
+PASS - W5 no uncaught page errors during the whole watch session :: []
+
+5/5 checks passed

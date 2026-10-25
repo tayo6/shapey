@@ -1,0 +1,16 @@
+PASS - A alone/first-pick hazard: -1 point :: {"scores":[-1,0],"activePlayer":0,"turnEnding":false,"busy":false,"gameOver":false,"tileCount":49,"probedSurvivors":0,"selection":0,"dummySelection":0}
+PASS - A alone/first-pick hazard: hazard destroyed itself (board refilled) :: {"scores":[-1,0],"activePlayer":0,"turnEnding":false,"busy":false,"gameOver":false,"tileCount":49,"probedSurvivors":0,"selection":0,"dummySelection":0}
+PASS - A alone/first-pick hazard: play continues (no game over, idle) :: {"scores":[-1,0],"activePlayer":0,"turnEnding":false,"busy":false,"gameOver":false,"tileCount":49,"probedSurvivors":0,"selection":0,"dummySelection":0}
+PASS - B alone/dummy+hazard: dummy is picked and held :: {"scores":[-1,0],"activePlayer":0,"turnEnding":false,"busy":false,"gameOver":false,"tileCount":49,"probedSurvivors":2,"selection":0,"dummySelection":1}
+PASS - B alone/dummy+hazard: exactly -1 more (hazard's own penalty) :: {"before":[-1,0],"after":[-2,0]}
+PASS - B alone/dummy+hazard: both tiles destroyed (board refilled) :: {"probedSurvivors":0,"tileCount":49}
+PASS - C versus/first-pick hazard: no point lost :: {"scores":[0,0],"activePlayer":1,"turnEnding":false,"busy":false,"gameOver":false,"tileCount":49,"probedSurvivors":0,"selection":0,"dummySelection":0}
+PASS - C versus/first-pick hazard: hazard destroyed itself (board refilled) :: {"scores":[0,0],"activePlayer":1,"turnEnding":false,"busy":false,"gameOver":false,"tileCount":49,"probedSurvivors":0,"selection":0,"dummySelection":0}
+PASS - C versus/first-pick hazard: turn handed to the AI :: {"scores":[0,0],"activePlayer":1,"turnEnding":false,"busy":false,"gameOver":false,"tileCount":49,"probedSurvivors":0,"selection":0,"dummySelection":0}
+PASS - C versus/after AI turn: control returns to the player, game alive :: {"scores":[0,1],"activePlayer":0,"turnEnding":false,"busy":false,"gameOver":false,"tileCount":49,"probedSurvivors":0,"selection":0,"dummySelection":0}
+PASS - D versus/shapes+hazard: no point lost (no versus Hazard penalty) :: {"before":[0,1],"after":[0,1]}
+PASS - D versus/shapes+hazard: all three picked tiles destroyed (board refilled) :: {"probedSurvivors":0,"tileCount":49}
+PASS - D versus/shapes+hazard: turn handed to the AI :: {"scores":[0,1],"activePlayer":1,"turnEnding":false,"busy":false,"gameOver":false,"tileCount":49,"probedSurvivors":0,"selection":0,"dummySelection":0}
+PASS - no uncaught page errors in any scenario :: []
+
+14/14 checks passed

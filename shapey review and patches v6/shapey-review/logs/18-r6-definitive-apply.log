@@ -1,0 +1,40 @@
+=== 2026-10-25T08:57:14Z Definitive apply of the DELIVERED (zip) patch series ===
+current origin/main: 4121769816f3a35c2110434dcfd387555b6abe61
+4121769 Extract AI update 4 review package
+2dba7e0 Prepare one-time extraction of AI update 4 package
+clean checkout tree: 237342a3e33e0cc9afb08e89559708eae2240abe
+
+=== Apply all 13 patches from the delivered zip (git am) ===
+patch files in package: 13
+.git/rebase-apply/patch:1968: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+patched HEAD:  6e34deca0e8823ec88e59d67534e1eb9e860e829
+patched tree:  6fb5d6f7f7f3e5c5ce13ba20ae506086e81e88ad
+commits:       13
+  6e34dec test(audience): point the audience frontend at a local Worker for testing
+  1a0f128 fix(online): harden the device-clock-skew estimate and pin it with tests
+  02d308d chore: add .gitignore and track the worker dependency lockfile
+  ae7a30d refactor(audience): split the 1085-line staging/audience.js into ES modules
+  8b0e9a8 refactor(worker): split the 1190-line src/index.js into focused modules
+  576e9d7 refactor(game): split GameScene into focused mixin modules
+  7a1e426 chore: remove orphaned files shipped to the live site
+  7293460 fix(game): destroy the board mask Graphics on scene shutdown
+  d6b5497 fix(online): correct for device clock skew using serverNow
+  0d73958 refactor(load): remove unreachable direct-watch fallback in startAudienceWatch
+  c70a5ea fix(ai): lower AI_SPARE_MS below the AI's 5-second turn
+  94c307d fix(rules): enforce the agreed Hazard rules across client, Worker, docs and tests
+  c578dce fix(audience): stop boardFootnote TypeError during audience polls
+
+=== Compare against tested trees ===
+final-checkout (live suites ran here): 6fb5d6f7f7f3e5c5ce13ba20ae506086e81e88ad
+r5-checkout (series built here):       6fb5d6f7f7f3e5c5ce13ba20ae506086e81e88ad
+MATCH final-checkout: YES
+MATCH r5-checkout:     YES
+
+=== zip patches vs download-folder patches ===
+IDENTICAL
+
+=== changed-files mirror check (zip copy) ===
+changed-files missing count: 0
+(zip changed-files contains 'New from ai' mirror of files DELETED by 0007 - informational)

@@ -1,0 +1,10 @@
+=== CI job 1: integration + PvP browser + Tag browser (one Worker, 5 rooms) ===
+--- integration-smoke ---
+Local Worker integration passed: origin guard, PvP scoring/reconnect and audience polls, full-board Tag polls, chat, and AI demo auto-play/cleanup.
+PASS: integration-smoke
+--- browser-smoke ---
+Browser PvP smoke test passed: two separate browser contexts joined one room, shared the same board, scored one match, and synchronized the next turn.
+PASS: browser-smoke
+--- tag-browser-smoke ---
+Four-browser Tag smoke test passed: four separate browser contexts joined, started one shared game, and the UI synchronized P1 → P3 → P2 → P4 → P1.
+PASS: tag-browser-smoke

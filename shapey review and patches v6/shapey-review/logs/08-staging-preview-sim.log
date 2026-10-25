@@ -1,0 +1,17 @@
+=== Phase B8: staging-preview.yml smoke-step simulation (curl + grep) ===
+audience.html OK
+gameFrame grep OK
+startDemo grep OK
+audience/main.js fetch OK
+audience/watch.js fetch OK
+audience/board.js fetch OK
+audience/state.js fetch OK
+main.js startAiDemo grep OK
+watch.js startAiDemo grep OK
+board.js poll_vote grep OK
+state.js deployed-URL grep STILL PASSES (default preserved)
+load.js AUDIENCE_WATCH_CODE grep OK
+config.js deployed-URL grep OK
+rules.js ShapeyRules grep OK
+NEW shared module src/game/clock-sync.js is served OK
+sampled artwork assets reachable

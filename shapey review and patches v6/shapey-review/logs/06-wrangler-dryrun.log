@@ -1,0 +1,7 @@
+=== Phase B6: wrangler deploy --dry-run (both configs; DO binding intact) ===
+Total Upload: 75.13 KiB / gzip: 16.79 KiB
+Your Worker has access to the following bindings:
+env.ROOMS (Room)      Durable Object      
+Total Upload: 75.13 KiB / gzip: 16.79 KiB
+Your Worker has access to the following bindings:
+env.ROOMS (Room)      Durable Object      

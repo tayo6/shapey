@@ -1,0 +1,19 @@
+PASS - A1 loading screen markup present at first paint (#boot + bg + logo + bar) :: {"boot":true,"revealed":true,"plankCanvas":true,"logo":true,"bg":true}
+PASS - A2 loading screen revealed its artwork (boot.ready + plank load-bar canvas) :: {"revealed":true,"plankCanvas":true,"note":"plank revealed"}
+PASS - A3 loading screen hands off cleanly (boot overlay removed once the menu is up) :: {"bootRemoved":true,"phaserCanvas":true}
+PASS - B1 PLAY ALONE opens the CHOOSE BOARD SIZE picker
+PASS - B2 choosing 5x5 starts Play Alone with a 25-tile board :: {"rows":5,"cols":5,"tiles":25,"mode":"alone","boardSize":5}
+PASS - B3 a submitted 3-match scores exactly +1 in Play Alone :: {"before":0,"after":1}
+PASS - B4 board refilled to 25 tiles after the match :: {"score":1,"tiles":25,"gameOver":false}
+PASS - B5 spawn animation: new tiles observed mid-fall into their slots
+PASS - B6 a wrong shape in Play Alone costs exactly -1 (and the picks flip back) :: {"before":1,"after":{"score":0,"selection":0}}
+PASS - C1 PLAYER VS AI + 6x6 + EASY starts with a 36-tile board and a turn clock :: {"mode":"ai","difficulty":"easy","tiles":36,"hasClock":true}
+PASS - C2 turn countdown is running (remaining time decreases) :: {"first":31854,"second":30870}
+PASS - C3 submitting passes the turn to the AI (activePlayer 1)
+PASS - C4 the AI turn lasts about its fixed 5 seconds (AI_TURN_MS) :: {"measuredMs":6742,"expectedMs":5000}
+PASS - C5 control returns to the player after the AI turn
+PASS - D1 PLAYER VS AI + 7x7 + HARD (pro) starts with a 49-tile board :: {"mode":"ai","difficulty":"pro","tiles":49}
+PASS - D2 the PRO AI plays its full turn (spare-time pick loop) and returns control :: {"measuredMs":6080}
+PASS - Z no uncaught page errors in any scenario :: []
+
+17/17 checks passed

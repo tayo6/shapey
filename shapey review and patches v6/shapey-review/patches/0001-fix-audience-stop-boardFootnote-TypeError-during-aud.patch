@@ -1,0 +1,90 @@
+From 800243af4b389342cddc2a76c9a29f2b8ec8051e Mon Sep 17 00:00:00 2001
+From: Shapey Review <review@shapey.local>
+Date: Sat, 24 Oct 2026 15:24:25 +0000
+Subject: [PATCH 01/11] fix(audience): stop boardFootnote TypeError during
+ audience polls
+
+updateBoardPollHint() wrote to els.boardFootnote, which was never
+declared in the els map and has no element in audience.html, so every
+audience_poll_state / game_state message after a poll threw
+'TypeError: Cannot set properties of undefined (setting textContent)'
+inside the WebSocket handler. Verified live on the AI demo: 17 uncaught
+errors per session, which also skipped updateVeil()/renderPlayers().
+
+- add the #boardFootnote element (hidden by default) below the board
+- register it in the els map
+- make updateBoardPollHint defensive: bail when the element is missing,
+  and clear/hide the hint when no poll exists
+- hide the footnote when a room view is reset
+---
+ staging/audience.html |  4 ++++
+ staging/audience.js   | 15 ++++++++++++---
+ 2 files changed, 16 insertions(+), 3 deletions(-)
+
+diff --git a/staging/audience.html b/staging/audience.html
+index 9eaca31..edd7cf4 100644
+--- a/staging/audience.html
++++ b/staging/audience.html
+@@ -88,6 +88,9 @@
+     #toast.error { color:#ffb09e; }
+     #toast, .veil p { text-transform:uppercase; }
+     #board { position:absolute; left:calc(var(--u) * 36); top:calc(var(--u) * 316); width:calc(var(--u) * 648); height:calc(var(--u) * 648); overflow:hidden; z-index:9; }
++    /* Poll hint below the board; z-index keeps it above the embedded game iframe. */
++    #boardFootnote { position:absolute; left:50%; top:calc(var(--u) * 988); transform:translateX(-50%); width:calc(var(--u) * 648); z-index:31; margin:0; color:var(--sand); font-size:max(12px, calc(var(--u) * 20)); line-height:1.3; text-align:center; text-shadow:0 calc(var(--u) * 2) calc(var(--u) * 4) #000c; }
++    #boardFootnote[hidden] { display:none; }
+     /* Transparent board tiles sit above the actual game iframe only to receive audience votes. */
+     .stage.has-game-frame #board { border:0; background:transparent; box-shadow:none; }
+     .stage.has-game-frame:not(.game-ready) #board { visibility:hidden; pointer-events:none; }
+@@ -346,6 +349,7 @@
+     <img class="fill" style="top:0;height:100%" src="assets/backgrounds/Tray%20Shadow.webp" alt="" draggable="false">
+     <img class="fill" style="top:calc(var(--u) * 284)" src="assets/backgrounds/tray.webp" alt="" draggable="false">
+     <div id="board" role="group" aria-label="Game board. During a poll, tap a cyan-outlined face-down tile to vote."></div>
++    <p id="boardFootnote" hidden></p>
+     <div id="veil" class="veil">
+       <p id="veilText" class="gt" style="--fs:30;--st:7">Connecting…</p>
+       <button id="retryConnection" type="button" class="wood" style="--fs:32" hidden>RETRY</button>
+diff --git a/staging/audience.js b/staging/audience.js
+index 78f61b0..972d139 100644
+--- a/staging/audience.js
++++ b/staging/audience.js
+@@ -15,7 +15,7 @@ const $ = (id) => document.getElementById(id);
+ const els = {
+   directory: $('directoryView'), watch: $('watchView'), rooms: $('roomCards'), directoryStatus: $('directoryStatus'),
+   modeChips: $('modeChips'), statusFilter: $('statusFilter'), refreshRooms: $('refreshRooms'), startDemo: $('startDemo'), gameFrame: $('gameFrame'), muteAudienceSound: $('muteAudienceSound'), endDemo: $('endDemo'),
+-  board: $('board'), veil: $('veil'), veilText: $('veilText'), retryConnection: $('retryConnection'), toast: $('toast'),
++  board: $('board'), boardFootnote: $('boardFootnote'), veil: $('veil'), veilText: $('veilText'), retryConnection: $('retryConnection'), toast: $('toast'),
+   side0: $('side0'), side1: $('side1'), p1Score: $('p1Score'), p2Score: $('p2Score'), p1Name: $('p1Name'), p2Name: $('p2Name'),
+   turnClock: $('turnClock'), goalText: $('goalText'), revealText: $('revealText'),
+   btnChat: $('btnChat'), btnPolls: $('btnPolls'), btnSettings: $('btnSettings'), chatBadge: $('chatBadge'), pollBadge: $('pollBadge'),
+@@ -253,6 +253,7 @@ function resetRoomView() {
+   tileNodes.forEach((node) => node.remove());
+   tileNodes.clear();
+   els.board.replaceChildren();
++  if (els.boardFootnote) { els.boardFootnote.hidden = true; text(els.boardFootnote, ''); }
+   if (els.gameFrame) { els.gameFrame.hidden = true; els.gameFrame.src = 'about:blank'; }
+   els.watch.classList.remove('has-game-frame', 'game-ready');
+   els.pollOptions.replaceChildren();
+@@ -603,10 +604,18 @@ function voteForTile(tileId) {
+   }
+ }
+ function updateBoardPollHint() {
++  // The footnote element is optional: older pages that do not have it must not crash the socket handler.
++  const footnote = els.boardFootnote;
++  if (!footnote) return;
+   if (currentPoll && pollIsOpen(currentPoll)) {
+-    text(els.boardFootnote, 'Audience poll open: tap any cyan-outlined face-down tile on the shared board to vote once.');
++    footnote.hidden = false;
++    text(footnote, 'Audience poll open: tap any cyan-outlined face-down tile on the shared board to vote once.');
+   } else if (currentPoll && currentPoll.closed) {
+-    text(els.boardFootnote, 'Poll closed. Gold outlines and percentages show the audience’s top board choice or tied tiles.');
++    footnote.hidden = false;
++    text(footnote, 'Poll closed. Gold outlines and percentages show the audience’s top board choice or tied tiles.');
++  } else {
++    footnote.hidden = true;
++    text(footnote, '');
+   }
+ }
+ // Turn clock and the MEMORIZE / SHUFFLING cue, drawn from the same deadlines the game uses.
+-- 
+2.47.3
+
