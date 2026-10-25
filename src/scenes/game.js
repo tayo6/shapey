@@ -19,6 +19,7 @@ import { BoardMotionMixin } from '../game/board-motion.js';
 import { AttemptFlowMixin } from '../game/attempts.js';
 import { FxMixin } from '../game/fx.js';
 import { AITurnMixin } from '../game/ai-turn.js';
+import { RevealPrivacyMixin } from '../game/reveal-privacy.js';
 
 export class GameScene extends Phaser.Scene {
   constructor() {
@@ -118,6 +119,7 @@ export class GameScene extends Phaser.Scene {
     this.createBottomButtons();
     this.createFx();
     this.createBoard();
+    this.initRevealPrivacy();
     if (this.spectator && urlParams.get('embed') === '1') {
       // Wait two animation frames so the first real board frame is painted before the parent
       // reveals Chat / Polls / Settings navigation.
@@ -160,6 +162,7 @@ export class GameScene extends Phaser.Scene {
   // Runs every frame: flips tiles whose reveal is over, redraws both clocks, and ends the turn on timeout.
   update() {
     if (!this.turnClock) return;
+    this.updateRevealPrivacy();
     if (this.memes) this.memes.tick();
     // GIFs are attached only after loading, so reposition an existing message every frame too.
     if (this.toast) {
@@ -746,4 +749,4 @@ export class GameScene extends Phaser.Scene {
 
 // The scene is composed from the mixins in src/game/: they are plain method sets
 // that keep `this` (this scene), so the class above stays the orchestrator only.
-Object.assign(GameScene.prototype, InventoryMixin, AudiencePollMixin, OnlineClientMixin, BoardMotionMixin, AttemptFlowMixin, FxMixin, AITurnMixin);
+Object.assign(GameScene.prototype, InventoryMixin, AudiencePollMixin, OnlineClientMixin, BoardMotionMixin, AttemptFlowMixin, FxMixin, AITurnMixin, RevealPrivacyMixin);
