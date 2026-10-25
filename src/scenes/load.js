@@ -7,7 +7,7 @@
 // font load never blocks the game for more than 2.5 seconds.
 
 import { GAME_WIDTH, GAME_HEIGHT, FONT, SHAPE_FILES, LOGO_W, LOGO_Y, LOAD_BAR_W, LOAD_BAR_Y, LOAD_TRACK, LOAD_MIN_FILL } from '../constants.js';
-import { urlParams, AUDIENCE_WATCH_CODE, START_MODE, API_OVERRIDDEN, MULTIPLAYER_API } from '../config.js';
+import { urlParams, AUDIENCE_WATCH_CODE, START_MODE, STAGING, API_OVERRIDDEN, MULTIPLAYER_API } from '../config.js';
 
 const fontReady = Promise.race([
   document.fonts.load(`20px ${FONT}`),
@@ -105,6 +105,8 @@ export class LoadScene extends Phaser.Scene {
       audienceUrl.searchParams.set('room', code);
       const hintedMode = urlParams.get('mode');
       if (hintedMode) audienceUrl.searchParams.set('mode', hintedMode);
+      // Preserve environment routing: a live room uses production, while staging rooms stay isolated.
+      if (STAGING) audienceUrl.searchParams.set('env', 'staging');
       // Preserve an explicitly validated localhost Worker override for local end-to-end tests.
       if (API_OVERRIDDEN) audienceUrl.searchParams.set('api', MULTIPLAYER_API);
       window.location.replace(audienceUrl.href);

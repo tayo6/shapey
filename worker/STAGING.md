@@ -1,35 +1,49 @@
-# Shapey multiplayer staging
+# Shapey multiplayer environments
 
-This test environment is separate from production.
+Shapey has separate production and staging Cloudflare Workers and Durable Object namespaces. The live game must use production; the staging test page must use staging.
 
+## Current environment map
+
+- **Live game:** https://tayo6.github.io/shapey/
 - **Staging game page:** https://tayo6.github.io/shapey/staging/
-- **Staging Worker health check:** https://shapey-multiplayer-staging.hellohuman100.workers.dev/health
+- **Production Worker:** `shapey-multiplayer`
+- **Production health check:** https://shapey-multiplayer.hellohuman100.workers.dev/health
 - **Staging Worker:** `shapey-multiplayer-staging`
-- **Staging Durable Object namespace:** `shapey-multiplayer-staging_Room` (SQLite-backed)
-- **Protocol:** version 1
-- **Production Worker:** `shapey-multiplayer` — unchanged
-- **Production Durable Object namespace:** `shapey-multiplayer_Room` — unchanged
+- **Staging health check:** https://shapey-multiplayer-staging.hellohuman100.workers.dev/health
+- **Audience page:** `staging/audience.html`; live watch links use production by default, and links launched from the staging game carry `env=staging`.
 
-The staging game page is an additional path on the site's static hosting and runs the same shared modules from `src/` as the home page; `staging/index.html` only sets `window.SHAPEY_ENV = { staging: true, memesStandardWindow: 3 }` (relaxes the local `?api=` override and fires meme commentary a little more often) and shows the red staging banner. The home page (`src/main.js`) now runs the same game and also connects to this Worker, so both pages share one backend. The Worker has its own namespace and does not share game-room storage with the old production Worker, which the game no longer uses.
+On 2026-10-25, the same tested Worker modules from `main` were uploaded to both existing Workers. Cloudflare reports each deployment at 100% traffic. The upload retained each Worker’s existing `ROOMS` binding and Durable Object namespace; no new migration was applied. The two namespaces remain separate and do not share room storage.
 
-## What to test
+The live game now defaults to the production Worker. The staging game sets `window.SHAPEY_ENV = { staging: true, memesStandardWindow: 3 }` and defaults to the staging Worker. The audience redirect preserves that environment so staging rooms do not accidentally use production. The test-only `?api=http://127.0.0.1:8787` override is for local browser tests.
 
-1. Open the staging game page on two different devices and play **Player 1 vs Player 2**.
-2. Confirm turns alternate, scores agree on both devices, and the other player's turn cannot be played.
-3. Open a fresh Tag room on four devices. Confirm team scores and turn order: P1 → P3 → P2 → P4.
-4. Confirm a face-down tile does not reveal its shape, then test reconnecting a player to the same seat.
-5. Leave the normal game home page untouched during these tests.
+## What to verify on real devices
 
-The review branch adds a public Live Games directory at `/api/rooms` (GET), read-only spectator WebSockets, room chat, and live audience polls (Player 1 vs Player 2 and Tag). The staging audience page is `staging/audience.html`; it displays the board without hidden tile identities, lists available PvP/Tag rooms, lets spectators chat and vote while a poll is open, and links directly to individual rooms. The Worker code for these features was deployed to the isolated staging Worker on 2026-10-15; the GitHub Pages audience page is deployed too. Automated browser and real-device end-to-end verification is still outstanding, and Score Strike and Cancel Counter remain unsupported online.
+Automated unit and browser tests pass against a local Worker, but this is not a replacement for testing on real devices:
 
-## Redeploy staging
+1. Open the staging game page on two separate devices and play **Player 1 vs Player 2**.
+2. Confirm turns alternate, both scores agree, and the non-active player cannot select tiles.
+3. Open a Tag room on four separate devices. Confirm teams (Players 1 + 2 versus Players 3 + 4), shared team scores, and turn order P1 → P3 → P2 → P4.
+4. Confirm hidden tiles stay hidden and test reconnecting a player to the same seat.
+5. Test audience chat and polls from separate audience devices.
 
-From the `worker/` directory, with Wrangler authenticated to the Shapey Cloudflare account:
+## Redeploying after future Worker changes
+
+Worker source changes in GitHub do not automatically deploy to Cloudflare. From the `worker/` directory:
+
+First test and deploy staging:
 
 ```sh
+npm ci
+npm test
+npx wrangler@4.151.0 deploy --config wrangler.staging.jsonc --dry-run
 npx wrangler@4.151.0 deploy --config wrangler.staging.jsonc
 ```
 
-Do not deploy `wrangler.jsonc` for this task. It names the live `shapey-multiplayer` Worker and its existing `ROOMS` namespace. The staging config uses a separate Worker name and has its own new `v1` SQLite migration.
+After the staging browser and real-device checks pass, deploy production with its own config:
 
-This Worker now also serves the live game, so treat changes to it as production changes: redeploy it only with the staging config above, and test on the staging game page first. Its name still says "staging" and can be migrated to a production-named Worker later.
+```sh
+npx wrangler@4.151.0 deploy --config wrangler.jsonc --dry-run
+npx wrangler@4.151.0 deploy --config wrangler.jsonc
+```
+
+Never use the production config as a shortcut for staging tests. Keep the existing `ROOMS` namespace binding for each environment; do not re-create or migrate the Durable Object class unless the change explicitly requires it.

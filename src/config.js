@@ -4,6 +4,7 @@
 // Worker API. Pure numbers live in constants.js. Browser-only - not for Node tests.
 
 import { normalizeBoardSize, BASE_BOARD_SIZE, BASE_TILE_SIZE, BASE_TILE_PITCH, ALONE_SCORE_FLOOR, HAZARD_CHANCE } from './constants.js';
+import { resolveMultiplayerApi } from './game/api-environment.js';
 
 export const RULES = window.ShapeyRules;
 if (!RULES) throw new Error('Load src/rules.js before src/main.js.');
@@ -15,16 +16,15 @@ if (urlParams.get('embed') === '1') document.body.classList.add('audience-embed'
 // loads, so it can relax host checks for testing. Production pages leave it unset.
 export const STAGING = Boolean(typeof window !== 'undefined' && window.SHAPEY_ENV && window.SHAPEY_ENV.staging);
 
-// Multiplayer service used by the live game: the Cloudflare Worker documented in worker/STAGING.md.
-// A page served from localhost (or any page in staging mode) may point at a local Worker with
-// ?api=http://localhost:8787 (or 127.0.0.1:8787) for testing; every other page ignores that parameter.
-const requestedLocalApi = urlParams.get('api');
-const isLocalApiUrl = /^http:\/\/(?:127\.0\.0\.1|localhost):8787$/i.test(requestedLocalApi || '');
-const localApiAllowed = STAGING || ['localhost', '127.0.0.1'].includes(window.location.hostname);
-export const API_OVERRIDDEN = isLocalApiUrl && localApiAllowed;
-export const MULTIPLAYER_API = API_OVERRIDDEN
-  ? requestedLocalApi
-  : 'https://shapey-multiplayer-staging.hellohuman100.workers.dev';
+// Live pages use the production Worker. Staging pages use the isolated staging Worker.
+// Only approved local development contexts may override this with ?api=http://127.0.0.1:8787.
+const apiResolution = resolveMultiplayerApi({
+  staging: STAGING,
+  requestedApi: urlParams.get('api'),
+  localApiAllowed: STAGING || ['localhost', '127.0.0.1'].includes(window.location.hostname),
+});
+export const API_OVERRIDDEN = apiResolution.overridden;
+export const MULTIPLAYER_API = apiResolution.api;
 
 // Live board metrics: smaller boards scale up their tiles so every board size fills the same tray
 // area as 7×7. GameScene.init applies the chosen board size through setBoardMetrics(); the exported

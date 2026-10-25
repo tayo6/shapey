@@ -50,6 +50,10 @@ From `worker/`, the local Worker suites are:
 
 The room-creation rate limit is shared within a local Worker instance. The CI workflow runs the clock-skew and audience browser suites in a separate job with fresh Worker state.
 
-## Deployment boundary
+## Deployment status and release checks
 
-These source changes and local tests do **not** deploy either Cloudflare Worker. `wrangler.jsonc` and `wrangler.staging.jsonc` refer to different environments. Before a future deployment, compare Wrangler's migration/binding plan with the live account and verify that the existing Durable Object namespace is reused. Never switch to the production config as a shortcut for staging tests. Real-device testing of Player 1 vs Player 2 on two devices and Tag on four devices is still required before release.
+On 2026-10-25, the tested Worker modules from `main` were uploaded to both existing Cloudflare Workers: `shapey-multiplayer-staging` and `shapey-multiplayer`. Both deployments are at 100% traffic and retain their existing `ROOMS` Durable Object namespace; no new Durable Object migration was applied. The upload used the same module source as the passing local Worker/browser CI checks.
+
+GitHub Pages deploys automatically from `main`, but Cloudflare Worker uploads are **not** automatically triggered by repository changes. For future Worker changes, run the local tests and Wrangler dry run, then deploy to staging first and verify it before promoting the same tested source to production. Do not point staging pages at the production Worker.
+
+Automated browser tests do not replace the remaining real-device check: Player 1 vs Player 2 should be tested on two separate devices and Tag on four separate devices before declaring multiplayer fully verified.

@@ -73,6 +73,12 @@ async function waitForScene(page, predicate, description, timeout = TIMEOUT, arg
   await page.waitForFunction(predicate, arg, { timeout }).catch(async (error) => {
     const info = await page.evaluate(() => ({
       url: location.href,
+      readyState: document.readyState,
+      phaserAvailable: typeof window.Phaser !== "undefined",
+      loadingBarReady: Boolean(window.ShapeyLoadingBar?.ready),
+      gameCreated: Boolean(window.game),
+      canvasCount: document.querySelectorAll("canvas").length,
+      bootOverlayPresent: Boolean(document.getElementById("boot")),
       activeScenes: window.game?.scene?.getScenes(true).map((scene) => scene.scene.key),
       lobbyMode: window.game?.scene?.getScene("MenuScene")?.onlineMode,
       lobbySeat: window.game?.scene?.getScene("MenuScene")?.onlinePlayerNumber,
@@ -81,7 +87,9 @@ async function waitForScene(page, predicate, description, timeout = TIMEOUT, arg
       activePlayer: window.game?.scene?.getScene("GameScene")?.onlineState?.activePlayerNumber
     })).catch(() => null);
     throw new Error("Timed out waiting for " + description + ". Browser state: " +
-      JSON.stringify(info) + ". Original error: " + error.message);
+      JSON.stringify(info) + ". Page errors: " + JSON.stringify(pageErrors.slice(-8)) +
+      ". Console errors: " + JSON.stringify(consoleErrors.slice(-8)) +
+      ". Original error: " + error.message);
   });
 }
 
@@ -145,8 +153,6 @@ async function run() {
   const consoleErrors = [];
   for (const page of [...players, audienceA, audienceB]) {
     page.on("pageerror", (error) => pageErrors.push(`${page.url()}: ${error.message}`));
-  }
-  for (const page of [audienceA, audienceB]) {
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(`${page.url()}: ${message.text()}`);
     });
@@ -160,8 +166,11 @@ async function run() {
     for (const page of players) {
       await page.goto(GAME_URL, { waitUntil: "domcontentloaded", timeout: TIMEOUT });
       await chooseTag(page);
+      // Keep already-booted menu pages asleep while the remaining browsers cold-start.
+      await parkLoop(page);
     }
 
+    await wakeLoop(players[0]);
     await clickWorldUntil(players[0], 360, 710, () =>
       Boolean(window.game?.scene?.getScene("MenuScene")?.currentRoomCode),
       "creating the Tag room");
@@ -170,9 +179,11 @@ async function run() {
       "created Tag room code");
     const roomCode = await players[0].evaluate(() =>
       window.game.scene.getScene("MenuScene").currentRoomCode);
+    await parkLoop(players[0]);
 
     for (let index = 1; index < 4; index++) {
       const page = players[index];
+      await wakeLoop(page);
       const joinDialog = await openJoinDialog(page);
       await joinDialog.locator('input[aria-label="Room code"]').fill(roomCode);
       await joinDialog.getByRole("button", { name: "JOIN", exact: true }).click();
@@ -180,7 +191,10 @@ async function run() {
         window.game?.scene?.getScene("MenuScene")?.onlinePlayerNumber === expectedPlayer ||
         window.game?.scene?.getScene("GameScene")?.onlinePlayerNumber === expectedPlayer,
         `Tag Player ${index + 1} seat assignment`, 15_000, index + 1);
+      // Park waiting-room devices; the fourth join is the one that starts the game.
+      if (index < 3) await parkLoop(page);
     }
+    await Promise.all(players.map((page) => wakeLoop(page)));
     await Promise.all(players.map((page, index) =>
       waitForScene(page, (expectedPlayer) => {
         const scene = window.game?.scene?.getScene("GameScene");
