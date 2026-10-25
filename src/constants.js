@@ -68,13 +68,16 @@ export const AI_LEVELS = {
           thinkMs: 900, tapMs: [450, 800], gapMs: 400, submitMs: 450, maxAttempts: 5,
           bestGroupChance: 1, goBig: true, followHunch: true, preferUnknown: true },
 };
-export const AI_SPARE_MS = 6000; // the AI stops reaching for a bigger match when this little of its turn is left
+// Must stay below AI_TURN_MS (the AI's fixed 5-second turn): with 6000 the spare-time
+// check in aiAttempt() was always true, so the AI never reached past a 3-tile match
+// and the Professional "goes for 5" behaviour (AI_LEVELS.pro.goBig) was dead code.
+export const AI_SPARE_MS = 2000; // the AI stops reaching for a bigger match when this little of its turn is left
 
 // texture key -> file in assets/shapes
 export const SHAPE_FILES = {
   mystery: 'Mystery.webp', // the hidden face (never a real shape)
   dummy:   'dummy.webp',  // blank wooden tile: neutral, non-scoring, and ignored by matching
-  hazard:  'hazard.webp', // skull tile: never matchable; flipping it costs points
+  hazard:  'hazard.webp', // bomb: not matchable; only Play Alone loses a point when it detonates
   cancel:  'cancel.webp',
   capsule: 'capsule.webp',
   circle:  'circle.webp',

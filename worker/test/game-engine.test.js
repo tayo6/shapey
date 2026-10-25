@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  INITIAL_REVIEW_MS, TURN_MS, TAG_TURN_MS, GRID_ROWS, GRID_COLS, BOARD_SIZES, SHAPE_KEYS, MATCH_SHAPE_KEYS,
+  INITIAL_REVIEW_MS, TURN_MS, TAG_TURN_MS, AI_TURN_MS, GRID_ROWS, GRID_COLS, BOARD_SIZES, SHAPE_KEYS, MATCH_SHAPE_KEYS,
   createGameState, gameViewForPlayer, gameViewForSpectator, applyGameAction, advanceGameByTime,
   nextGameDeadline, scoreForMatch, turnDurationForMode, audiencePollsRemaining
 } from "../src/game-engine.js";
@@ -39,6 +39,27 @@ test("creates correct room-sized game states, score targets, and Tag turn order"
   assert.throws(() => createGameState({ roomCode: "BAD234", mode: "tag", playerNumbers: [1, 2], now: NOW }), /Invalid player set/);
 });
 
+test("server-driven AI demo turns use a five-second budget", () => {
+  const state = createGameState({
+    roomCode: "DEMO34",
+    mode: "pvp",
+    playerNumbers: [1, 2],
+    now: NOW,
+    rng: steadyRandom,
+    turnDurationMs: AI_TURN_MS
+  });
+  assert.equal(state.turnDurationMs, 5_000);
+  assert.equal(state.turnEndsAt, NOW + INITIAL_REVIEW_MS + 5_000);
+
+  advanceGameByTime(state, NOW + INITIAL_REVIEW_MS, steadyRandom);
+  const result = applyGameAction(state, 1, { type: "submit" }, NOW + INITIAL_REVIEW_MS + 1, steadyRandom);
+  assert.equal(result.accepted, true, result.error);
+  assert.equal(result.state.activePlayerNumber, 2);
+  assert.equal(result.state.turnDurationMs, 5_000);
+  assert.equal(result.state.turnEndsAt, NOW + INITIAL_REVIEW_MS + 1 + 5_000,
+    "the next demo turn gets a fresh five-second deadline");
+});
+
 test("creates exact 5x5, 6x6 and 7x7 boards with playable matching groups", () => {
   for (const boardSize of BOARD_SIZES) {
     const state = createGameState({
@@ -55,6 +76,11 @@ test("creates exact 5x5, 6x6 and 7x7 boards with playable matching groups", () =
     assert.equal(state.nextTileNumber, total + 1);
     assert.equal(gameViewForPlayer(state, 1).boardSize, boardSize);
     assert.equal(gameViewForPlayer(state, 1).tiles.length, total);
+    // Views carry the server clock so clients can correct skewed device clocks.
+    const viewAt = gameViewForPlayer(state, 1, 12345);
+    assert.equal(viewAt.serverNow, 12345);
+    assert.equal(gameViewForSpectator(state, 12345).serverNow, 12345);
+    assert.ok(Number.isFinite(gameViewForPlayer(state, 1).serverNow));
     assert.ok(state.tiles.every((tile) =>
       Number.isInteger(tile.row) && tile.row >= 0 && tile.row < boardSize &&
       Number.isInteger(tile.col) && tile.col >= 0 && tile.col < boardSize));
@@ -179,28 +205,43 @@ test("a mismatched pick is shown briefly, then clears the selection and passes t
   assert.equal(state.scores[0], 0);
 });
 
-test("a first-pick hazard is harmless and does not end the turn", () => {
+test("a first-pick hazard destroys itself and ends the turn without a penalty", () => {
   let state = startPlaying();
   state.tiles.find((tile) => tile.id === "t1").shape = "hazard";
-  state = act(state, 1, { type: "pick", tileId: "t1" }).state;
-  assert.equal(state.pendingEffect.type, "hazard-hit");
-  advanceGameByTime(state, NOW + INITIAL_REVIEW_MS + 902, steadyRandom);
+  const result = act(state, 1, { type: "pick", tileId: "t1" });
+  assert.equal(result.accepted, true, result.error);
+  state = result.state;
   assert.equal(state.pendingEffect, null);
-  assert.equal(state.activePlayerNumber, 1);
-  assert.equal(state.scores[0], 0);
-  assert.equal(state.tiles.find((tile) => tile.id === "t1").faceUp, false);
+  assert.equal(state.activePlayerNumber, 2);
+  assert.deepEqual(state.scores, [0, 0]);
+  assert.equal(state.tiles.length, GRID_ROWS * GRID_COLS);
+  assert.equal(state.tiles.some((tile) => tile.id === "t1"), false);
 });
 
-test("a hazard after selected shapes deducts one point, refills the board and ends the turn", () => {
+test("a hazard after selected shapes destroys them, refills the board and ends the turn without a penalty", () => {
   let state = startPlaying();
   state.tiles.find((tile) => tile.id === "t1").shape = "circle";
   state.tiles.find((tile) => tile.id === "t2").shape = "hazard";
   state = act(state, 1, { type: "pick", tileId: "t1" }).state;
   const result = act(state, 1, { type: "pick", tileId: "t2" });
   assert.equal(result.accepted, true, result.error);
-  assert.deepEqual(result.state.scores, [-1, 0]);
+  assert.deepEqual(result.state.scores, [0, 0]);
   assert.equal(result.state.activePlayerNumber, 2);
   assert.equal(result.state.tiles.length, GRID_ROWS * GRID_COLS);
+  assert.equal(result.state.tiles.some((tile) => tile.id === "t1" || tile.id === "t2"), false);
+});
+
+test("a hazard destroys picked Dummy tiles, which never cost points of their own", () => {
+  let state = startPlaying();
+  state.tiles.find((tile) => tile.id === "t1").shape = "dummy";
+  state.tiles.find((tile) => tile.id === "t2").shape = "hazard";
+  state = act(state, 1, { type: "pick", tileId: "t1" }).state;
+  assert.deepEqual(state.dummyTileIds, ["t1"]);
+  const result = act(state, 1, { type: "pick", tileId: "t2" });
+  assert.equal(result.accepted, true, result.error);
+  assert.deepEqual(result.state.scores, [0, 0]);
+  assert.equal(result.state.activePlayerNumber, 2);
+  assert.deepEqual(result.state.dummyTileIds, []);
   assert.equal(result.state.tiles.some((tile) => tile.id === "t1" || tile.id === "t2"), false);
 });
 

@@ -7,6 +7,7 @@ export const GRID_COLS = DEFAULT_BOARD_SIZE;
 export const INITIAL_REVIEW_MS = 15_000;
 export const TURN_MS = 45_000;
 export const TAG_TURN_MS = 30_000;
+export const AI_TURN_MS = 5_000; // server-driven AI-vs-AI demo turn budget
 export const NEW_TILE_REVEAL_MS = 5_000;
 
 export function turnDurationForMode(mode) {
@@ -101,7 +102,7 @@ function newPlayerData() {
   };
 }
 
-export function createGameState({ roomCode, mode, playerNumbers, boardSize = DEFAULT_BOARD_SIZE, now = Date.now(), rng = Math.random }) {
+export function createGameState({ roomCode, mode, playerNumbers, boardSize = DEFAULT_BOARD_SIZE, now = Date.now(), rng = Math.random, turnDurationMs: requestedTurnDurationMs }) {
   const expected = mode === "pvp" ? 2 : mode === "tag" ? 4 : 0;
   const order = mode === "pvp" ? [1, 2] : mode === "tag" ? [1, 3, 2, 4] : null;
   if (!BOARD_SIZES.includes(boardSize)) throw new Error("Invalid board size.");
@@ -113,7 +114,8 @@ export function createGameState({ roomCode, mode, playerNumbers, boardSize = DEF
 
   const playerData = {};
   for (const playerNumber of order) playerData[String(playerNumber)] = newPlayerData();
-  const turnDurationMs = turnDurationForMode(mode);
+  const turnDurationMs = Number.isFinite(requestedTurnDurationMs) && requestedTurnDurationMs > 0
+    ? requestedTurnDurationMs : turnDurationForMode(mode);
 
   return {
     protocolVersion: 1,
@@ -360,10 +362,11 @@ function resolveSelectedMatch(state, now, rng) {
 }
 
 function applyHazardBlast(state, hazard, now, rng) {
-  const activePlayer = state.activePlayerNumber;
-  const hadRealShapes = state.selectedTileIds.length > 0;
+  // A Hazard always destroys itself and everything picked with it (Dummy tiles included),
+  // and picking one first still ends the turn. Online modes never subtract score for a
+  // Hazard and Dummy tiles never incur a penalty of their own (only local Play Alone pays
+  // the one-point Hazard penalty, see src/rules.js hazardPenalty).
   const removedIds = [...state.selectedTileIds, ...state.dummyTileIds, hazard.id];
-  if (hadRealShapes) scoreSide(state, sideForPlayer(state.mode, activePlayer), -1);
   clearSelection(state, true);
   cascade(state, removedIds, now, rng);
   endTurn(state, now, { matched: false });
@@ -377,9 +380,6 @@ function resolvePendingEffect(state, now, rng) {
   if (pending.type === "mismatch") {
     clearSelection(state, true);
     endTurn(state, now, { matched: false });
-  } else if (pending.type === "hazard-hit") {
-    const tile = tileById(state, pending.tileId);
-    if (tile) tile.faceUp = false;
   } else if (pending.type === "cancel-dummy") {
     clearSelection(state, true);
   }
@@ -484,11 +484,9 @@ function applyPick(state, playerNumber, tileId, now, rng) {
 
   tile.faceUp = true;
   if (tile.shape === "hazard") {
-    if (state.selectedTileIds.length === 0 && state.dummyTileIds.length === 0) {
-      startPending(state, "hazard-hit", tile.id, now, 900);
-    } else {
-      applyHazardBlast(state, tile, now, rng);
-    }
+    // Every Hazard detonates immediately - including a first pick. The blast destroys the
+    // hazard itself (plus anything already picked), refills the board and ends the turn.
+    applyHazardBlast(state, tile, now, rng);
     return;
   }
 
@@ -604,17 +602,19 @@ export function nextGameDeadline(state) {
 
 // Spectator snapshots use the same hidden-tile privacy rules as player snapshots,
  // but omit the active player's private inventory, Stars and streak data.
-export function gameViewForSpectator(state) {
+export function gameViewForSpectator(state, now = Date.now()) {
   if (!state || !Array.isArray(state.turnOrder) || !state.turnOrder.includes(state.activePlayerNumber)) {
     return null;
   }
-  const view = gameViewForPlayer(state, state.activePlayerNumber);
+  const view = gameViewForPlayer(state, state.activePlayerNumber, now);
   delete view.me;
   return view;
 }
 
 // Never send hidden tile shapes to any browser. The backend keeps the actual shape privately.
-export function gameViewForPlayer(state, playerNumber) {
+// Every deadline in the view is a server-wall-clock timestamp, so `serverNow` is included:
+// clients add (serverNow - their clock) once per snapshot and stay correct on skewed devices.
+export function gameViewForPlayer(state, playerNumber, now = Date.now()) {
   if (!state.turnOrder.includes(playerNumber)) throw new Error("Player is not part of this match.");
   const side = sideForPlayer(state.mode, playerNumber);
   const ownData = clone(state.playerData[String(playerNumber)]);
@@ -631,6 +631,7 @@ export function gameViewForPlayer(state, playerNumber) {
     boardSize: state.boardSize || DEFAULT_BOARD_SIZE,
     status: state.status,
     revision: state.revision,
+    serverNow: now,
     reviewEndsAt: state.reviewEndsAt,
     turnIndex: state.turnIndex,
     activePlayerNumber: state.activePlayerNumber,

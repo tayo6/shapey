@@ -26,11 +26,11 @@ test('first pick accepts any shape, later picks must match', () => {
   assert.equal(rules.selectionMatches(1, 'circle', 'square'), false);
 });
 
-test('hazards always blast in Play Alone and only hit harmlessly when picked first in multiplayer', () => {
-  assert.equal(rules.hazardAction(false, 0), 'blast');
-  assert.equal(rules.hazardAction(false, 2), 'blast');
-  assert.equal(rules.hazardAction(true, 0), 'hit');
-  assert.equal(rules.hazardAction(true, 1), 'blast');
+test('only Play Alone loses a point to a Hazard; Dummy tiles never cost points of their own', () => {
+  assert.equal(rules.hazardPenalty(false), 0);
+  assert.equal(rules.hazardPenalty(false, 1), 0);
+  assert.equal(rules.hazardPenalty(true), 1);
+  assert.equal(rules.hazardPenalty(true, 2), 2);
 });
 
 test('penalty arithmetic respects the configured score floor', () => {

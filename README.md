@@ -11,7 +11,7 @@ Pick a mode on the opening menu:
 - **Player 1 vs Player 2** - online-only; two players on **two separate devices**, 45 seconds per turn; first to **50 points** wins.
 - **Tag: 2 vs 2** - online-only; four players on **four separate devices**. Team 1 is Players 1 and 2; Team 2 is Players 3 and 4. Turns rotate Player 1 → Player 3 → Player 2 → Player 4, with 30 seconds per pick. First team to **100 points** wins.
 
-Hazard (skull) tiles have a 10% spawn chance in every mode. In Player vs AI, Player vs Player and Tag, a hazard picked first does no damage and flips back; picked after other shapes it costs 1 point and destroys itself and the shapes picked before it, with no reward. In Play alone a hazard never costs anything: it always destroys itself and any picked shapes.
+Hazard (skull) tiles have a 10% spawn chance in every mode. A Hazard always destroys itself, together with every tile picked before it (Dummy tiles included), and picking one first still ends the turn - the same player never gets a free retry. Only Play Alone loses a point (1) when a Hazard detonates; the versus modes never subtract score for a Hazard, and Dummy tiles never cost points of their own.
 
 Audience polls: Player vs AI, Player 1 vs Player 2 and Tag have a **Polls** button, with 3 free polls per player per game (never bought with Stars). Against the AI the votes are a labelled practice audience; online they are live spectator votes. Play Alone has no polls.
 
