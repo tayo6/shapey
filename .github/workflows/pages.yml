@@ -42,13 +42,31 @@ jobs:
       - name: Check the meme manifest lists every meme file
         run: node tools/build-memes-manifest.js --check
 
+      - name: Build minimal Pages artifact
+        run: |
+          rm -rf dist
+          mkdir -p dist
+          cp index.html dist/
+          cp -R assets src staging dist/
+          touch dist/.nojekyll
+          test -f dist/index.html
+          test -f dist/staging/index.html
+          test -f dist/staging/audience.html
+          test ! -e dist/worker
+          test ! -e dist/tests
+          test ! -e dist/tools
+          if find dist -type f \( -name '*.zip' -o -name '*.patch' \) -print -quit | grep -q .; then
+            echo "Unexpected patch/archive file found in the public Pages artifact."
+            exit 1
+          fi
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
       - name: Upload game files
         uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: dist
 
       - name: Deploy game
         id: deployment
