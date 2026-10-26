@@ -1,9 +1,0 @@
-=== Phase B3: all four CI syntax loops ===
---- pages.yml loop: src/*.js src/scenes/*.js src/game/*.js staging/audience/*.js
-checked 33 files
---- local-gameplay-tests.yml loop: + tools/build-memes-manifest.js
-checked 34 files
---- worker-tests.yml loop: src/*.js src/scenes/*.js staging/audience/*.js
-checked 25 files
---- staging-preview.yml loop: src/*.js src/scenes/*.js staging/audience/*.js worker/src/index.js
-checked 26 files

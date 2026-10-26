@@ -1,4 +1,0 @@
-PASS - D versus/shapes+hazard: turn handed to the AI :: {"scores":[0,0],"activePlayer":1,"turnEnding":false,"busy":false,"gameOver":false,"tileCount":49,"probedSurvivors":0,"selection":0,"dummySelection":0}
-PASS - no uncaught page errors in any scenario :: []
-
-14/14 checks passed
