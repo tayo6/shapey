@@ -1,9 +1,16 @@
-export const ALLOWED_ORIGINS = Object.freeze([
+export const PRODUCTION_ALLOWED_ORIGINS = Object.freeze([
   "https://tayo6.github.io",
+]);
+
+export const STAGING_ALLOWED_ORIGINS = Object.freeze([
+  ...PRODUCTION_ALLOWED_ORIGINS,
   "https://shapey-audience-preview.hellohuman100.workers.dev",
   "http://localhost:8080",
   "http://127.0.0.1:8080",
 ]);
+
+// Kept as the production list for callers that need a conservative default.
+export const ALLOWED_ORIGINS = PRODUCTION_ALLOWED_ORIGINS;
 
 export const ROOM_IDLE_TTL_MS = 30 * 60 * 1000;
 export const ROOM_MAX_LIFETIME_MS = 6 * 60 * 60 * 1000;
@@ -18,8 +25,12 @@ export function isBoardSize(value) {
   return Number.isInteger(value) && SUPPORTED_BOARD_SIZES.includes(value);
 }
 
-export function isAllowedOrigin(origin) {
-  return typeof origin === "string" && ALLOWED_ORIGINS.includes(origin);
+export function allowedOriginsForEnvironment(environment = "production") {
+  return environment === "staging" ? STAGING_ALLOWED_ORIGINS : PRODUCTION_ALLOWED_ORIGINS;
+}
+
+export function isAllowedOrigin(origin, environment = "production") {
+  return typeof origin === "string" && allowedOriginsForEnvironment(environment).includes(origin);
 }
 
 export function modeDetails(mode) {
