@@ -26,6 +26,7 @@ on:
 jobs:
   worker-unit-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: worker
@@ -40,7 +41,7 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: Install Chromium for browser smoke tests
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Validate Worker bundle and Wrangler config without deploying
         run: |
@@ -127,6 +128,7 @@ jobs:
   # five rooms between them. A second job gets its own ephemeral Worker state and bucket.
   worker-clock-and-audience-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: worker
@@ -144,7 +146,7 @@ jobs:
         run: npx --yes wrangler@4.151.0 --version
 
       - name: Install Chromium for browser smoke tests
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Run local Worker clock-skew and audience tests (no deployment)
         run: |
