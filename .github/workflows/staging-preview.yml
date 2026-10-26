@@ -17,6 +17,9 @@ on:
       - assets/**
       - worker/src/**
       - tests/rules.test.js
+      - tests/test-overrides.test.mjs
+      - tools/build-pages-artifact.sh
+      - .github/workflows/pages.yml
       - .github/workflows/staging-preview.yml
 
 permissions:
@@ -35,8 +38,8 @@ jobs:
         with:
           node-version: 22
 
-      - name: Run game-rule tests
-        run: node --test tests/rules.test.js
+      - name: Run game-rule and test-override tests
+        run: node --test tests/rules.test.js tests/test-overrides.test.mjs
 
       - name: Check JavaScript syntax
         run: |
@@ -44,6 +47,9 @@ jobs:
           for f in src/*.js src/scenes/*.js staging/audience/*.js worker/src/index.js; do
             node --check "$f"
           done
+
+      - name: Build and validate the Pages artifact
+        run: bash tools/build-pages-artifact.sh
 
       - name: Smoke-test the candidate staging page and assets locally
         run: |

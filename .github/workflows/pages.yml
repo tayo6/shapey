@@ -42,13 +42,16 @@ jobs:
       - name: Check the meme manifest lists every meme file
         run: node tools/build-memes-manifest.js --check
 
+      - name: Build minimal Pages artifact
+        run: bash tools/build-pages-artifact.sh
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
       - name: Upload game files
         uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: dist
 
       - name: Deploy game
         id: deployment

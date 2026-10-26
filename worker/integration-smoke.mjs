@@ -143,6 +143,20 @@ async function run() {
   assert.equal(deniedDirectory.status, 403, "Public directory CORS must reject unapproved origins.");
 
   const [pvpRoom, tagRoom, pollPvpRoom] = await Promise.all([createRoom("pvp"), createRoom("tag"), createRoom("pvp")]);
+
+  const roomInfo = await fetch(BASE_URL + "/api/rooms/" + pvpRoom.roomCode, {
+    headers: { Origin: ALLOWED_ORIGIN }
+  });
+  assert.equal(roomInfo.status, 200, "A listed room should allow room-info lookups from the game origin.");
+  const deniedRoomInfo = await fetch(BASE_URL + "/api/rooms/" + pvpRoom.roomCode, {
+    headers: { Origin: "https://not-allowed.example" }
+  });
+  assert.equal(deniedRoomInfo.status, 403, "Room-info lookups must reject unapproved origins.");
+  const missingRoomInfo = await fetch(BASE_URL + "/api/rooms/ZZZZZZ", {
+    headers: { Origin: ALLOWED_ORIGIN }
+  });
+  assert.equal(missingRoomInfo.status, 404, "Unknown room codes must return a not-found response.");
+
   const directoryResponse = await fetch(BASE_URL + "/api/rooms", {
     headers: { Origin: ALLOWED_ORIGIN }
   });

@@ -73,9 +73,16 @@ async function run() {
     await joinDialog.waitFor({ state: "visible", timeout: 5_000 });
     await joinDialog.locator('input[aria-label="Room code"]').fill(roomCode);
     await joinDialog.getByRole("button", { name: "JOIN", exact: true }).click();
-    await waitForScene(page2, () =>
-      window.game?.scene?.getScene("MenuScene")?.onlineStatus?.text?.includes("Room connected as Player 2"),
-      "second browser joined as Player 2", 15_000);
+    await waitForScene(page2, () => {
+      // When Player 2 fills the room, both clients can transition to GameScene
+      // before the lobby-status text is painted. Accept the authoritative game state
+      // as proof of the seat assignment instead of waiting on the now-inactive menu.
+      const menu = window.game?.scene?.getScene("MenuScene");
+      const game = window.game?.scene?.getScene("GameScene");
+      return menu?.onlineStatus?.text?.includes("Room connected as Player 2") ||
+        (game?.online === true && game.onlinePlayerNumber === 2 &&
+          ["study", "playing"].includes(game.onlineState?.status));
+    }, "second browser joined as Player 2", 15_000);
 
     await Promise.all([
       waitForScene(page1, () => window.game?.scene?.getScene("GameScene")?.online === true &&

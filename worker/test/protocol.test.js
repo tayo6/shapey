@@ -1,17 +1,30 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  ALLOWED_ORIGINS, ROOM_IDLE_TTL_MS, ROOM_MAX_LIFETIME_MS,
+  ALLOWED_ORIGINS, PRODUCTION_ALLOWED_ORIGINS, STAGING_ALLOWED_ORIGINS,
+  ROOM_IDLE_TTL_MS, ROOM_MAX_LIFETIME_MS,
   MESSAGE_RATE_LIMIT, MESSAGE_RATE_WINDOW_MS, MAX_MESSAGE_BYTES,
   isAllowedOrigin, isRoomCode, isBoardSize, modeDetails, isRoomExpired, roomExpiryDeadline,
   messageByteLength, nextMessageRateState,
   ROOM_CREATE_RATE_WINDOW_MS, ROOM_CREATE_RATE_LIMIT, nextRoomCreationWindow,
 } from "../src/protocol.js";
 
-test("only the production site and documented local origins are allowed", () => {
-  for (const origin of ALLOWED_ORIGINS) assert.equal(isAllowedOrigin(origin), true);
+test("production and staging have distinct origin allow-lists", () => {
+  assert.deepEqual([...ALLOWED_ORIGINS], ["https://tayo6.github.io"]);
+  assert.deepEqual([...PRODUCTION_ALLOWED_ORIGINS], ["https://tayo6.github.io"]);
+  assert.ok(STAGING_ALLOWED_ORIGINS.includes("https://tayo6.github.io"));
+  assert.ok(STAGING_ALLOWED_ORIGINS.includes("https://shapey-audience-preview.hellohuman100.workers.dev"));
+  assert.ok(STAGING_ALLOWED_ORIGINS.includes("http://localhost:8080"));
+  assert.ok(STAGING_ALLOWED_ORIGINS.includes("http://127.0.0.1:8080"));
+
+  assert.equal(isAllowedOrigin("https://tayo6.github.io"), true);
+  assert.equal(isAllowedOrigin("https://shapey-audience-preview.hellohuman100.workers.dev"), false);
+  assert.equal(isAllowedOrigin("http://localhost:8080"), false);
+  assert.equal(isAllowedOrigin("https://shapey-audience-preview.hellohuman100.workers.dev", "staging"), true);
+  assert.equal(isAllowedOrigin("http://localhost:8080", "staging"), true);
   for (const origin of ["", null, "https://evil.example", "https://tayo6.github.io.evil.example"]) {
     assert.equal(isAllowedOrigin(origin), false);
+    assert.equal(isAllowedOrigin(origin, "staging"), false);
   }
 });
 

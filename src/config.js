@@ -5,6 +5,7 @@
 
 import { normalizeBoardSize, BASE_BOARD_SIZE, BASE_TILE_SIZE, BASE_TILE_PITCH, ALONE_SCORE_FLOOR, HAZARD_CHANCE } from './constants.js';
 import { resolveMultiplayerApi } from './game/api-environment.js';
+import { testOverridesAllowed, readNumericOverride } from './game/test-overrides.js';
 
 export const RULES = window.ShapeyRules;
 if (!RULES) throw new Error('Load src/rules.js before src/main.js.');
@@ -43,20 +44,26 @@ export function setBoardMetrics(boardSize) {
 }
 
 // ---- Game rules -----------------------------------------------------------
-// For quick testing you can shorten the timers in the URL, e.g. index.html?review=3000&turn=10000
-export const REVIEW_MS = Number(urlParams.get('review')) || 15000;      // the opening board stays face-up this long (study phase)
-// Tiles spawned after a match are shown only briefly, flip face-down, then shuffle places with each other.
-export const SPAWN_REVEAL_MS = Number(urlParams.get('reveal')) || 5000;  // new tiles face-up
-export const SHUFFLE_STEP_MS = Number(urlParams.get('swap')) || 2000;    // each swap takes this long; swaps run one after another
+// Timing overrides are deliberately restricted to staging and localhost. Normal play on
+// the live site cannot shorten reveals or turn clocks by editing the page URL.
+export const TEST_OVERRIDES_ENABLED = testOverridesAllowed({
+  staging: STAGING,
+  hostname: window.location.hostname,
+});
+const numericTestOverride = (key, fallback, min, max) =>
+  readNumericOverride(urlParams, key, fallback, TEST_OVERRIDES_ENABLED, { min, max });
+
+export const REVIEW_MS = numericTestOverride('review', 15000, 1000, 60000);
+// Tiles spawned after a match are shown briefly, then flip face-down and shuffle places.
+export const SPAWN_REVEAL_MS = numericTestOverride('reveal', 5000, 500, 30000);
+export const SHUFFLE_STEP_MS = numericTestOverride('swap', 2000, 100, 10000);
 
 // ---- Turn clock and inventory limits ----------------------------------------
-// Opening board reveal: 15 seconds. Newly spawned tiles: 5 seconds.
-// Pick clocks start after the opening reveal. Player vs AI: human gets 45s Easy / 30s Hard, AI gets 5s.
-// Player 1 vs Player 2: 45s per player. Tag: 30s per player. Play Alone has no pick clock.
-// Test overrides: ?turn=10000 (turn length) and ?invwindow=20000 (inventory window), in milliseconds.
-export const TURN_MS = Number(urlParams.get('turn')) || 45000;
-
-export const INVENTORY_WINDOW_MS = Number(urlParams.get('invwindow')) || 5 * 60 * 1000;
+// Opening board reveal: 15 seconds. New tiles: 5 seconds. AI turns: 5 seconds.
+// Player vs AI: human gets 45s Easy / 30s Professional. PvP: 45s. Tag: 30s.
+// Play Alone has no pick clock. Overrides are only enabled on staging and localhost.
+export const TURN_MS = numericTestOverride('turn', 45000, 1000, 60000);
+export const INVENTORY_WINDOW_MS = numericTestOverride('invwindow', 5 * 60 * 1000, 1000, 60 * 60 * 1000);
 export const formatInventoryWindow = () => INVENTORY_WINDOW_MS % 60000 === 0
   ? INVENTORY_WINDOW_MS / 60000 + ' min' : INVENTORY_WINDOW_MS / 1000 + ' s';
 
@@ -80,4 +87,6 @@ export const MODES = {
 
 export const AUDIENCE_WATCH_CODE = /^[A-Z0-9]{6}$/.test(urlParams.get('watch') || '') ? urlParams.get('watch').toUpperCase() : '';
 export const START_MODE = ['alone', 'ai'].includes(urlParams.get('mode')) ? urlParams.get('mode') : null; // only local modes may skip the menu; online modes must use their room lobby
-export const HAZARD_OVERRIDE = RULES.parseProbabilityOverride(urlParams.get('hazard'), urlParams.has('hazard'));
+export const HAZARD_OVERRIDE = TEST_OVERRIDES_ENABLED
+  ? RULES.parseProbabilityOverride(urlParams.get('hazard'), urlParams.has('hazard'))
+  : null;

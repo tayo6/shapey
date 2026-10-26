@@ -20,6 +20,7 @@ import { RoomPollsMixin } from "./room-polls.js";
 import { RoomDemoMixin } from "./room-demo.js";
 import { RoomSeatsMixin } from "./room-seats.js";
 import { RoomMessagesMixin } from "./room-messages.js";
+import { clearRoomStorage } from "./room-storage.js";
 
 export class Room extends DurableObject {
   constructor(ctx, env) {
@@ -171,11 +172,7 @@ export class Room extends DurableObject {
       for (const socket of this.ctx.getWebSockets()) {
         try { socket.close(4000, "Room expired"); } catch {}
       }
-      await this.removeRoomFromDirectory(room.roomCode);
-      await this.ctx.storage.delete("room");
-      await this.ctx.storage.delete("game");
-      await this.ctx.storage.delete("seatRegistry");
-      await this.ctx.storage.deleteAlarm();
+      await this.clearRoomData(room.roomCode);
       return json({ error: "Room expired. Please create a new room." }, 410);
     }
 
@@ -252,6 +249,13 @@ export class Room extends DurableObject {
     } catch (error) {
       console.error("Could not remove expired Shapey room from live directory:", error);
     }
+  }
+
+  // Expiry, demo end and explicit teardown must remove all room-specific data,
+  // including audience polls and chat history, and cancel the scheduled alarm.
+  async clearRoomData(roomCode) {
+    await this.removeRoomFromDirectory(roomCode);
+    await clearRoomStorage(this.ctx.storage);
   }
 
   async publishRoomSummary(force = false) {
@@ -372,11 +376,7 @@ export class Room extends DurableObject {
     for (const socket of this.ctx.getWebSockets()) {
       try { socket.close(4000, reason); } catch {}
     }
-    await this.removeRoomFromDirectory(roomCode);
-    for (const key of ["room", "game", "seatRegistry", "audiencePoll", "chatHistory"]) {
-      await this.ctx.storage.delete(key);
-    }
-    await this.ctx.storage.deleteAlarm();
+    await this.clearRoomData(roomCode);
   }
 
 
@@ -392,11 +392,7 @@ export class Room extends DurableObject {
       for (const socket of this.ctx.getWebSockets()) {
         try { socket.close(4000, "Room expired"); } catch {}
       }
-      await this.removeRoomFromDirectory(room.roomCode);
-      await this.ctx.storage.delete("room");
-      await this.ctx.storage.delete("game");
-      await this.ctx.storage.delete("seatRegistry");
-      await this.ctx.storage.deleteAlarm();
+      await this.clearRoomData(room.roomCode);
       return;
     }
 

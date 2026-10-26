@@ -45,14 +45,14 @@ export function audiencePollSnapshot(poll, now = Date.now()) {
 }
 
 // CORS and WebSocket origin policy share the tested protocol helper.
-export function corsHeaders(request) {
+export function corsHeaders(request, environment = "production") {
   const origin = request.headers.get("Origin") || "";
   const headers = {
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Vary": "Origin"
   };
-  if (isAllowedOrigin(origin)) headers["Access-Control-Allow-Origin"] = origin;
+  if (isAllowedOrigin(origin, environment)) headers["Access-Control-Allow-Origin"] = origin;
   return headers;
 }
 

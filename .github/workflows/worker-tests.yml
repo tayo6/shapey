@@ -26,6 +26,7 @@ on:
 jobs:
   worker-unit-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: worker
@@ -40,11 +41,12 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: Install Chromium for browser smoke tests
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Validate Worker bundle and Wrangler config without deploying
         run: |
-          if [ "${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}" = "staging/audience-room-ui-0003" ]; then CONFIG=wrangler.staging.jsonc; else CONFIG=wrangler.jsonc; fi
+          # Local browser tests originate from localhost, so use the staging allow-list.
+          CONFIG=wrangler.staging.jsonc
           npx --yes wrangler@4.151.0 deploy --config "$CONFIG" --dry-run --outdir /tmp/shapey-worker-dry-run
       - name: Run protocol and game-engine tests
         run: npm test
@@ -53,7 +55,8 @@ jobs:
       # Wrangler process on the same port left a child process behind on GitHub's Linux runner.
       - name: Run local Worker integration and browser tests (no deployment)
         run: |
-          if [ "${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}" = "staging/audience-room-ui-0003" ]; then CONFIG=wrangler.staging.jsonc; else CONFIG=wrangler.jsonc; fi
+          # Local browser tests originate from localhost, so use the staging allow-list.
+          CONFIG=wrangler.staging.jsonc
           setsid npx --yes wrangler@4.151.0 dev --config "$CONFIG" --local --ip 127.0.0.1 --port 8787 > /tmp/shapey-local-worker.log 2>&1 &
           WORKER_PID=$!
           setsid python3 -m http.server 8080 --bind 127.0.0.1 --directory .. > /tmp/shapey-local-pages.log 2>&1 &
@@ -125,6 +128,7 @@ jobs:
   # five rooms between them. A second job gets its own ephemeral Worker state and bucket.
   worker-clock-and-audience-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: worker
@@ -138,12 +142,16 @@ jobs:
       - name: Install integration test dependency
         run: npm install --no-audit --no-fund
 
+      - name: Warm pinned Wrangler CLI
+        run: npx --yes wrangler@4.151.0 --version
+
       - name: Install Chromium for browser smoke tests
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Run local Worker clock-skew and audience tests (no deployment)
         run: |
-          if [ "${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}" = "staging/audience-room-ui-0003" ]; then CONFIG=wrangler.staging.jsonc; else CONFIG=wrangler.jsonc; fi
+          # Local browser tests originate from localhost, so use the staging allow-list.
+          CONFIG=wrangler.staging.jsonc
           setsid npx --yes wrangler@4.151.0 dev --config "$CONFIG" --local --ip 127.0.0.1 --port 8787 > /tmp/shapey-local-worker.log 2>&1 &
           WORKER_PID=$!
           setsid python3 -m http.server 8080 --bind 127.0.0.1 --directory .. > /tmp/shapey-local-pages.log 2>&1 &

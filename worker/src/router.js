@@ -12,7 +12,7 @@ export { Room };
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const cors = corsHeaders(request);
+    const cors = corsHeaders(request, env.ENVIRONMENT);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
 
     if (url.pathname === "/health" && request.method === "GET") {
@@ -27,7 +27,7 @@ export default {
     }
 
     if (url.pathname === "/api/rooms" && request.method === "GET") {
-      if (!isAllowedOrigin(request.headers.get("Origin") || "")) {
+      if (!isAllowedOrigin(request.headers.get("Origin") || "", env.ENVIRONMENT)) {
         return json({ error: "Origin not allowed." }, 403, cors);
       }
       const directory = env.ROOMS.get(env.ROOMS.idFromName(LIVE_DIRECTORY_OBJECT_NAME));
@@ -44,7 +44,7 @@ export default {
     if (url.pathname === "/api/rooms" && request.method === "POST") {
       // Origin is a browser abuse barrier, not authentication. The per-IP limit below also
       // constrains direct API clients that forge Origin headers.
-      if (!isAllowedOrigin(request.headers.get("Origin") || "")) {
+      if (!isAllowedOrigin(request.headers.get("Origin") || "", env.ENVIRONMENT)) {
         return json({ error: "Origin not allowed." }, 403, cors);
       }
       const clientAddress = request.headers.get("CF-Connecting-IP") || "unknown";
@@ -102,6 +102,23 @@ export default {
 
     const infoMatch = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]{6})$/);
     if (infoMatch && request.method === "GET") {
+      const origin = request.headers.get("Origin") || "";
+      if (!isAllowedOrigin(origin, env.ENVIRONMENT)) {
+        return json({ error: "Origin not allowed." }, 403, cors);
+      }
+
+      // Check the directory before touching a room Durable Object. This avoids waking
+      // storage for arbitrary room-code scans and returns quickly for unknown rooms.
+      const directory = env.ROOMS.get(env.ROOMS.idFromName(LIVE_DIRECTORY_OBJECT_NAME));
+      const directoryResponse = await directory.fetch("https://directory.internal/directory/list");
+      if (!directoryResponse.ok) {
+        return json({ error: "Room directory is temporarily unavailable." }, 503, cors);
+      }
+      const directoryData = await directoryResponse.json();
+      const exists = Array.isArray(directoryData.rooms) &&
+        directoryData.rooms.some((room) => room && room.roomCode === infoMatch[1]);
+      if (!exists) return json({ error: "Room not found." }, 404, cors);
+
       const stub = env.ROOMS.get(env.ROOMS.idFromName(infoMatch[1]));
       const info = await stub.fetch("https://room.internal/info");
       const data = await info.json();
@@ -111,7 +128,7 @@ export default {
     const match = url.pathname.match(/^\/ws\/([A-Z0-9]{6})$/);
     if (match && request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
       // CORS does not protect WebSocket handshakes; validate Origin explicitly.
-      if (!isAllowedOrigin(request.headers.get("Origin") || "")) {
+      if (!isAllowedOrigin(request.headers.get("Origin") || "", env.ENVIRONMENT)) {
         return json({ error: "Origin not allowed." }, 403, cors);
       }
       return env.ROOMS.get(env.ROOMS.idFromName(match[1])).fetch(request);
