@@ -7,6 +7,9 @@
   "vars": {
     "ENVIRONMENT": "staging"
   },
+  "vars": {
+    "ENVIRONMENT": "staging"
+  },
   "durable_objects": {
     "bindings": [
       {
