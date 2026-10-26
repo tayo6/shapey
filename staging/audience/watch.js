@@ -12,12 +12,107 @@ import { renderPoll } from './polls.js';
 import { applyModeUI, closeChatPage, closePanels, forwardGameFrameMessage, playAudienceTone, renderPlayers, sendSocketMessage, setDirectoryStatus, setWatchStatus, showToast, syncGameFrameMute, updateVeil } from './ui.js';
 import { enterWatchView, showDirectory } from './directory.js';
 
+function clearSocketTimers() {
+  if (state.keepaliveTimer !== null) {
+    window.clearInterval(state.keepaliveTimer);
+    state.keepaliveTimer = null;
+  }
+  if (state.reconnectTimer !== null) {
+    window.clearTimeout(state.reconnectTimer);
+    state.reconnectTimer = null;
+  }
+}
+
 export function closeSocket() {
+  clearSocketTimers();
   if (state.roomSocket) {
     const old = state.roomSocket;
     state.roomSocket = null;
     try { old.close(1000, 'Audience left room'); } catch (_) {}
   }
+}
+
+const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 12000, 15000];
+
+function scheduleRoomReconnect(code, token) {
+  if (state.explicitLeave || token !== state.watchToken || state.reconnectTimer !== null) return;
+  if (state.reconnectAttempts >= RECONNECT_DELAYS_MS.length) {
+    state.connectionLost = true;
+    setWatchStatus('Connection is still unavailable. Tap RETRY to try again.', true);
+    return;
+  }
+  const delay = RECONNECT_DELAYS_MS[state.reconnectAttempts++];
+  state.connectionLost = true;
+  setWatchStatus('Connection interrupted. Reconnecting…', true);
+  state.reconnectTimer = window.setTimeout(() => {
+    state.reconnectTimer = null;
+    if (state.explicitLeave || token !== state.watchToken) return;
+    connectRoomSocket(code, token);
+  }, delay);
+}
+
+function connectRoomSocket(code, token) {
+  if (state.explicitLeave || token !== state.watchToken) return;
+  const wsBase = MULTIPLAYER_API.replace(/^http/, 'ws');
+  let socket;
+  try {
+    socket = new WebSocket(wsBase + '/ws/' + code + '?mode=' + encodeURIComponent(state.activeMode) + '&role=spectator');
+  } catch (_) {
+    scheduleRoomReconnect(code, token);
+    return;
+  }
+  state.roomSocket = socket;
+
+  socket.addEventListener('open', () => {
+    if (state.roomSocket !== socket || token !== state.watchToken) return;
+    try { socket.send(JSON.stringify({ type: 'spectate' })); } catch (_) {}
+    if (state.demoControlToken && state.demoControlRoomCode === code) {
+      try { socket.send(JSON.stringify({ type: 'demo_control', token: state.demoControlToken })); } catch (_) {}
+    }
+    if (state.keepaliveTimer !== null) window.clearInterval(state.keepaliveTimer);
+    // A quiet 30-second audience poll can outlast a mobile connection's idle timeout.
+    // The Worker accepts ping messages and replies with pong without changing game state.
+    state.keepaliveTimer = window.setInterval(() => {
+      if (state.roomSocket !== socket || socket.readyState !== WebSocket.OPEN) return;
+      try { socket.send(JSON.stringify({ type: 'ping' })); }
+      catch (_) { try { socket.close(); } catch (_) {} }
+    }, 12000);
+  });
+
+  socket.addEventListener('message', (event) => {
+    if (state.roomSocket !== socket) return;
+    const receivedAt = Date.now();
+    let message;
+    try { message = JSON.parse(event.data); } catch (_) { return; }
+    processMessage(message, receivedAt);
+  });
+
+  socket.addEventListener('error', () => {
+    if (state.roomSocket !== socket) return;
+    state.connectionLost = true;
+    setWatchStatus('Connection interrupted. Reconnecting…', true);
+  });
+
+  socket.addEventListener('close', (event) => {
+    if (state.roomSocket !== socket) return;
+    state.roomSocket = null;
+    if (state.keepaliveTimer !== null) {
+      window.clearInterval(state.keepaliveTimer);
+      state.keepaliveTimer = null;
+    }
+    if (state.explicitLeave || token !== state.watchToken) {
+      updateVeil();
+      return;
+    }
+    state.connectionLost = true;
+    const reason = String(event.reason || '');
+    // The Worker uses 4000 for a room that has ended or expired; do not retry a closed room forever.
+    if (event.code === 4000 || /room expired|AI vs AI demo (?:ended|finished)/i.test(reason)) {
+      setWatchStatus(reason || 'This room has ended. Return to Live Games to watch another room.', true);
+      return;
+    }
+    scheduleRoomReconnect(code, token);
+  });
 }
 
 export function resetRoomView() {
@@ -93,6 +188,11 @@ export function processMessage(message, receivedAt = null) {
   }
   if (message.type === 'demo_ended') { showDirectory(true); setDirectoryStatus('The AI-vs-AI demo has ended. Start another demo to keep testing.', false); return; }
   if (message.type === 'spectator_welcome') {
+    state.reconnectAttempts = 0;
+    if (state.reconnectTimer !== null) {
+      window.clearTimeout(state.reconnectTimer);
+      state.reconnectTimer = null;
+    }
     state.roomStatus = message.status || 'waiting';
     state.roomPlayers = message.players || [];
     state.roomSpectators = Number(message.spectatorCount) || 0;
@@ -159,6 +259,7 @@ export async function startWatching(roomCode, hintedMode, pushUrl) {
   state.explicitLeave = false;
   const token = ++state.watchToken;
   closeSocket();
+  state.reconnectAttempts = 0;
   state.activeRoomCode = code;
   state.activeMode = hintedMode || '';
   if (state.chatPageOpen) closeChatPage(false);
@@ -188,8 +289,6 @@ export async function startWatching(roomCode, hintedMode, pushUrl) {
     state.roomStatus = details.status || 'waiting';
     state.roomPlayers = details.players || [];
     renderPlayers();
-    const wsBase = MULTIPLAYER_API.replace(/^http/, 'ws');
-    const socket = new WebSocket(wsBase + '/ws/' + code + '?mode=' + encodeURIComponent(state.activeMode) + '&role=spectator');
     els.gameFrame.hidden = false;
     els.watch.classList.add('has-game-frame');
     els.watch.classList.remove('game-ready');
@@ -206,31 +305,7 @@ export async function startWatching(roomCode, hintedMode, pushUrl) {
     };
     els.gameFrame.src = frameUrl.href;
     syncGameFrameMute();
-    state.roomSocket = socket;
-    socket.addEventListener('open', () => {
-      if (state.roomSocket !== socket) return;
-      sendSocketMessage({ type: 'spectate' });
-      if (state.demoControlToken && state.demoControlRoomCode === code) socket.send(JSON.stringify({ type: 'demo_control', token: state.demoControlToken }));
-    });
-    socket.addEventListener('message', (event) => {
-      if (state.roomSocket !== socket) return;
-      // Arrival time first: JSON.parse time would inflate the measured downstream latency.
-      const receivedAt = Date.now();
-      let message;
-      try { message = JSON.parse(event.data); } catch (_) { return; }
-      processMessage(message, receivedAt);
-    });
-    socket.addEventListener('error', () => {
-      if (state.roomSocket === socket) setWatchStatus('Could not connect. The room may have expired or the audience limit may have been reached.', true);
-    });
-    socket.addEventListener('close', () => {
-      if (state.roomSocket !== socket) return;
-      state.roomSocket = null;
-      state.connectionLost = true;
-      if (!state.explicitLeave) setWatchStatus('Disconnected from the room. Tap RETRY to keep watching.', true);
-      else updateVeil();
-      if (state.currentPoll && !state.currentPoll.closed) renderPoll(state.currentPoll);
-    });
+    connectRoomSocket(code, token);
   } catch (error) {
     if (token !== state.watchToken) return;
     state.connectionLost = true;

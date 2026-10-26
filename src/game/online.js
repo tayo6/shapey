@@ -31,7 +31,8 @@ export const OnlineClientMixin = {
       const receivedAt = Date.now();
       let message;
       try { message = JSON.parse(event.data); } catch { return; }
-      if (message.type === 'game_state' && message.state) {
+      if ((message.type === 'game_state' || message.type === 'game_started' ||
+           message.type === 'spectator_welcome') && message.state) {
         this.applyOnlineState(message.state, false, receivedAt);
       } else if (message.type === 'audience_poll_state') {
         this.onlineAudiencePoll = message.poll || null;

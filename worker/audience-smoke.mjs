@@ -146,6 +146,22 @@ async function run() {
     const realNow = Date.now.bind(Date);
     Date.now = () => realNow() + skew;
   }, CLOCK_SKEW_MS);
+  // Test-only socket tracking lets the smoke test simulate a brief connection loss without
+  // taking the browser offline (which would create noisy network-console errors).
+  await audienceContextB.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket;
+    window.__shapeyTestSocketCount = 0;
+    window.WebSocket = class TrackedWebSocket extends NativeWebSocket {
+      constructor(url, protocols) {
+        if (protocols === undefined) super(url);
+        else super(url, protocols);
+        if (String(url).includes('/ws/')) {
+          window.__shapeyTestRoomSocket = this;
+          window.__shapeyTestSocketCount++;
+        }
+      }
+    };
+  });
   const audienceA = await audienceContextA.newPage();
   const audienceB = await audienceContextB.newPage();
 
@@ -380,6 +396,24 @@ async function run() {
       await page.locator("#board [data-tile-id].is-vote-option").first()
         .waitFor({ state: "attached", timeout: 5_000 });
     }
+
+    // Simulate a brief spectator socket drop while the poll is open. The audience view must
+    // reconnect on its own, keep the existing board visible, and restore the live poll countdown.
+    const beforeReconnectCount = await audienceB.evaluate(() => window.__shapeyTestSocketCount);
+    await audienceB.evaluate(() => window.__shapeyTestRoomSocket.close(1000, "test temporary connection loss"));
+    // The reconnect warning may appear and disappear between browser polls, so assert
+    // the durable recovered state below rather than requiring the transient veil to be observed.
+    await audienceB.waitForFunction((previousCount) => {
+      const intro = document.getElementById("pollIntro")?.textContent || "";
+      const veil = document.getElementById("veil");
+      return window.__shapeyTestSocketCount > previousCount &&
+        veil?.hidden && /\d+s left/.test(intro) &&
+        document.querySelectorAll("#board [data-tile-id]").length > 0;
+    }, beforeReconnectCount, { timeout: 15_000 });
+    assert.ok(
+      await audienceB.evaluate(() => window.__shapeyTestSocketCount) > beforeReconnectCount,
+      "audience page should open a replacement WebSocket after a temporary disconnect"
+    );
 
     // Both audience devices vote (the board tiles themselves, like real spectators).
     await audienceA.locator("#board [data-tile-id].is-vote-option").first().click();
