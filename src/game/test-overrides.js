@@ -4,6 +4,10 @@ export function testOverridesAllowed({ staging = false, hostname = "" } = {}) {
   return Boolean(staging || hostname === "localhost" || hostname === "127.0.0.1");
 }
 
+export function hasTestOverride(params, key, enabled) {
+  return Boolean(enabled && params && typeof params.has === "function" && params.has(key));
+}
+
 export function readNumericOverride(
   params,
   key,
