@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { testOverridesAllowed, readNumericOverride } from "../src/game/test-overrides.js";
+import { testOverridesAllowed, hasTestOverride, readNumericOverride } from "../src/game/test-overrides.js";
 
 test("URL test overrides are enabled only on staging or localhost", () => {
   assert.equal(testOverridesAllowed({ staging: true, hostname: "tayo6.github.io" }), true);
@@ -8,6 +8,13 @@ test("URL test overrides are enabled only on staging or localhost", () => {
   assert.equal(testOverridesAllowed({ hostname: "127.0.0.1" }), true);
   assert.equal(testOverridesAllowed({ hostname: "tayo6.github.io" }), false);
   assert.equal(testOverridesAllowed({ hostname: "shapey-audience-preview.hellohuman100.workers.dev" }), false);
+});
+
+test("raw URL parameter presence never enables a production override", () => {
+  const params = new URLSearchParams("turn=1");
+  assert.equal(hasTestOverride(params, "turn", false), false);
+  assert.equal(hasTestOverride(params, "turn", true), true);
+  assert.equal(hasTestOverride(new URLSearchParams(), "turn", true), false);
 });
 
 test("production ignores timing overrides", () => {
