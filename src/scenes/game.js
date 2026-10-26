@@ -3,7 +3,8 @@
 // rules.js / board.js / trackers.js / ai.js; this scene owns Phaser orchestration only.
 
 import { GAME_WIDTH, GAME_HEIGHT, MEME_TOAST_Y, FONT, normalizeBoardSize, BASE_BOARD_SIZE, MIN_MATCH, AI_TURN_MS, INVENTORY_OPEN_LIMIT, PLAYER_NAMES, ALONE_SCORE_FLOOR, TEAM_PLAYERS, AI_LEVELS, SHAPE_KEYS, MATCH_SHAPE_KEYS } from '../constants.js';
-import { RULES, urlParams, REVIEW_MS, TURN_MS, INVENTORY_WINDOW_MS, MODE_TARGET_SCORE, MODES, START_MODE, HAZARD_OVERRIDE, TILE_SIZE, TILE_PITCH, GRID_COLS, GRID_ROWS, setBoardMetrics } from '../config.js';
+import { RULES, urlParams, REVIEW_MS, TURN_MS, INVENTORY_WINDOW_MS, MODE_TARGET_SCORE, MODES, START_MODE, HAZARD_OVERRIDE, TEST_OVERRIDES_ENABLED, TILE_SIZE, TILE_PITCH, GRID_COLS, GRID_ROWS, setBoardMetrics } from '../config.js';
+import { hasTestOverride } from '../game/test-overrides.js';
 import { formatClock } from '../utils.js';
 import { makeInitialBoard, ShapeBag } from '../board.js';
 import { Countdown, RevealTracker, InventoryLimiter } from '../trackers.js';
@@ -54,8 +55,8 @@ export class GameScene extends Phaser.Scene {
     const level = (data && data.difficulty) || urlParams.get('level');
     this.difficulty = AI_LEVELS[level] ? level : 'easy';
     this.ai = AI_LEVELS[this.difficulty];
-    const hardHumanTurnMs = urlParams.has('turn') ? TURN_MS : 30000;
-    const tagTurnMs = urlParams.has('turn') ? TURN_MS : 30000;
+    const hardHumanTurnMs = hasTestOverride(urlParams, 'turn', TEST_OVERRIDES_ENABLED) ? TURN_MS : 30000;
+    const tagTurnMs = hasTestOverride(urlParams, 'turn', TEST_OVERRIDES_ENABLED) ? TURN_MS : 30000;
     this.turnDurationMs = this.mode === 'tag' ? tagTurnMs
       : this.mode === 'ai'
         ? RULES.turnDurationForMode('ai', this.difficulty, TURN_MS, hardHumanTurnMs)
