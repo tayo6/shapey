@@ -140,6 +140,9 @@ jobs:
       - name: Install integration test dependency
         run: npm install --no-audit --no-fund
 
+      - name: Warm pinned Wrangler CLI
+        run: npx --yes wrangler@4.151.0 --version
+
       - name: Install Chromium for browser smoke tests
         run: npx playwright install --with-deps chromium
 
