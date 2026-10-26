@@ -1,1 +1,0 @@
-Browser PvP smoke test passed: two separate browser contexts joined one room, shared the same board, scored one match, and synchronized the next turn.

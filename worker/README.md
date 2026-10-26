@@ -28,10 +28,10 @@ The browser smoke tests use Playwright. Install Chromium once:
 npx playwright install chromium
 ```
 
-To run the Worker locally, start this from the `worker/` folder:
+To run the Worker locally, start this from the `worker/` folder. Use the staging config: the production config only accepts requests from the live GitHub Pages origin, so pages served from `localhost:8080` (the browser smoke tests) would be rejected with "Origin not allowed.":
 
 ```sh
-npx --yes wrangler@4.151.0 dev --config wrangler.jsonc --local --ip 127.0.0.1 --port 8787
+npx --yes wrangler@4.151.0 dev --config wrangler.staging.jsonc --local --ip 127.0.0.1 --port 8787
 ```
 
 In another terminal, serve the repository root on port 8080:

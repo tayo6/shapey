@@ -1,1 +1,0 @@
-Four-browser Tag smoke test passed: four separate browser contexts joined, started one shared game, and the UI synchronized P1 → P3 → P2 → P4 → P1.

@@ -16,3 +16,23 @@ Hazard (skull) tiles have a 10% spawn chance in every mode. A Hazard always dest
 Audience polls: only Player 1 vs Player 2 and Tag have a **Polls** button. Each player gets 3 free polls per game (never bought with Stars), with votes from live spectators. Player vs AI and Play Alone do not have a Polls button.
 
 Online play (Player 1 vs Player 2 and Tag) uses the authoritative multiplayer Worker documented in `worker/STAGING.md`. The live game at the home page uses the production Worker (`shapey-multiplayer`); the staging test page uses the isolated staging Worker (`shapey-multiplayer-staging`). Worker source changes must be deployed separately from GitHub Pages, staging first, then production after verification. Before relying on online matches, test Player 1 vs Player 2 on two real devices and Tag on four. See `GAMEPLAY.md` for the rules and `DEVELOPER_GUIDE.md` for how the code is organised. Handy mode options include `?mode=alone|ai|pvp|tag` and `?level=easy|pro` (with `?mode=ai`). Timing and Hazard test overrides (`?review=3000`, `?reveal=2000`, `?swap=500`, `?turn=10000`, `?invwindow=20000`, `?hazard=0.5`) work only on staging pages or localhost; live production pages ignore them.
+
+## Run it locally
+
+The client is static (no build step). From the repository root:
+
+```sh
+python3 -m http.server 8080 --bind 127.0.0.1
+```
+
+Then open http://localhost:8080/ (Phaser loads from a CDN, so you need an internet connection). Play Alone and Player vs AI work out of the box. Online modes need a local Worker: see `worker/README.md`, then add `?api=http://127.0.0.1:8787` to the page URL.
+
+Run the client unit tests with Node.js 22 or later:
+
+```sh
+node --test tests/*.test.js tests/*.test.mjs
+```
+
+## License
+
+The source code is released under the [MIT License](LICENSE). Images, audio, fonts and other media in `assets/` are not covered by that license and may carry their own terms.

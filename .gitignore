@@ -1,3 +1,17 @@
 node_modules/
 .wrangler/
 worker/.wrangler/
+
+# Local secrets and Wrangler local variables (never commit these)
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+
+# Build output (tools/build-pages-artifact.sh writes dist/)
+dist/
+
+# Logs and OS/editor noise
+*.log
+.DS_Store
+Thumbs.db

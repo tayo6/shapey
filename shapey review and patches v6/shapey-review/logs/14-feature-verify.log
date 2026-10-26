@@ -1,6 +1,0 @@
-PASS - C5 control returns to the player after the AI turn
-PASS - D1 PLAYER VS AI + 7x7 + HARD (pro) starts with a 49-tile board :: {"mode":"ai","difficulty":"pro","tiles":49}
-PASS - D2 the PRO AI plays its full turn (spare-time pick loop) and returns control :: {"measuredMs":6109}
-PASS - Z no uncaught page errors in any scenario :: []
-
-17/17 checks passed
