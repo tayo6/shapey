@@ -157,8 +157,13 @@ export class LoadScene extends Phaser.Scene {
       socket.addEventListener('message', (event) => {
         let message;
         try { message = JSON.parse(event.data); } catch { return; }
+        const snapshot = message.state;
         const isStartMessage = (message.type === 'spectator_welcome' || message.type === 'game_started' ||
-          message.type === 'game_state') && Boolean(message.state);
+          message.type === 'game_state') && Boolean(snapshot) &&
+          Array.isArray(snapshot.tiles) && snapshot.tiles.length > 0 &&
+          ['study', 'playing', 'finished'].includes(snapshot.status);
+        // Do not expose a blank/question-mark-only canvas during the room hand-off.
+        // The first scene must be created from a complete authoritative board snapshot.
         if (!started && isStartMessage) {
           const roomMode = roomModeFor(message);
           started = true;
