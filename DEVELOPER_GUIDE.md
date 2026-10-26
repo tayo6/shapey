@@ -2,6 +2,8 @@
 
 > **Purpose:** A hand-off document for a developer who has never played Shapey. It explains the intended game, the rules, the current prototype, and the work still required.  
 > **Important:** This guide separates **designed behavior** from **implemented behavior**. A feature described as a rule is not necessarily implemented in the current code.
+>
+> **Status note:** Parts of this guide were written before the online features shipped. Where it conflicts with `README.md`, `GAMEPLAY.md` section 6, or the code in `src/` and `worker/`, the code wins. Known out-of-date items: it lists a server clock and real spectator voting as not yet implemented (the Worker now has server-side deadlines, spectator rooms, chat and audience polls), and it describes Audience Pick as a paid shop item or a simulated "Practice Audience" (polls are now a free per-game allowance, online only).
 
 ## 1. Project overview
 
