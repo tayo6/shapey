@@ -410,7 +410,7 @@ async function run() {
       const intro = document.getElementById("pollIntro")?.textContent || "";
       const veil = document.getElementById("veil");
       return window.__shapeyTestSocketCount > previousCount &&
-        veil?.hidden && /\\d+s left/.test(intro) &&
+        veil?.hidden && /\d+s left/.test(intro) &&
         document.querySelectorAll("#board [data-tile-id]").length > 0;
     }, beforeReconnectCount, { timeout: 15_000 });
     assert.ok(
