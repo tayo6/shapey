@@ -4,6 +4,9 @@
   "main": "src/index.js",
   "compatibility_date": "2026-10-13",
   "compatibility_flags": [],
+  "vars": {
+    "ENVIRONMENT": "staging"
+  },
   "durable_objects": {
     "bindings": [
       {
