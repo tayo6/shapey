@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <base href="../" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Shapey — Roomy layout preview</title>
+  <link rel="icon" type="image/webp" href="assets/ui/shapey%20icon.webp" />
+  <!-- Start the slow third-party connection, the font and the two loading-screen images as early as possible. -->
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin />
+  <link rel="preload" href="assets/fonts/HAPPY%20SCHOOL.TTF" as="font" type="font/ttf" crossorigin />
+  <link rel="preload" href="assets/backgrounds/BG.webp" as="image" type="image/webp" />
+  <link rel="preload" href="assets/ui/shapey%20logo.webp" as="image" type="image/webp" />
+  <link rel="preload" href="assets/ui/load%20rectangle.jpeg" as="image" type="image/jpeg" />
+  <style>
+    @font-face {
+      font-family: 'HappySchool';
+      src: url('assets/fonts/HAPPY%20SCHOOL.TTF') format('truetype');
+    }
+    #staging-banner { position: fixed; z-index: 9999; top: 0; left: 0; width: 100%; box-sizing: border-box; padding: 3px 6px; background: #8b2424; color: #fff; font: 11px/1.2 sans-serif; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    #staging-banner button { font: inherit; color: #fff; background: rgba(255,255,255,.18); border: 1px solid rgba(255,255,255,.55); border-radius: 4px; padding: 2px 8px; cursor: pointer; }
+    .audience-embed #staging-banner { display: none; }
+    html, body { margin: 0; height: 100%; background: #2b1a0f; overflow: hidden; }
+    #game { width: 100%; height: 100%; }
+
+    /* The boot artwork is preloaded together and revealed in one frame while Phaser starts. It uses the same
+       background and layout as the in-game loading screen (720 x 1280; logo centred at 470, load bar at 720).
+       A safety reveal prevents a permanent blank screen if loading is unusually slow. Keep positions in sync
+       with LOGO_* / LOAD_BAR_* / LOAD_TRACK in src/constants.js. */
+    #boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+    #boot .stage {
+      position: relative; width: min(100vw, 56.25vh); height: min(177.78vw, 100vh);
+      visibility: hidden;
+      animation: bootSafetyReveal 0s linear 6.5s forwards;
+    }
+    #boot.ready .stage { visibility: visible; animation: none; }
+    #boot img { position: absolute; left: 50%; transform: translate(-50%, -50%); height: auto; }
+    #boot .bg { left: 0; top: 0; width: 100%; height: 100%; transform: none; }
+    #boot .logo { top: 36.72%; width: 72.22%; } /* 520 / 720, 470 / 1280 */
+    #boot.ready .logo { animation: logoFloat 900ms ease-in-out infinite alternate; }
+    #boot .bar { position: absolute; left: 50%; top: 56.25%; width: 77.78%; transform: translate(-50%, -50%); } /* 560 / 720, 720 / 1280 */
+    #boot .bar canvas { display: block; width: 100%; height: auto; }
+    #boot .fill {
+      position: absolute; left: 6.637%; top: 28.302%; height: 42.925%; width: 5.197%;
+      background: #f2b84b;
+    }
+    #boot.ready .fill { animation: pulse 500ms ease-in-out infinite alternate; }
+    #boot .gloss {
+      position: absolute; top: 0; left: 0; width: 100%; height: 45%;
+      background: #ffe3a0; opacity: .7; /* same as the gloss in LoadScene */
+    }
+    @keyframes bootSafetyReveal { to { visibility: visible; } }
+    @keyframes pulse { from { opacity: .75; } to { opacity: 1; } }
+    @keyframes logoFloat {
+      from { transform: translate(-50%, -50%) translateY(0); }
+      to { transform: translate(-50%, -50%) translateY(-3.846%); }
+    }
+  </style>
+</head>
+<body>
+  <div id="staging-banner">
+    <span id="layoutLabel">LAYOUT PREVIEW</span>
+    <button type="button" id="sampleMeme">Show sample meme</button>
+    <button type="button" id="swapLayout">Compare</button>
+  </div>
+  <div id="boot"><div class="stage">
+    <img class="bg" src="assets/backgrounds/BG.webp" alt="" width="720" height="1280" />
+    <img class="logo" src="assets/ui/shapey%20logo.webp" alt="Shapey" width="1100" height="440" />
+    <div class="bar"><canvas id="bootLoadRectangle" width="840" height="175"></canvas><div class="fill"><div class="gloss"></div></div></div>
+  </div></div>
+  <div id="game"></div>
+  <!-- Staging runs the same src/ modules as production (no forked copies). SHAPEY_ENV, read by
+       src/config.js and src/memes.js, marks this page as staging: it allows the local-Worker
+       ?api=http://localhost:8787 override from any host and fires meme commentary a little more
+       often (one per 3 attempts instead of 4) for testing. The banner above marks the page visually. -->
+  <script>window.SHAPEY_ENV = { staging: true, memesStandardWindow: 3, layout: 'roomy' };</script>
+  <!-- Preview controls. This page runs the same src/ modules as the live game; only the layout preset differs
+       (?layout=classic|roomy, default roomy here). Nothing on the live pages changes. -->
+  <script>
+    (function () {
+      var layout = new URLSearchParams(location.search).get('layout') || 'roomy';
+      document.getElementById('layoutLabel').textContent = (layout === 'classic' ? 'CLASSIC' : 'ROOMY') + ' LAYOUT PREVIEW';
+      var swap = document.getElementById('swapLayout');
+      swap.textContent = layout === 'classic' ? 'Switch to roomy' : 'Switch to classic';
+      swap.addEventListener('click', function () {
+        var url = new URL(location.href);
+        url.searchParams.set('layout', layout === 'classic' ? 'roomy' : 'classic');
+        location.href = url.href;
+      });
+      document.getElementById('sampleMeme').addEventListener('click', function () {
+        var scene = window.game && window.game.scene.getScene('GameScene');
+        if (scene && scene.memes && scene.memes.showSample) scene.memes.showSample();
+      });
+    })();
+  </script>
+  <script src="src/loading-bar.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.80.1/phaser.min.js"></script>
+  <script src="src/rules.js"></script>
+  <script src="src/memes.js"></script>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

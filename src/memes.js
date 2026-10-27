@@ -201,7 +201,7 @@
       const scale = rect.width / CONFIG.stage.width;
       const naturalW = img.naturalWidth || 1;
       const naturalH = img.naturalHeight || 1;
-      const slot = CONFIG.slot;
+      const slot = (scene && scene.memeSlot) || CONFIG.slot; // the scene's layout preset may give a taller slot
       const fit = Math.min(slot.w / naturalW, slot.h / naturalH, CONFIG.maxUpscale);
       const w = naturalW * fit;
       const h = naturalH * fit;
@@ -419,6 +419,18 @@
         if (!Number.isFinite(left) || left <= 0 || left > CONFIG.delayAtMs) return;
         delayShownKey = key;
         play('delay');
+      },
+
+      // Preview / testing helper (staging/layout-preview.html): shows one picture right now, ignoring the
+      // attempt schedule, so a layout's meme slot can be checked without playing until a meme fires.
+      showSample() {
+        if (!library.ready || scene.spectator) return false;
+        const pools = library.picker.pools;
+        const pool = [pools.win, pools.lose, pools.delay].flatMap((entry) => (entry && entry.visual) || []);
+        if (!pool.length) return false;
+        const item = pool[Math.floor(rng() * pool.length)];
+        player.showVisual({ kind: 'win', type: 'visual', name: item.name, url: item.url });
+        return true;
       },
 
       visualVisible: () => player.isVisualVisible(),

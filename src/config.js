@@ -3,7 +3,7 @@
 // script before this module), the staging override (window.SHAPEY_ENV) and the multiplayer
 // Worker API. Pure numbers live in constants.js. Browser-only - not for Node tests.
 
-import { normalizeBoardSize, BASE_BOARD_SIZE, BASE_TILE_SIZE, BASE_TILE_PITCH, ALONE_SCORE_FLOOR, HAZARD_CHANCE } from './constants.js';
+import { normalizeBoardSize, BASE_BOARD_SIZE, BASE_TILE_SIZE, BASE_TILE_PITCH, ALONE_SCORE_FLOOR, HAZARD_CHANCE, LAYOUTS } from './constants.js';
 import { resolveMultiplayerApi } from './game/api-environment.js';
 import { testOverridesAllowed, readNumericOverride } from './game/test-overrides.js';
 
@@ -16,6 +16,13 @@ if (urlParams.get('embed') === '1') document.body.classList.add('audience-embed'
 // The staging page (staging/index.html) sets window.SHAPEY_ENV = { staging: true } before this module
 // loads, so it can relax host checks for testing. Production pages leave it unset.
 export const STAGING = Boolean(typeof window !== 'undefined' && window.SHAPEY_ENV && window.SHAPEY_ENV.staging);
+
+// Vertical layout preset (see LAYOUTS in constants.js). Every page keeps the 'classic' layout unless it asks
+// for another one: ?layout=roomy|classic in the URL wins, then window.SHAPEY_ENV.layout (set by
+// staging/layout-preview.html). The layout is cosmetic only - it never changes rules or online play.
+const requestedLayout = urlParams.get('layout') || (window.SHAPEY_ENV && window.SHAPEY_ENV.layout);
+export const LAYOUT_NAME = Object.prototype.hasOwnProperty.call(LAYOUTS, requestedLayout) ? requestedLayout : 'classic';
+export const LAYOUT = LAYOUTS[LAYOUT_NAME];
 
 // Live pages use the production Worker. Staging pages use the isolated staging Worker.
 // Only approved local development contexts may override this with ?api=http://127.0.0.1:8787.

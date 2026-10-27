@@ -8,6 +8,29 @@ export const GAME_HEIGHT = 1280;
 // Move game messages into the free strip above the bottom navigation while a GIF is visible.
 export const MEME_TOAST_Y = 1015;
 
+// Vertical layout presets (game coordinates, 720 x 1280). 'classic' is exactly the layout the live game
+// has always used. 'roomy' is the preview layout: the header assembly moves up, the tray (and its shadow)
+// moves down and the bottom navigation moves down, which grows the strip between the header and the tray
+// where meme pictures / GIFs are shown. Choose with ?layout=roomy|classic (see src/config.js).
+//   headerShiftY  header plank + shadow + score planks + timer + goal / reveal text + stars (negative = up)
+//   trayShiftY    tray and tray shadow; the board follows the tray (positive = down)
+//   navShiftY     bottom navigation plank and its buttons (positive = down, the plank's bottom edge is cropped)
+//   toastY        game message position when no picture is showing (just above the tray)
+//   memeToastY    game message position while a picture is showing (strip above the bottom navigation)
+//   memeSlot      where meme pictures are fitted: centre x, top y, width and height
+export const LAYOUTS = Object.freeze({
+  classic: Object.freeze({
+    headerShiftY: 0, trayShiftY: 0, navShiftY: 0,
+    toastY: 256, memeToastY: MEME_TOAST_Y,
+    memeSlot: Object.freeze({ x: 360, y: 162, w: 300, h: 122 }),
+  }),
+  roomy: Object.freeze({
+    headerShiftY: -20, trayShiftY: 44, navShiftY: 30,
+    toastY: 300, memeToastY: 1050,
+    memeSlot: Object.freeze({ x: 360, y: 142, w: 300, h: 184 }),
+  }),
+});
+
 export const FONT = 'HappySchool';
 export const BOARD_SIZES = Object.freeze([5, 6, 7]);
 export function normalizeBoardSize(value) {

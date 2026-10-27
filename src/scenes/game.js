@@ -2,8 +2,8 @@
 // audience polls, the online client and the AI turn loop. Pure decisions live in
 // rules.js / board.js / trackers.js / ai.js; this scene owns Phaser orchestration only.
 
-import { GAME_WIDTH, GAME_HEIGHT, MEME_TOAST_Y, FONT, normalizeBoardSize, BASE_BOARD_SIZE, MIN_MATCH, AI_TURN_MS, INVENTORY_OPEN_LIMIT, PLAYER_NAMES, ALONE_SCORE_FLOOR, TEAM_PLAYERS, AI_LEVELS, SHAPE_KEYS, MATCH_SHAPE_KEYS } from '../constants.js';
-import { RULES, urlParams, REVIEW_MS, TURN_MS, INVENTORY_WINDOW_MS, MODE_TARGET_SCORE, MODES, START_MODE, HAZARD_OVERRIDE, TEST_OVERRIDES_ENABLED, TILE_SIZE, TILE_PITCH, GRID_COLS, GRID_ROWS, setBoardMetrics } from '../config.js';
+import { GAME_WIDTH, GAME_HEIGHT, FONT, normalizeBoardSize, BASE_BOARD_SIZE, MIN_MATCH, AI_TURN_MS, INVENTORY_OPEN_LIMIT, PLAYER_NAMES, ALONE_SCORE_FLOOR, TEAM_PLAYERS, AI_LEVELS, SHAPE_KEYS, MATCH_SHAPE_KEYS } from '../constants.js';
+import { RULES, LAYOUT, urlParams, REVIEW_MS, TURN_MS, INVENTORY_WINDOW_MS, MODE_TARGET_SCORE, MODES, START_MODE, HAZARD_OVERRIDE, TEST_OVERRIDES_ENABLED, TILE_SIZE, TILE_PITCH, GRID_COLS, GRID_ROWS, setBoardMetrics } from '../config.js';
 import { hasTestOverride } from '../game/test-overrides.js';
 import { formatClock } from '../utils.js';
 import { makeInitialBoard, ShapeBag } from '../board.js';
@@ -113,6 +113,7 @@ export class GameScene extends Phaser.Scene {
     this.inventoryLimiter = new InventoryLimiter(INVENTORY_OPEN_LIMIT, INVENTORY_WINDOW_MS, this.modeCfg.teams ? 4 : PLAYER_NAMES.length);
 
     // Meme commentary (src/memes.js). Optional: the game plays the same without it.
+    this.memeSlot = LAYOUT.memeSlot; // where pictures are fitted (depends on the layout preset)
     this.memes = window.ShapeyMemes ? window.ShapeyMemes.attach(this) : null;
 
     this.createBackground();
@@ -167,7 +168,7 @@ export class GameScene extends Phaser.Scene {
     if (this.memes) this.memes.tick();
     // GIFs are attached only after loading, so reposition an existing message every frame too.
     if (this.toast) {
-      const toastY = this.memes && this.memes.visualVisible() ? MEME_TOAST_Y : 256;
+      const toastY = this.memes && this.memes.visualVisible() ? LAYOUT.memeToastY : LAYOUT.toastY;
       if (this.toast.y !== toastY) this.toast.setY(toastY);
     }
     if (!this.online) {
@@ -207,15 +208,15 @@ export class GameScene extends Phaser.Scene {
     this.bg = this.fitToWidth(this.add.image(0, 0, 'bg').setOrigin(0, 0)).setDepth(0);
 
     this.headerShadow = this.fitToWidth(
-      this.add.image(GAME_WIDTH / 2, 0, 'headerShadow').setOrigin(0.5, 0)
+      this.add.image(GAME_WIDTH / 2, LAYOUT.headerShiftY, 'headerShadow').setOrigin(0.5, 0)
     ).setDepth(1);
 
     this.headerPlank = this.fitToWidth(
-      this.add.image(GAME_WIDTH / 2, 0, 'headerPlank1').setOrigin(0.5, 0)
+      this.add.image(GAME_WIDTH / 2, LAYOUT.headerShiftY, 'headerPlank1').setOrigin(0.5, 0)
     ).setDepth(2);
 
     this.trayShadow = this.fitToWidth(
-      this.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'trayShadow')
+      this.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2 + LAYOUT.trayShiftY, 'trayShadow')
     ).setDepth(3);
 
     this.tray = this.fitToWidth(
@@ -223,7 +224,7 @@ export class GameScene extends Phaser.Scene {
     ).setDepth(4);
 
     this.bottomNav = this.fitToWidth(
-      this.add.image(GAME_WIDTH / 2, GAME_HEIGHT, 'bottomNav').setOrigin(0.5, 1)
+      this.add.image(GAME_WIDTH / 2, GAME_HEIGHT + LAYOUT.navShiftY, 'bottomNav').setOrigin(0.5, 1)
     ).setDepth(5);
   }
 
@@ -239,27 +240,28 @@ export class GameScene extends Phaser.Scene {
 
   // Score planks, timer and stars.
   createHeader() {
+    const dy = LAYOUT.headerShiftY; // the whole header assembly moves together
     // The plank art is stored at about 1.5x its on-screen size (186 x 147 and 198 x 161).
-    const p1 = this.add.image(105, 20, 'playerPlank1').setOrigin(0.5, 0).setDisplaySize(186.24, 147.36).setDepth(10);
+    const p1 = this.add.image(105, 20 + dy, 'playerPlank1').setOrigin(0.5, 0).setDisplaySize(186.24, 147.36).setDepth(10);
     this.p1Score = this.numberText(p1.x + 2, p1.y + p1.displayHeight * 0.35, '0', 46);
     this.p1Name = this.numberText(p1.x - 4, p1.y + p1.displayHeight * 0.83, this.names[0], 21);
 
-    const p2 = this.add.image(612, 20, 'playerPlank2').setOrigin(0.5, 0).setDisplaySize(197.76, 160.56).setDepth(10);
+    const p2 = this.add.image(612, 20 + dy, 'playerPlank2').setOrigin(0.5, 0).setDisplaySize(197.76, 160.56).setDepth(10);
     this.p2Score = this.numberText(p2.x - 4, p2.y + p2.displayHeight * 0.35, '0', 46);
     this.p2Name = this.numberText(p2.x - 4, p2.y + p2.displayHeight * 0.83, this.names[1], 21);
 
-    const timer = this.fitToWidth(this.add.image(GAME_WIDTH / 2, 101, 'timerPlank'), 262).setDepth(10);
+    const timer = this.fitToWidth(this.add.image(GAME_WIDTH / 2, 101 + dy, 'timerPlank'), 262).setDepth(10);
     this.timerText = this.numberText(timer.x + 24, timer.y + 2, formatClock(this.turnDurationMs), 46);
 
     // Countdown for newly spawned tiles. It sits under the turn timer and only shows while tiles are face-up.
-    this.revealText = this.numberText(GAME_WIDTH / 2, 190, '', 26).setVisible(false);
+    this.revealText = this.numberText(GAME_WIDTH / 2, 190 + dy, '', 26).setVisible(false);
 
     // Play Alone shows attempts and its score floor here. In Tag the same spot names the team and partner whose turn it is.
-    this.goalText = this.numberText(GAME_WIDTH / 2, 166, '', 21)
+    this.goalText = this.numberText(GAME_WIDTH / 2, 166 + dy, '', 21)
       .setVisible(!this.modeCfg.twoPlayers || !!this.modeCfg.teams);
 
-    this.p1Stars = this.createStars(38, 213, this.starBalance);
-    this.p2Stars = this.createStars(546, 213, this.modeCfg.ai ? 0 : this.starBalance);
+    this.p1Stars = this.createStars(38, 213 + dy, this.starBalance);
+    this.p2Stars = this.createStars(546, 213 + dy, this.modeCfg.ai ? 0 : this.starBalance);
 
     // Everything that belongs to one player, so the inactive player can be dimmed.
     this.playerUI = [
@@ -290,7 +292,7 @@ export class GameScene extends Phaser.Scene {
     if (this.toastTween) this.toastTween.stop();
     if (this.toast) this.toast.destroy();
     // Keep text below the tray and above the bottom navigation while a GIF is visible.
-    const toastY = this.memes && this.memes.visualVisible() ? MEME_TOAST_Y : 256;
+    const toastY = this.memes && this.memes.visualVisible() ? LAYOUT.memeToastY : LAYOUT.toastY;
     const toast = this.add.text(GAME_WIDTH / 2, toastY, message, {
       fontFamily: FONT, fontSize: '24px', color: '#fff2c7',
       stroke: '#3a2412', strokeThickness: 5, align: 'center', wordWrap: { width: 660 },
@@ -467,7 +469,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     const BUTTON_HEIGHT = 146;
-    const BOTTOM = 1214; // bottom edge of the label plank
+    const BOTTOM = 1214 + LAYOUT.navShiftY; // bottom edge of the label plank
     const iconByAction = {
       settings: 'btnSettings',
       submit: 'btnSubmit',
