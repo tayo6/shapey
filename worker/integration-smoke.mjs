@@ -83,6 +83,7 @@ async function expectWebSocketStatus(url, expectedStatus) {
     socket.once("unexpected-response", (_request, response) => {
       clearTimeout(timer);
       response.resume();
+      try { socket.terminate(); } catch {}
       if (response.statusCode !== expectedStatus) {
         reject(new Error("Expected WebSocket HTTP " + expectedStatus + ", received " + response.statusCode + "."));
         return;
