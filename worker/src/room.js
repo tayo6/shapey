@@ -591,7 +591,7 @@ export class Room extends DurableObject {
       }
     }
     await this.scheduleAlarm();
-  },
+  }
 
   async webSocketClose(ws) {
     const attachment = ws.deserializeAttachment() || {};
