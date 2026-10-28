@@ -1,0 +1,7 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "shapey-audience-preview",
+  "main": "src/preview.js",
+  "compatibility_date": "2026-10-13",
+  "compatibility_flags": []
+}
