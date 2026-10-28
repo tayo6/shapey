@@ -302,8 +302,17 @@ export class Room extends DurableObject {
 
     const pair = new WebSocketPair();
     const client = pair[0], server = pair[1];
-    server.serializeAttachment({ playerNumber: null, mode: room.mode, role, spectatorReady: false, connectedAt: Date.now() });
+    const connectedAt = Date.now();
+    server.serializeAttachment({ playerNumber: null, mode: room.mode, role, spectatorReady: false, connectedAt });
     this.ctx.acceptWebSocket(server);
+    // Set this connection's join deadline directly. Keep it even if the current
+    // local/runtime socket enumeration does not include the new socket until the
+    // upgrade callback returns.
+    const joinDeadline = connectedAt + UNJOINED_SOCKET_TIMEOUT_MS;
+    const currentAlarm = await this.ctx.storage.getAlarm();
+    if (currentAlarm === null || currentAlarm > joinDeadline) {
+      await this.ctx.storage.setAlarm(joinDeadline);
+    }
     await this.scheduleAlarm();
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -340,7 +349,13 @@ export class Room extends DurableObject {
     }
     const currentAlarm = await this.ctx.storage.getAlarm();
     if (deadlines.length) {
-      const nextAlarm = Math.min(...deadlines);
+      const calculatedDeadline = Math.min(...deadlines);
+      // Do not postpone an earlier alarm: it may be a join timeout for a socket
+      // that is not yet visible in a platform's WebSocket enumeration. When that
+      // earlier alarm fires, this method recalculates the next required deadline.
+      const nextAlarm = currentAlarm !== null && currentAlarm > now
+        ? Math.min(currentAlarm, calculatedDeadline)
+        : calculatedDeadline;
       // Rewriting an unchanged alarm is a storage write; update only when its deadline moves.
       if (currentAlarm !== nextAlarm) await this.ctx.storage.setAlarm(nextAlarm);
     } else if (currentAlarm !== null) {
