@@ -4,7 +4,7 @@
 
 // ------------------------------------------------------------------ views
 
-import { API_OVERRIDDEN, MULTIPLAYER_API, els, serverClock, state } from './state.js';
+import { API_OVERRIDDEN, IS_STAGING_AUDIENCE, MULTIPLAYER_API, els, serverClock, state } from './state.js';
 import { api, directoryUrl, playerWord, text, turnLabel } from './util.js';
 import { appendChat, ensureChatEmpty } from './chat.js';
 import { renderBoard, renderScores, updateBoardPollHint, updateHud } from './board.js';
