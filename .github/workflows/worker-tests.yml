@@ -1,5 +1,8 @@
 name: Multiplayer Worker tests
 
+permissions:
+  contents: read
+
 on:
   push:
     branches:
