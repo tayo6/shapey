@@ -11,7 +11,8 @@ export const serverClock = createServerClockSync();
 // Audience links carry env=staging only when opened from the staging game. Main/live
 // audience links default to the production Worker; local smoke tests can override on localhost.
 const audienceParams = new URLSearchParams(window.location.search);
-const isStagingAudience = audienceParams.get('env') === 'staging';
+const isStagingAudience = audienceParams.get('env') === 'staging' ||
+  window.location.hostname === 'shapey-audience-preview.hellohuman100.workers.dev';
 const apiResolution = resolveMultiplayerApi({
   staging: isStagingAudience,
   requestedApi: audienceParams.get('api'),
