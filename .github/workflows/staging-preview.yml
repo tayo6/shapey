@@ -171,3 +171,11 @@ jobs:
           cat /tmp/production-rooms.json
           test "$production_rooms_status" = 200
           grep -q '"rooms":' /tmp/production-rooms.json
+
+      - name: Verify staging closes unjoined WebSocket connections
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          npm ci --prefix worker --no-audit --no-fund
+          node worker/deployed-safety-smoke.mjs
+
