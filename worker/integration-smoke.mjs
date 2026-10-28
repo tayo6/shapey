@@ -8,6 +8,9 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function createClient(url) {
   const socket = new WebSocket(url, { headers: { Origin: ALLOWED_ORIGIN } });
+  socket.on("close", (code, reason) => {
+    socket.__shapeyCloseInfo = { code, reason: reason?.toString() || "" };
+  });
   const queue = [];
   const waiters = [];
 
@@ -74,7 +77,7 @@ async function waitForOpen(client) {
 }
 
 function waitForSocketClose(socket, timeout = 15_000) {
-  if (socket.readyState === WebSocket.CLOSED) return Promise.resolve({ code: socket.closeCode || 1000 });
+  if (socket.readyState === WebSocket.CLOSED) return Promise.resolve(socket.__shapeyCloseInfo || { code: socket.closeCode || 1000, reason: "" });
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       socket.off("close", onClose);
