@@ -488,6 +488,13 @@ export class Room extends DurableObject {
       return;
     }
     if (!Number.isInteger(attachment.playerNumber)) return;
+    // A seat-token takeover closes the prior socket. Do not announce a disconnect if
+    // a replacement socket for the same player is already attached and open.
+    const replacementConnected = this.ctx.getWebSockets().some(other => {
+      if (other === ws || other.readyState !== WebSocket.OPEN) return false;
+      return (other.deserializeAttachment() || {}).playerNumber === attachment.playerNumber;
+    });
+    if (replacementConnected) return;
     const room = await this.ctx.storage.get("room");
     this.broadcast({
       type: "player_disconnected",
