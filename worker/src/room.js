@@ -28,6 +28,9 @@ const ROOM_RESERVATION_PREFIX = "room-reservation:";
 const ROOM_RESERVATION_TTL_MS = 60_000;
 const MAX_ACTIVE_ROOMS = 100;
 const MAX_ACTIVE_DEMOS = 10;
+const ROOM_CREATE_RATE_MAP_KEY = "room-create-rate-map";
+const ROOM_CREATE_RATE_WINDOW_MS = 10 * 60_000;
+const ROOM_CREATE_RATE_LIMIT = 5;
 const DEMO_NO_VIEWER_TTL_MS = 60_000;
 
 export class Room extends DurableObject {
@@ -61,6 +64,8 @@ export class Room extends DurableObject {
       const requestedMode = modeDetails(url.searchParams.get("mode"));
       if (!isRoomCode(roomCode) || !requestedMode) return json({ error: "Invalid room reservation." }, 400);
       const now = Date.now();
+      const suppliedClientKey = request.headers.get("X-Shapey-Client-Key") || "";
+      const clientKey = /^[a-f0-9]{32}$/.test(suppliedClientKey) ? suppliedClientKey : "unknown";
       const reservationKey = ROOM_RESERVATION_PREFIX + roomCode;
       const reserved = await this.ctx.storage.transaction(async txn => {
         const rooms = await txn.list({ prefix: LIVE_DIRECTORY_PREFIX });
@@ -89,12 +94,29 @@ export class Room extends DurableObject {
         if (await txn.get(LIVE_DIRECTORY_PREFIX + roomCode) || await txn.get(reservationKey)) return "collision";
         if (requestedMode.mode === "demo" && activeDemos + activeDemoReservations >= MAX_ACTIVE_DEMOS) return "demo-full";
         if (activeRooms + activeReservations >= MAX_ACTIVE_ROOMS) return "full";
+
+        // Enforce the old five-per-ten-minute room-creation limit in this singleton
+        // Durable Object instead of creating one never-cleaned limiter object per IP.
+        let rateMap = await txn.get(ROOM_CREATE_RATE_MAP_KEY);
+        if (!rateMap || typeof rateMap !== "object" || Array.isArray(rateMap)) rateMap = {};
+        for (const key of Object.keys(rateMap)) {
+          const recent = Array.isArray(rateMap[key])
+            ? rateMap[key].filter(timestamp => Number.isFinite(timestamp) && timestamp > now - ROOM_CREATE_RATE_WINDOW_MS && timestamp <= now)
+            : [];
+          if (recent.length) rateMap[key] = recent;
+          else delete rateMap[key];
+        }
+        const recentCreates = rateMap[clientKey] || [];
+        if (recentCreates.length >= ROOM_CREATE_RATE_LIMIT) return "client-rate-full";
+        rateMap[clientKey] = [...recentCreates, now];
+        await txn.put(ROOM_CREATE_RATE_MAP_KEY, rateMap);
         await txn.put(reservationKey, { roomCode, mode: requestedMode.mode, expiresAt: now + ROOM_RESERVATION_TTL_MS });
         return "reserved";
       });
       if (reserved === "collision") return json({ error: "Room code is already in use." }, 409);
       if (reserved === "demo-full") return json({ error: "All AI demos are currently being watched or starting. Please try again in a minute." }, 429);
       if (reserved === "full") return json({ error: "The game server is at capacity. Please try again later." }, 429);
+      if (reserved === "client-rate-full") return json({ error: "Too many rooms created from this network in the last 10 minutes. Please try again later." }, 429, { "Retry-After": "600" });
       return json({ ok: true, roomCode, mode: requestedMode.mode, expiresAt: now + ROOM_RESERVATION_TTL_MS }, 201);
     }
 
