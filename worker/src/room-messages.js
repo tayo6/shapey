@@ -8,6 +8,12 @@ import { applyGameAction } from "./game-engine.js";
 
 export const RoomMessagesMixin = {
   async webSocketMessage(ws, message) {
+    // Cloudflare normally intercepts this through setWebSocketAutoResponse. Keep the
+    // fallback for local runtimes that deliver application messages to this handler.
+    if (message === "ping") {
+      try { ws.send("pong"); } catch {}
+      return;
+    }
     const byteLength = messageByteLength(message);
     if (byteLength > MAX_MESSAGE_BYTES) {
       try { ws.send(JSON.stringify({ type: "error", message: "Message is too large." })); } catch {}
@@ -26,12 +32,16 @@ export const RoomMessagesMixin = {
       return;
     }
 
-    await this.touchRoom();
     let data;
     try {
       data = JSON.parse(typeof message === "string" ? message : new TextDecoder().decode(message));
     } catch {
       ws.send(JSON.stringify({ type: "error", message: "Messages must be JSON." }));
+      return;
+    }
+    // Legacy JSON keepalives are also cheap. Do not update room activity or alarms for them.
+    if (data?.type === "ping") {
+      ws.send(JSON.stringify({ type: "pong", at: Date.now() }));
       return;
     }
     if (data?.type === "join") {
@@ -93,10 +103,6 @@ export const RoomMessagesMixin = {
       return;
     }
 
-    if (data?.type === "ping") {
-      ws.send(JSON.stringify({ type: "pong", at: Date.now() }));
-      return;
-    }
     if (data?.type === "ready") {
       const attachment = ws.deserializeAttachment() || {};
       this.broadcast({
