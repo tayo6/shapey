@@ -110,7 +110,7 @@ export default {
         crypto.getRandomValues(bytes);
         const code = Array.from(bytes, b => alphabet[b % alphabet.length]).join("");
         const reservation = await directory.fetch(
-          "https://directory.internal/directory/reserve?roomCode=" + code,
+          "https://directory.internal/directory/reserve?roomCode=" + code + "&mode=" + encodeURIComponent(details.mode),
           { method: "POST" }
         );
         if (reservation.status === 409) continue;
