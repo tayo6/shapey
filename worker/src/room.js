@@ -27,6 +27,8 @@ const ROOM_ACTIVITY_PERSIST_INTERVAL_MS = 60_000;
 const ROOM_RESERVATION_PREFIX = "room-reservation:";
 const ROOM_RESERVATION_TTL_MS = 60_000;
 const MAX_ACTIVE_ROOMS = 100;
+const MAX_ACTIVE_DEMOS = 10;
+const DEMO_NO_VIEWER_TTL_MS = 60_000;
 
 export class Room extends DurableObject {
   constructor(ctx, env) {
@@ -56,37 +58,44 @@ export class Room extends DurableObject {
 
     if (url.pathname === "/directory/reserve" && request.method === "POST") {
       const roomCode = url.searchParams.get("roomCode");
-      if (!isRoomCode(roomCode)) return json({ error: "Invalid room code." }, 400);
+      const requestedMode = modeDetails(url.searchParams.get("mode"));
+      if (!isRoomCode(roomCode) || !requestedMode) return json({ error: "Invalid room reservation." }, 400);
       const now = Date.now();
       const reservationKey = ROOM_RESERVATION_PREFIX + roomCode;
       const reserved = await this.ctx.storage.transaction(async txn => {
         const rooms = await txn.list({ prefix: LIVE_DIRECTORY_PREFIX });
         let activeRooms = 0;
+        let activeDemos = 0;
         for (const [key, room] of rooms.entries()) {
           if (!room || !Number.isFinite(room.expiresAt) || room.expiresAt <= now ||
               !["waiting", "ready", "starting", "live"].includes(room.status)) {
             await txn.delete(key);
           } else {
             activeRooms++;
+            if (room.mode === "demo") activeDemos++;
           }
         }
         const reservations = await txn.list({ prefix: ROOM_RESERVATION_PREFIX });
         let activeReservations = 0;
+        let activeDemoReservations = 0;
         for (const [key, item] of reservations.entries()) {
           if (!item || !Number.isFinite(item.expiresAt) || item.expiresAt <= now) {
             await txn.delete(key);
           } else {
             activeReservations++;
+            if (item.mode === "demo") activeDemoReservations++;
           }
         }
         if (await txn.get(LIVE_DIRECTORY_PREFIX + roomCode) || await txn.get(reservationKey)) return "collision";
+        if (requestedMode.mode === "demo" && activeDemos + activeDemoReservations >= MAX_ACTIVE_DEMOS) return "demo-full";
         if (activeRooms + activeReservations >= MAX_ACTIVE_ROOMS) return "full";
-        await txn.put(reservationKey, { roomCode, expiresAt: now + ROOM_RESERVATION_TTL_MS });
+        await txn.put(reservationKey, { roomCode, mode: requestedMode.mode, expiresAt: now + ROOM_RESERVATION_TTL_MS });
         return "reserved";
       });
       if (reserved === "collision") return json({ error: "Room code is already in use." }, 409);
+      if (reserved === "demo-full") return json({ error: "All AI demos are currently being watched or starting. Please try again in a minute." }, 429);
       if (reserved === "full") return json({ error: "The game server is at capacity. Please try again later." }, 429);
-      return json({ ok: true, roomCode, expiresAt: now + ROOM_RESERVATION_TTL_MS }, 201);
+      return json({ ok: true, roomCode, mode: requestedMode.mode, expiresAt: now + ROOM_RESERVATION_TTL_MS }, 201);
     }
 
     if (url.pathname === "/directory/release" && request.method === "DELETE") {
@@ -289,8 +298,11 @@ export class Room extends DurableObject {
     const gameDeadline = nextGameDeadline(game);
     const poll = await this.ctx.storage.get("audiencePoll");
     const pollDeadline = poll && !poll.closed ? poll.endsAt : null;
+    const noViewerDemoDeadline = room.mode === "demo" && this.spectatorCount() === 0
+      ? (Number.isFinite(room.lastSpectatorAt) ? room.lastSpectatorAt : room.createdAt) + DEMO_NO_VIEWER_TTL_MS
+      : null;
     const deadlines = [roomDeadline, gameDeadline, pollDeadline,
-      game?.demoNextActionAt, game?.demoSubmitAt, game?.demoCleanupAt].filter(Number.isFinite);
+      game?.demoNextActionAt, game?.demoSubmitAt, game?.demoCleanupAt, noViewerDemoDeadline].filter(Number.isFinite);
     // Keep a room with a connected player but no game on the directory too. Without this
     // heartbeat, a long lobby wait could outlive its directory listing lease.
     if (this.connectedCount() > 0 && !game) deadlines.push(now + LIVE_DIRECTORY_REFRESH_MS);
@@ -486,6 +498,13 @@ export class Room extends DurableObject {
       }
       await this.clearRoomData(room.roomCode);
       return;
+    }
+    if (room.mode === "demo" && this.spectatorCount() === 0) {
+      const lastViewerAt = Number.isFinite(room.lastSpectatorAt) ? room.lastSpectatorAt : room.createdAt;
+      if (now >= lastViewerAt + DEMO_NO_VIEWER_TTL_MS) {
+        await this.deleteRoomData(room.roomCode, "AI vs AI demo stopped because nobody was watching");
+        return;
+      }
     }
 
     let game = await this.ctx.storage.get("game");
