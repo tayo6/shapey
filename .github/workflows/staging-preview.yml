@@ -126,6 +126,19 @@ jobs:
             echo "::warning title=Hosted static preview unavailable::The separate Cloudflare-hosted audience preview is not serving the expected current page/modules. The candidate files are tested locally in this workflow, and the staging Worker is checked below. Restore or redeploy this preview to re-enable the external-page check."
           fi
 
+      - name: Ensure the hosted preview is not a backend relay
+        run: |
+          set -euo pipefail
+          preview_base="https://shapey-audience-preview.hellohuman100.workers.dev"
+          api_status="$(curl --silent --show-error --max-time 15 -o /tmp/preview-api.json -w '%{http_code}' "$preview_base/api/rooms")"
+          echo "Preview API status (must be retired): $api_status"
+          test "$api_status" = 410
+          grep -q 'static files only' /tmp/preview-api.json
+          ws_status="$(curl --silent --show-error --max-time 15 -o /tmp/preview-ws.json -w '%{http_code}' "$preview_base/ws/ABC234")"
+          echo "Preview WebSocket status (must be retired): $ws_status"
+          test "$ws_status" = 410
+          echo "Preview serves static files only; multiplayer traffic cannot relay through it."
+
       - name: Check the deployed staging Worker directly
         run: |
           set -euo pipefail
