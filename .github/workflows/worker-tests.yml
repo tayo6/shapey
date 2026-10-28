@@ -44,11 +44,12 @@ jobs:
       - name: Install Chromium for browser smoke tests
         run: npx playwright install chromium
 
-      - name: Validate Worker bundle and Wrangler config without deploying
+      - name: Validate Worker bundles and Wrangler configs without deploying
         run: |
           # Local browser tests originate from localhost, so use the staging allow-list.
-          CONFIG=wrangler.staging.jsonc
-          npx --yes wrangler@4.151.0 deploy --config "$CONFIG" --dry-run --outdir /tmp/shapey-worker-dry-run
+          npx --yes wrangler@4.151.0 deploy --config wrangler.jsonc --dry-run --outdir /tmp/shapey-worker-production-dry-run
+          npx --yes wrangler@4.151.0 deploy --config wrangler.staging.jsonc --dry-run --outdir /tmp/shapey-worker-staging-dry-run
+          npx --yes wrangler@4.151.0 deploy --config wrangler.preview.jsonc --dry-run --outdir /tmp/shapey-worker-preview-dry-run
       - name: Run protocol and game-engine tests
         run: npm test
 
