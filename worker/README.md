@@ -56,10 +56,15 @@ The room-creation rate limit is shared within a local Worker instance. The CI wo
 
 ## Deployment status and release checks
 
-On 2026-10-28, the hardening modules from `main` were uploaded to both existing Cloudflare Workers, `shapey-multiplayer-staging` and `shapey-multiplayer`. The Cloudflare API accepted both uploads and their settings were checked afterward. Both retain their original `ROOMS` Durable Object namespace; no new Durable Object migration was requested. The staging Worker has sampled traces enabled; production traces remain disabled to avoid unnecessary observability overhead while the account's plan is unconfirmed.
+On 2026-10-28, the current 11-module Worker source from `main` was uploaded to both existing Cloudflare Workers. The latest staging deployment is `937f9c0b323e49898d2ae9fe90319604`; the production deployment is `9ea8150ed5a044e58f6863ba22b01143`. The Cloudflare API accepted both uploads and their settings were checked afterward. Both retain their original `ROOMS` Durable Object namespace; no new Durable Object migration was requested. Staging has logs and traces enabled with traces sampled at 10%; production traces remain disabled to limit observability overhead.
 
-The deployed `shapey-audience-preview` Worker has also been changed to the source-controlled static-only implementation. The preview source and configuration now live at `worker/src/preview.js` and `worker/wrangler.preview.jsonc`.
+The source-controlled static-only audience preview is deployed as well. Its source and configuration live at `worker/src/preview.js` and `worker/wrangler.preview.jsonc`. GitHub Actions verified that the preview's API and WebSocket routes return HTTP 410 rather than relaying multiplayer traffic.
 
-Worker uploads are not automatically triggered by repository changes. The CI workflows now run on pushes to `main` and cover local Worker tests, bundle/config validation, the hosted preview relay check, and deployed health/smoke checks. Do not announce unrestricted public promotion until the latest CI runs are green and the remaining two-device Player 1 vs Player 2 and four-device Tag checks have been performed.
+Verification on 2026-10-28:
+- Worker bundle validation, protocol/game-engine tests, integration tests, two-browser PvP, four-browser Tag, turn-rule tests, existing game-rule tests, and frontend syntax checks passed in GitHub Actions run [40652627300](https://github.com/tayo6/shapey/actions/runs/40652627300).
+- The live staging smoke test confirmed an unjoined player WebSocket closes with policy code 1008 and reason `Join timeout`; the temporary AI demo was cleaned up.
+- The staging-preview workflow checked the deployed endpoints and passed in run [40652702315](https://github.com/tayo6/shapey/actions/runs/40652702315). A fresh post-production-promotion health check is triggered by the current documentation commit.
+
+Worker uploads are not automatically triggered by repository changes. CI runs on pushes to `main`, but publishing code to GitHub Pages does not deploy a Worker.
 
 Automated browser tests do not replace the remaining real-device check: Player 1 vs Player 2 should be tested on two separate devices and Tag on four separate devices before declaring multiplayer fully verified.
