@@ -7,9 +7,12 @@
   "vars": {
     "ENVIRONMENT": "staging"
   },
-  "vars": {
-    "ENVIRONMENT": "staging"
-  },
+  "ratelimits": [
+    { "name": "DIRECTORY_READ_LIMITER", "namespace_id": "20261005", "simple": { "limit": 60, "period": 60 } },
+    { "name": "ROOM_INFO_LIMITER", "namespace_id": "20261006", "simple": { "limit": 120, "period": 60 } },
+    { "name": "WEBSOCKET_UPGRADE_LIMITER", "namespace_id": "20261007", "simple": { "limit": 120, "period": 60 } },
+    { "name": "ROOM_CREATE_BURST_LIMITER", "namespace_id": "20261008", "simple": { "limit": 5, "period": 60 } }
+  ],
   "durable_objects": {
     "bindings": [
       {
