@@ -48,7 +48,8 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const cors = corsHeaders(request, env.ENVIRONMENT);
-    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+    try {
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
 
     if (url.pathname === "/health" && request.method === "GET") {
       return json({
@@ -205,5 +206,9 @@ export default {
       error: "Not found",
       endpoints: ["GET /health", "POST /api/rooms", "GET /api/rooms/{ROOMCODE}", "WebSocket /ws/{ROOMCODE}?mode=pvp|tag"]
     }, 404, cors);
+    } catch (error) {
+      console.error("Shapey Worker request failed:", error);
+      return json({ error: "The game service is temporarily unavailable. Please retry." }, 503, cors);
+    }
   }
 };
