@@ -9,6 +9,41 @@ import { Room } from "./room.js";
 // The Durable Object class must be re-exported from the entry module for the binding.
 export { Room };
 
+function rateLimitAddress(value) {
+  const ip = String(value || "").trim().toLowerCase().split("%")[0];
+  if (!ip.includes(":")) return ip;
+  const parts = ip.split("::");
+  if (parts.length > 2) return ip;
+  const left = parts[0] ? parts[0].split(":") : [];
+  const right = parts[1] ? parts[1].split(":") : [];
+  const missing = 8 - left.length - right.length;
+  if (missing < 0) return ip;
+  const groups = [...left, ...Array(missing).fill("0"), ...right];
+  if (groups.length !== 8) return ip;
+  // IPv6 clients can rotate host addresses within a /64. Share the rate-limit key
+  // across that prefix while keeping IPv4 clients keyed by their full address.
+  return groups.slice(0, 4).map(group => parseInt(group || "0", 16).toString(16)).join(":") + "::/64";
+}
+
+async function isRateLimited(env, bindingName, request, route) {
+  const address = request.headers.get("CF-Connecting-IP") || "";
+  const limiter = env[bindingName];
+  if (!address || !limiter || typeof limiter.limit !== "function") return false;
+  try {
+    const result = await limiter.limit({ key: route + ":" + rateLimitAddress(address) });
+    return result?.success !== true;
+  } catch (error) {
+    // Fail closed if a configured limiter fails: room endpoints should not silently
+    // become unbounded during a rate-limiter outage.
+    console.error("Rate limiter unavailable for " + route + ":", error);
+    return true;
+  }
+}
+
+function rateLimitedResponse(cors, message = "Too many requests. Please wait and try again.") {
+  return json({ error: message }, 429, { ...cors, "Retry-After": "60" });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -30,6 +65,9 @@ export default {
       if (!isAllowedOrigin(request.headers.get("Origin") || "", env.ENVIRONMENT)) {
         return json({ error: "Origin not allowed." }, 403, cors);
       }
+      if (await isRateLimited(env, "DIRECTORY_READ_LIMITER", request, "directory")) {
+        return rateLimitedResponse(cors, "Too many room-list requests. Please wait a minute.");
+      }
       const directory = env.ROOMS.get(env.ROOMS.idFromName(LIVE_DIRECTORY_OBJECT_NAME));
       const target = new URL("https://directory.internal/directory/list");
       for (const key of ["mode", "status"]) {
@@ -46,6 +84,9 @@ export default {
       // constrains direct API clients that forge Origin headers.
       if (!isAllowedOrigin(request.headers.get("Origin") || "", env.ENVIRONMENT)) {
         return json({ error: "Origin not allowed." }, 403, cors);
+      }
+      if (await isRateLimited(env, "ROOM_CREATE_BURST_LIMITER", request, "room-create")) {
+        return rateLimitedResponse(cors, "Too many room creation requests. Please wait a minute.");
       }
       const clientAddress = request.headers.get("CF-Connecting-IP") || "unknown";
       const digest = new Uint8Array(await crypto.subtle.digest(
@@ -106,18 +147,21 @@ export default {
       if (!isAllowedOrigin(origin, env.ENVIRONMENT)) {
         return json({ error: "Origin not allowed." }, 403, cors);
       }
+      if (await isRateLimited(env, "ROOM_INFO_LIMITER", request, "room-info")) {
+        return rateLimitedResponse(cors, "Too many room lookups. Please wait a minute.");
+      }
 
-      // Check the directory before touching a room Durable Object. This avoids waking
-      // storage for arbitrary room-code scans and returns quickly for unknown rooms.
+      // Use a direct directory lookup rather than loading every room just to check one code.
+      // This also lets public listings hide waiting rooms without breaking invite-code joins.
       const directory = env.ROOMS.get(env.ROOMS.idFromName(LIVE_DIRECTORY_OBJECT_NAME));
-      const directoryResponse = await directory.fetch("https://directory.internal/directory/list");
+      const directoryResponse = await directory.fetch(
+        "https://directory.internal/directory/exists?roomCode=" + encodeURIComponent(infoMatch[1])
+      );
       if (!directoryResponse.ok) {
         return json({ error: "Room directory is temporarily unavailable." }, 503, cors);
       }
       const directoryData = await directoryResponse.json();
-      const exists = Array.isArray(directoryData.rooms) &&
-        directoryData.rooms.some((room) => room && room.roomCode === infoMatch[1]);
-      if (!exists) return json({ error: "Room not found." }, 404, cors);
+      if (!directoryData.exists) return json({ error: "Room not found." }, 404, cors);
 
       const stub = env.ROOMS.get(env.ROOMS.idFromName(infoMatch[1]));
       const info = await stub.fetch("https://room.internal/info");
@@ -130,6 +174,9 @@ export default {
       // CORS does not protect WebSocket handshakes; validate Origin explicitly.
       if (!isAllowedOrigin(request.headers.get("Origin") || "", env.ENVIRONMENT)) {
         return json({ error: "Origin not allowed." }, 403, cors);
+      }
+      if (await isRateLimited(env, "WEBSOCKET_UPGRADE_LIMITER", request, "websocket")) {
+        return rateLimitedResponse(cors, "Too many WebSocket connections. Please wait a minute.");
       }
       return env.ROOMS.get(env.ROOMS.idFromName(match[1])).fetch(request);
     }
