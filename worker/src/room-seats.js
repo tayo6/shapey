@@ -143,6 +143,10 @@ export const RoomSeatsMixin = {
       try { ws.send(JSON.stringify({ type: "error", message: "Room not found. Create a new room or check the code." })); } catch {}
       return;
     }
+    if (room.mode === "demo") {
+      room.lastSpectatorAt = Date.now();
+      await this.ctx.storage.put("room", room);
+    }
     attachment.spectatorReady = true;
     attachment.spectatorId = shortRandomId();
     ws.serializeAttachment(attachment);
