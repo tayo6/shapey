@@ -77,7 +77,8 @@ async function waitForOpen(client) {
 }
 
 function waitForSocketClose(socket, timeout = 15_000) {
-  if (socket.readyState === WebSocket.CLOSED) return Promise.resolve(socket.__shapeyCloseInfo || { code: socket.closeCode || 1000, reason: "" });
+  const closeInfo = () => socket.__shapeyCloseInfo || { code: socket.closeCode || 1000, reason: "" };
+  if (socket.readyState === WebSocket.CLOSED) return Promise.resolve(closeInfo());
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       socket.off("close", onClose);
@@ -88,6 +89,12 @@ function waitForSocketClose(socket, timeout = 15_000) {
       resolve({ code, reason: reason?.toString() || "" });
     }
     socket.once("close", onClose);
+    // Close can race with listener registration on a fast local Durable Object alarm.
+    if (socket.readyState === WebSocket.CLOSED) {
+      socket.off("close", onClose);
+      clearTimeout(timer);
+      resolve(closeInfo());
+    }
   });
 }
 
