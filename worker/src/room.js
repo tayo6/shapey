@@ -534,12 +534,18 @@ export class Room extends DurableObject {
 
   async webSocketClose(ws) {
     const attachment = ws.deserializeAttachment() || {};
-    await this.touchRoom();
     if (attachment.role === "spectator") {
+      const room = await this.ctx.storage.get("room");
+      if (room?.mode === "demo" && this.spectatorCount() === 0) {
+        room.lastSpectatorAt = Date.now();
+        await this.ctx.storage.put("room", room);
+      }
+      await this.touchRoom();
       this.broadcast({ type: "spectator_count", count: this.spectatorCount() });
       return;
     }
     if (!Number.isInteger(attachment.playerNumber)) return;
+    await this.touchRoom();
     // A seat-token takeover closes the prior socket. Do not announce a disconnect if
     // a replacement socket for the same player is already attached and open.
     const replacementConnected = this.ctx.getWebSockets().some(other => {
