@@ -69,14 +69,18 @@ export const RoomSeatsMixin = {
       }
 
       const playerNumber = seat.playerNumber;
-      const duplicate = this.ctx.getWebSockets().some(other => {
+      const duplicateSockets = this.ctx.getWebSockets().filter(other => {
         if (other === ws || other.readyState !== WebSocket.OPEN) return false;
         return (other.deserializeAttachment() || {}).playerNumber === playerNumber;
       });
-      if (duplicate) {
+      if (duplicateSockets.length && (typeof suppliedToken !== "string" || !suppliedToken)) {
         rejectJoin("That player seat is already connected on another device.");
-        try { ws.close(1008, "Seat already connected"); } catch {}
         return;
+      }
+      // A valid saved seat token proves this is the returning player. Reclaim the seat
+      // rather than making them wait for a stale mobile-network socket to close naturally.
+      for (const other of duplicateSockets) {
+        try { other.close(4001, "Seat resumed on another connection"); } catch {}
       }
 
       // Commit the seat assignment before any broadcast or game-start decision.
