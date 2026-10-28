@@ -6,7 +6,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   isRoomCode, isBoardSize, modeDetails, isRoomExpired,
-  roomExpiryDeadline, nextRoomCreationWindow
+  roomExpiryDeadline
 } from "./protocol.js";
 import {
   createGameState, gameViewForPlayer, gameViewForSpectator,
@@ -162,20 +162,6 @@ export class Room extends DurableObject {
       const roomCode = url.searchParams.get("roomCode");
       if (!isRoomCode(roomCode)) return json({ error: "Invalid room code." }, 400);
       await this.ctx.storage.delete(LIVE_DIRECTORY_PREFIX + roomCode);
-      return json({ ok: true });
-    }
-
-    if (url.pathname === "/rate-limit" && request.method === "POST") {
-      const timestamps = await this.ctx.storage.get("roomCreationTimestamps") || [];
-      const result = nextRoomCreationWindow(timestamps, Date.now());
-      await this.ctx.storage.put("roomCreationTimestamps", result.timestamps);
-      if (!result.allowed) {
-        return json(
-          { error: "Too many rooms created from this connection. Please wait before trying again." },
-          429,
-          { "Retry-After": String(Math.ceil(result.retryAfterMs / 1000)) }
-        );
-      }
       return json({ ok: true });
     }
 
