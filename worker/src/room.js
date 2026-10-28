@@ -23,6 +23,7 @@ import { RoomMessagesMixin } from "./room-messages.js";
 import { clearRoomStorage } from "./room-storage.js";
 
 const UNJOINED_SOCKET_TIMEOUT_MS = 10_000;
+const MAX_PENDING_SOCKETS_PER_ROOM = 4;
 const ROOM_ACTIVITY_PERSIST_INTERVAL_MS = 60_000;
 const ROOM_RESERVATION_PREFIX = "room-reservation:";
 const ROOM_RESERVATION_TTL_MS = 60_000;
@@ -282,6 +283,14 @@ export class Room extends DurableObject {
     const role = url.searchParams.get("role") === "spectator" ? "spectator" : "player";
     const openSockets = this.ctx.getWebSockets().filter(ws => ws.readyState === WebSocket.OPEN);
     const roleOf = ws => (ws.deserializeAttachment() || {}).role || "player";
+    const pendingSockets = openSockets.filter(ws => {
+      const attachment = ws.deserializeAttachment() || {};
+      return !Number.isInteger(attachment.playerNumber) &&
+        !(attachment.role === "spectator" && attachment.spectatorReady === true);
+    });
+    if (pendingSockets.length >= MAX_PENDING_SOCKETS_PER_ROOM) {
+      return json({ error: "Too many connections are waiting to join this room. Please retry shortly." }, 429);
+    }
     if (role === "spectator") {
       // Unjoined sockets must not consume the spectator quota either.
       const spectatorCount = openSockets.filter(ws => {
@@ -568,6 +577,21 @@ export class Room extends DurableObject {
 
 
 
+
+  async webSocketOpen(ws) {
+    const attachment = ws.deserializeAttachment() || {};
+    const joined = Number.isInteger(attachment.playerNumber) ||
+      (attachment.role === "spectator" && attachment.spectatorReady === true);
+    if (!joined && Number.isFinite(attachment.connectedAt)) {
+      const deadline = attachment.connectedAt + UNJOINED_SOCKET_TIMEOUT_MS;
+      const now = Date.now();
+      const currentAlarm = await this.ctx.storage.getAlarm();
+      if (currentAlarm === null || currentAlarm <= now || currentAlarm > deadline) {
+        await this.ctx.storage.setAlarm(deadline);
+      }
+    }
+    await this.scheduleAlarm();
+  },
 
   async webSocketClose(ws) {
     const attachment = ws.deserializeAttachment() || {};
