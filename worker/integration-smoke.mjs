@@ -73,6 +73,21 @@ async function waitForOpen(client) {
   });
 }
 
+function waitForSocketClose(socket, timeout = 15_000) {
+  if (socket.readyState === WebSocket.CLOSED) return Promise.resolve({ code: socket.closeCode || 1000 });
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      socket.off("close", onClose);
+      reject(new Error("Socket was not closed before the timeout."));
+    }, timeout);
+    function onClose(code, reason) {
+      clearTimeout(timer);
+      resolve({ code, reason: reason?.toString() || "" });
+    }
+    socket.once("close", onClose);
+  });
+}
+
 async function createRoom(mode) {
   // Keep integration-suite room creation separate from browser smoke tests. The Worker
   // deliberately rate-limits each client IP, and both suites share the same local process.
@@ -162,10 +177,8 @@ async function run() {
   });
   const directory = await directoryResponse.json();
   assert.equal(directoryResponse.status, 200, JSON.stringify(directory));
-  assert.ok(directory.rooms.some(room => room.roomCode === pvpRoom.roomCode && room.mode === "pvp"),
-    "New PvP rooms must be browsable before players join.");
-  assert.ok(directory.rooms.some(room => room.roomCode === tagRoom.roomCode && room.mode === "tag"),
-    "New Tag rooms must be browsable before players join.");
+  assert.ok(!directory.rooms.some(room => room.roomCode === pvpRoom.roomCode || room.roomCode === tagRoom.roomCode),
+    "Waiting room codes must not be disclosed in the public directory.");
   assert.ok(directory.rooms.every(room => !("websocketUrl" in room) && !("seatToken" in room)),
     "The public room directory must not expose player connection credentials.");
   const tagDirectoryResponse = await fetch(BASE_URL + "/api/rooms?mode=tag", {
@@ -177,13 +190,25 @@ async function run() {
   const allClients = [];
 
   try {
-    // PvP: two clients, distinct device connections.
+    // Unjoined sockets must not consume player seats, and must be timed out after 10 seconds.
+    const unjoinedA = createClient(pvpRoom.websocketUrl + "?mode=pvp");
+    const unjoinedB = createClient(pvpRoom.websocketUrl + "?mode=pvp");
+    allClients.push(unjoinedA, unjoinedB);
+    await Promise.all([waitForOpen(unjoinedA), waitForOpen(unjoinedB)]);
+
+    // PvP: two genuine clients still get seats even when idle sockets are connected.
     const pvp1 = await joinRoom(pvpRoom, "pvp");
     allClients.push(pvp1);
     assert.equal(pvp1.playerNumber, 1);
     const pvp2 = await joinRoom(pvpRoom, "pvp");
     allClients.push(pvp2);
     assert.equal(pvp2.playerNumber, 2);
+    const timedOutSockets = await Promise.all([
+      waitForSocketClose(unjoinedA.socket),
+      waitForSocketClose(unjoinedB.socket)
+    ]);
+    assert.ok(timedOutSockets.every(item => item.code === 1008),
+      "Unjoined player sockets should be closed by the join-timeout alarm.");
 
     // A separate PvP room lets the audience-poll test run without disturbing the scoring test.
     const pollPvp1 = await joinRoom(pollPvpRoom, "pvp");
@@ -389,9 +414,11 @@ async function run() {
     // Closing and reconnecting with the saved seat token must restore the same player number and game.
     const pvpSeatToken = pvp1.seatToken;
     assert.match(pvpSeatToken, /^[a-f0-9]{64}$/);
-    await pvp1.close();
+    // Reconnect with the valid token while the original socket is still open, simulating
+    // a phone that changed networks before Cloudflare observed its old connection close.
     const pvp1Rejoined = await joinRoom(pvpRoom, "pvp", pvpSeatToken);
     allClients.push(pvp1Rejoined);
+    await pvp1.close();
     assert.equal(pvp1Rejoined.playerNumber, 1);
     assert.equal(pvp1Rejoined.seatToken, pvpSeatToken);
     const resumed = await pvp1Rejoined.waitFor((message) => message.type === "game_started");
