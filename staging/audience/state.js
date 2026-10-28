@@ -18,6 +18,7 @@ const apiResolution = resolveMultiplayerApi({
   requestedApi: audienceParams.get('api'),
   localApiAllowed: ['localhost', '127.0.0.1'].includes(window.location.hostname),
 });
+export const IS_STAGING_AUDIENCE = isStagingAudience;
 export const API_OVERRIDDEN = apiResolution.overridden;
 export const MULTIPLAYER_API = apiResolution.api;
 export const SHAPE_FILES = {
