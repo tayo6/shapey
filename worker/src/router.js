@@ -80,28 +80,14 @@ export default {
     }
 
     if (url.pathname === "/api/rooms" && request.method === "POST") {
-      // Origin is a browser abuse barrier, not authentication. The per-IP limit below also
-      // constrains direct API clients that forge Origin headers.
+      // Origin is a browser abuse barrier, not authentication. Rate limiting and transactional
+      // reservations below protect the API and cap total room creation.
       if (!isAllowedOrigin(request.headers.get("Origin") || "", env.ENVIRONMENT)) {
         return json({ error: "Origin not allowed." }, 403, cors);
       }
       if (await isRateLimited(env, "ROOM_CREATE_BURST_LIMITER", request, "room-create")) {
         return rateLimitedResponse(cors, "Too many room creation requests. Please wait a minute.");
       }
-      const clientAddress = request.headers.get("CF-Connecting-IP") || "unknown";
-      const digest = new Uint8Array(await crypto.subtle.digest(
-        "SHA-256", new TextEncoder().encode(clientAddress)
-      ));
-      const limiterKey = Array.from(digest.slice(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("");
-      const limiter = env.ROOMS.get(env.ROOMS.idFromName("create-limit:" + limiterKey));
-      const limited = await limiter.fetch("https://room.internal/rate-limit", { method: "POST" });
-      if (limited.status === 429) {
-        const detail = await limited.json();
-        const retryAfter = limited.headers.get("Retry-After");
-        return json(detail, 429, retryAfter ? { ...cors, "Retry-After": retryAfter } : cors);
-      }
-      if (!limited.ok) return json({ error: "Room creation is temporarily unavailable. Please retry later." }, 503, cors);
-
       let body;
       try { body = await request.json(); }
       catch { return json({ error: "Send a JSON body with mode set to pvp or tag." }, 400, cors); }
@@ -117,18 +103,52 @@ export default {
       const demoControlToken = details.mode === "demo" ? newSeatToken() : null;
 
       const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      const directory = env.ROOMS.get(env.ROOMS.idFromName(LIVE_DIRECTORY_OBJECT_NAME));
       for (let attempt = 0; attempt < 5; attempt++) {
         const bytes = new Uint8Array(6);
         crypto.getRandomValues(bytes);
         const code = Array.from(bytes, b => alphabet[b % alphabet.length]).join("");
+        const reservation = await directory.fetch(
+          "https://directory.internal/directory/reserve?roomCode=" + code,
+          { method: "POST" }
+        );
+        if (reservation.status === 409) continue;
+        if (reservation.status === 429) {
+          return json(await reservation.json(), 429, { ...cors, "Retry-After": "60" });
+        }
+        if (!reservation.ok) return json({ error: "The game server is temporarily unavailable. Please retry later." }, 503, cors);
+
+        const releaseReservation = async () => {
+          try {
+            await directory.fetch(
+              "https://directory.internal/directory/release?roomCode=" + code,
+              { method: "DELETE" }
+            );
+          } catch (error) {
+            console.error("Could not release unused room reservation:", error);
+          }
+        };
         const stub = env.ROOMS.get(env.ROOMS.idFromName(code));
-        const created = await stub.fetch("https://room.internal/create", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ roomCode: code, ...details, boardSize, demoControlToken })
-        });
-        if (created.status === 409) continue;
-        if (!created.ok) return json({ error: "Could not reserve a room. Please try again." }, 503, cors);
+        let created;
+        try {
+          created = await stub.fetch("https://room.internal/create", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ roomCode: code, ...details, boardSize, demoControlToken })
+          });
+        } catch (error) {
+          await releaseReservation();
+          console.error("Could not create Shapey room:", error);
+          return json({ error: "Could not reserve a room. Please try again." }, 503, cors);
+        }
+        if (created.status === 409) {
+          await releaseReservation();
+          continue;
+        }
+        if (!created.ok) {
+          await releaseReservation();
+          return json({ error: "Could not reserve a room. Please try again." }, 503, cors);
+        }
         return json({
           roomCode: code,
           boardSize,
