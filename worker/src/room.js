@@ -24,6 +24,9 @@ import { clearRoomStorage } from "./room-storage.js";
 
 const UNJOINED_SOCKET_TIMEOUT_MS = 10_000;
 const ROOM_ACTIVITY_PERSIST_INTERVAL_MS = 60_000;
+const ROOM_RESERVATION_PREFIX = "room-reservation:";
+const ROOM_RESERVATION_TTL_MS = 60_000;
+const MAX_ACTIVE_ROOMS = 100;
 
 export class Room extends DurableObject {
   constructor(ctx, env) {
@@ -49,6 +52,48 @@ export class Room extends DurableObject {
       const exists = Boolean(room && Number.isFinite(room.expiresAt) && room.expiresAt > Date.now() &&
         ["waiting", "ready", "starting", "live"].includes(room.status));
       return json({ exists });
+    }
+
+    if (url.pathname === "/directory/reserve" && request.method === "POST") {
+      const roomCode = url.searchParams.get("roomCode");
+      if (!isRoomCode(roomCode)) return json({ error: "Invalid room code." }, 400);
+      const now = Date.now();
+      const reservationKey = ROOM_RESERVATION_PREFIX + roomCode;
+      const reserved = await this.ctx.storage.transaction(async txn => {
+        const rooms = await txn.list({ prefix: LIVE_DIRECTORY_PREFIX });
+        let activeRooms = 0;
+        for (const [key, room] of rooms.entries()) {
+          if (!room || !Number.isFinite(room.expiresAt) || room.expiresAt <= now ||
+              !["waiting", "ready", "starting", "live"].includes(room.status)) {
+            await txn.delete(key);
+          } else {
+            activeRooms++;
+          }
+        }
+        const reservations = await txn.list({ prefix: ROOM_RESERVATION_PREFIX });
+        let activeReservations = 0;
+        for (const [key, item] of reservations.entries()) {
+          if (!item || !Number.isFinite(item.expiresAt) || item.expiresAt <= now) {
+            await txn.delete(key);
+          } else {
+            activeReservations++;
+          }
+        }
+        if (await txn.get(LIVE_DIRECTORY_PREFIX + roomCode) || await txn.get(reservationKey)) return "collision";
+        if (activeRooms + activeReservations >= MAX_ACTIVE_ROOMS) return "full";
+        await txn.put(reservationKey, { roomCode, expiresAt: now + ROOM_RESERVATION_TTL_MS });
+        return "reserved";
+      });
+      if (reserved === "collision") return json({ error: "Room code is already in use." }, 409);
+      if (reserved === "full") return json({ error: "The game server is at capacity. Please try again later." }, 429);
+      return json({ ok: true, roomCode, expiresAt: now + ROOM_RESERVATION_TTL_MS }, 201);
+    }
+
+    if (url.pathname === "/directory/release" && request.method === "DELETE") {
+      const roomCode = url.searchParams.get("roomCode");
+      if (!isRoomCode(roomCode)) return json({ error: "Invalid room code." }, 400);
+      await this.ctx.storage.delete(ROOM_RESERVATION_PREFIX + roomCode);
+      return json({ ok: true });
     }
 
     if (url.pathname === "/directory/list" && request.method === "GET") {
@@ -108,6 +153,8 @@ export class Room extends DurableObject {
         expiresAt: now + LIVE_DIRECTORY_STALE_MS
       };
       await this.ctx.storage.put(LIVE_DIRECTORY_PREFIX + summary.roomCode, summary);
+      // Publishing the room consumes its reservation. Any orphan reservation also expires on its own.
+      await this.ctx.storage.delete(ROOM_RESERVATION_PREFIX + summary.roomCode);
       return json({ ok: true });
     }
 
