@@ -107,7 +107,7 @@ jobs:
           }
 
       - name: Validate Wrangler JSON syntax
-        run: node -e 'for (const f of ["wrangler.jsonc", "wrangler.staging.jsonc"]) { JSON.parse(require("node:fs").readFileSync(f, "utf8")); console.log(f + " is valid JSON"); }'
+        run: node -e 'for (const f of ["wrangler.jsonc", "wrangler.staging.jsonc", "wrangler.preview.jsonc"]) { JSON.parse(require("node:fs").readFileSync(f, "utf8")); console.log(f + " is valid JSON"); }'
       - name: Run local turn-rule regression tests
         working-directory: .
         run: node --test tests/turn-rules.test.js
