@@ -22,6 +22,9 @@ import { RoomSeatsMixin } from "./room-seats.js";
 import { RoomMessagesMixin } from "./room-messages.js";
 import { clearRoomStorage } from "./room-storage.js";
 
+const UNJOINED_SOCKET_TIMEOUT_MS = 10_000;
+const ROOM_ACTIVITY_PERSIST_INTERVAL_MS = 60_000;
+
 export class Room extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
@@ -30,6 +33,8 @@ export class Room extends DurableObject {
     this.lastDirectoryPublishedAt = 0;
     // Serialize seat claims so simultaneous initial joins cannot claim the same seat.
     this.joinQueue = Promise.resolve();
+    // Plain-text keepalives can be answered by the runtime without waking this object.
+    this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
 
   async fetch(request) {
@@ -202,18 +207,26 @@ export class Room extends DurableObject {
     const openSockets = this.ctx.getWebSockets().filter(ws => ws.readyState === WebSocket.OPEN);
     const roleOf = ws => (ws.deserializeAttachment() || {}).role || "player";
     if (role === "spectator") {
-      const spectatorCount = openSockets.filter(ws => roleOf(ws) === "spectator").length;
+      // Unjoined sockets must not consume the spectator quota either.
+      const spectatorCount = openSockets.filter(ws => {
+        const attachment = ws.deserializeAttachment() || {};
+        return roleOf(ws) === "spectator" && attachment.spectatorReady === true;
+      }).length;
       if (spectatorCount >= MAX_SPECTATORS_PER_ROOM) {
         return json({ error: "This room has reached its spectator limit." }, 429);
       }
     } else {
-      const playerSockets = openSockets.filter(ws => roleOf(ws) === "player");
+      // A raw WebSocket is not a claimed seat. Only joined players count toward capacity.
+      const playerSockets = openSockets.filter(ws => {
+        const attachment = ws.deserializeAttachment() || {};
+        return roleOf(ws) === "player" && Number.isInteger(attachment.playerNumber);
+      });
       if (playerSockets.length >= room.maxPlayers) return json({ error: "Room is full." }, 409);
     }
 
     const pair = new WebSocketPair();
     const client = pair[0], server = pair[1];
-    server.serializeAttachment({ playerNumber: null, mode: room.mode, role, spectatorReady: false });
+    server.serializeAttachment({ playerNumber: null, mode: room.mode, role, spectatorReady: false, connectedAt: Date.now() });
     this.ctx.acceptWebSocket(server);
     await this.scheduleAlarm();
     return new Response(null, { status: 101, webSocket: client });
@@ -236,8 +249,24 @@ export class Room extends DurableObject {
     // Keep a room with a connected player but no game on the directory too. Without this
     // heartbeat, a long lobby wait could outlive its directory listing lease.
     if (this.connectedCount() > 0 && !game) deadlines.push(now + LIVE_DIRECTORY_REFRESH_MS);
-    if (deadlines.length) await this.ctx.storage.setAlarm(Math.min(...deadlines));
-    else await this.ctx.storage.deleteAlarm();
+    // Expire sockets which open a connection but never identify as a player or spectator.
+    for (const ws of this.ctx.getWebSockets()) {
+      if (ws.readyState !== WebSocket.OPEN) continue;
+      const attachment = ws.deserializeAttachment() || {};
+      const joined = Number.isInteger(attachment.playerNumber) ||
+        (attachment.role === "spectator" && attachment.spectatorReady === true);
+      if (!joined && Number.isFinite(attachment.connectedAt)) {
+        deadlines.push(attachment.connectedAt + UNJOINED_SOCKET_TIMEOUT_MS);
+      }
+    }
+    const currentAlarm = await this.ctx.storage.getAlarm();
+    if (deadlines.length) {
+      const nextAlarm = Math.min(...deadlines);
+      // Rewriting an unchanged alarm is a storage write; update only when its deadline moves.
+      if (currentAlarm !== nextAlarm) await this.ctx.storage.setAlarm(nextAlarm);
+    } else if (currentAlarm !== null) {
+      await this.ctx.storage.deleteAlarm();
+    }
     await this.publishRoomSummary();
   }
 
@@ -361,8 +390,14 @@ export class Room extends DurableObject {
   async touchRoom() {
     const room = await this.ctx.storage.get("room");
     if (!room) return null;
-    room.lastActivityAt = Date.now();
-    await this.ctx.storage.put("room", room);
+    const now = Date.now();
+    const lastActivityAt = Number.isFinite(room.lastActivityAt) ? room.lastActivityAt : room.createdAt;
+    // Activity may be frequent, but the room expiry timestamp only needs one persisted
+    // refresh per minute. Gameplay deadlines are still recalculated below when they change.
+    if (!Number.isFinite(room.lastActivityAt) || now - lastActivityAt >= ROOM_ACTIVITY_PERSIST_INTERVAL_MS) {
+      room.lastActivityAt = now;
+      await this.ctx.storage.put("room", room);
+    }
     await this.scheduleAlarm();
     return room;
   }
@@ -387,6 +422,18 @@ export class Room extends DurableObject {
       return;
     }
     const now = Date.now();
+    // A socket must join promptly. Closing these connections prevents idle clients from
+    // accumulating in a lobby or occupying Durable Object connection resources indefinitely.
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      const attachment = socket.deserializeAttachment() || {};
+      const joined = Number.isInteger(attachment.playerNumber) ||
+        (attachment.role === "spectator" && attachment.spectatorReady === true);
+      if (!joined && Number.isFinite(attachment.connectedAt) &&
+          now >= attachment.connectedAt + UNJOINED_SOCKET_TIMEOUT_MS) {
+        try { socket.close(1008, "Join timeout"); } catch {}
+      }
+    }
     const connected = this.connectedCount();
     if (isRoomExpired(room, now, connected)) {
       for (const socket of this.ctx.getWebSockets()) {
