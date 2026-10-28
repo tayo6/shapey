@@ -3,6 +3,7 @@ name: Validate staging audience preview
 on:
   push:
     branches:
+      - main
       - staging/audience-room-ui-0003
   pull_request:
     branches:
