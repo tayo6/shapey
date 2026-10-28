@@ -10,7 +10,8 @@ export const CHAT_HISTORY_LIMIT = 50;
 export const AUDIENCE_POLL_MS = 30_000;
 export const LIVE_DIRECTORY_OBJECT_NAME = "shapey-live-directory-v1";
 export const LIVE_DIRECTORY_PREFIX = "listed-room:";
-export const LIVE_DIRECTORY_STALE_MS = 5 * 60_000;
+// Directory entries for idle rooms must outlive the 30-minute room idle TTL.
+export const LIVE_DIRECTORY_STALE_MS = 30 * 60_000;
 export const LIVE_DIRECTORY_REFRESH_MS = 45_000;
 
 export function shortRandomId() {
