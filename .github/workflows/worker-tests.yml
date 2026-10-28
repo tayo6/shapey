@@ -3,6 +3,7 @@ name: Multiplayer Worker tests
 on:
   push:
     branches:
+      - main
       - staging/audience-room-ui-0003
     paths:
       - "worker/**"
