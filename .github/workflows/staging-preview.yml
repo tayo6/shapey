@@ -117,7 +117,7 @@ jobs:
         run: |
           base="${PREVIEW_URL%/staging/audience.html}"
           if curl --fail --silent --max-time 15 -D /tmp/preview-headers "$PREVIEW_URL" -o /tmp/preview-audience.html &&
-             grep -Fqi 'x-shapey-preview: 0003+0004' /tmp/preview-headers &&
+             grep -Fqi 'x-shapey-preview: static-only-0005' /tmp/preview-headers &&
              grep -q 'id="gameFrame"' /tmp/preview-audience.html &&
              curl --fail --silent --max-time 15 "$base/src/scenes/load.js" -o /dev/null &&
              curl --fail --silent --max-time 15 "$base/src/config.js" -o /dev/null; then
