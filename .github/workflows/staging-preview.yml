@@ -26,9 +26,6 @@ on:
       - .github/workflows/pages.yml
       - .github/workflows/staging-preview.yml
 
-permissions:
-  contents: read
-
 jobs:
   check:
     name: Test staging page and Worker
