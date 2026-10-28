@@ -102,6 +102,11 @@ export default {
         return json({ error: message }, 400, cors);
       }
       const demoControlToken = details.mode === "demo" ? newSeatToken() : null;
+      const clientPrefix = rateLimitAddress(request.headers.get("CF-Connecting-IP") || "unknown");
+      const clientDigest = new Uint8Array(await crypto.subtle.digest(
+        "SHA-256", new TextEncoder().encode(clientPrefix)
+      ));
+      const clientKey = Array.from(clientDigest.slice(0, 16), byte => byte.toString(16).padStart(2, "0")).join("");
 
       const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
       const directory = env.ROOMS.get(env.ROOMS.idFromName(LIVE_DIRECTORY_OBJECT_NAME));
@@ -111,7 +116,7 @@ export default {
         const code = Array.from(bytes, b => alphabet[b % alphabet.length]).join("");
         const reservation = await directory.fetch(
           "https://directory.internal/directory/reserve?roomCode=" + code + "&mode=" + encodeURIComponent(details.mode),
-          { method: "POST" }
+          { method: "POST", headers: { "X-Shapey-Client-Key": clientKey } }
         );
         if (reservation.status === 409) continue;
         if (reservation.status === 429) {
