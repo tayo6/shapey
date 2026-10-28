@@ -74,7 +74,7 @@ function connectRoomSocket(code, token) {
     // The Worker accepts ping messages and replies with pong without changing game state.
     state.keepaliveTimer = window.setInterval(() => {
       if (state.roomSocket !== socket || socket.readyState !== WebSocket.OPEN) return;
-      try { socket.send(JSON.stringify({ type: 'ping' })); }
+      try { socket.send('ping'); }
       catch (_) { try { socket.close(); } catch (_) {} }
     }, 12000);
   });
