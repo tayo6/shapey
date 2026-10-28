@@ -296,6 +296,7 @@ export async function startWatching(roomCode, hintedMode, pushUrl) {
     frameUrl.searchParams.set('watch', code);
     frameUrl.searchParams.set('mode', state.activeMode);
     frameUrl.searchParams.set('embed', '1');
+    if (IS_STAGING_AUDIENCE) frameUrl.searchParams.set('env', 'staging');
     // When testing against a local Worker, the embedded game must talk to the same local
     // Worker (its spectator socket and snapshots), not the deployed staging service.
     if (API_OVERRIDDEN) frameUrl.searchParams.set('api', MULTIPLAYER_API);
