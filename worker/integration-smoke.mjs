@@ -8,9 +8,6 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function createClient(url) {
   const socket = new WebSocket(url, { headers: { Origin: ALLOWED_ORIGIN } });
-  socket.on("close", (code, reason) => {
-    socket.__shapeyCloseInfo = { code, reason: reason?.toString() || "" };
-  });
   const queue = [];
   const waiters = [];
 
@@ -76,25 +73,31 @@ async function waitForOpen(client) {
   });
 }
 
-function waitForSocketClose(socket, timeout = 15_000) {
-  const closeInfo = () => socket.__shapeyCloseInfo || { code: socket.closeCode || 1000, reason: "" };
-  if (socket.readyState === WebSocket.CLOSED) return Promise.resolve(closeInfo());
+async function expectWebSocketStatus(url, expectedStatus) {
+  const socket = new WebSocket(url, { headers: { Origin: ALLOWED_ORIGIN } });
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      socket.off("close", onClose);
-      reject(new Error("Socket was not closed before the timeout."));
-    }, timeout);
-    function onClose(code, reason) {
+      try { socket.terminate(); } catch {}
+      reject(new Error("Timed out waiting for WebSocket HTTP " + expectedStatus + " response."));
+    }, 5_000);
+    socket.once("unexpected-response", (_request, response) => {
       clearTimeout(timer);
-      resolve({ code, reason: reason?.toString() || "" });
-    }
-    socket.once("close", onClose);
-    // Close can race with listener registration on a fast local Durable Object alarm.
-    if (socket.readyState === WebSocket.CLOSED) {
-      socket.off("close", onClose);
+      response.resume();
+      if (response.statusCode !== expectedStatus) {
+        reject(new Error("Expected WebSocket HTTP " + expectedStatus + ", received " + response.statusCode + "."));
+        return;
+      }
+      resolve(response.statusCode);
+    });
+    socket.once("open", () => {
       clearTimeout(timer);
-      resolve(closeInfo());
-    }
+      socket.close();
+      reject(new Error("Expected WebSocket HTTP " + expectedStatus + ", but the connection opened."));
+    });
+    socket.once("error", error => {
+      clearTimeout(timer);
+      reject(error);
+    });
   });
 }
 
@@ -168,6 +171,7 @@ async function run() {
   assert.equal(deniedDirectory.status, 403, "Public directory CORS must reject unapproved origins.");
 
   const [pvpRoom, tagRoom, pollPvpRoom] = await Promise.all([createRoom("pvp"), createRoom("tag"), createRoom("pvp")]);
+  const pendingRoom = await createRoom("pvp");
 
   const roomInfo = await fetch(BASE_URL + "/api/rooms/" + pvpRoom.roomCode, {
     headers: { Origin: ALLOWED_ORIGIN }
@@ -200,7 +204,15 @@ async function run() {
   const allClients = [];
 
   try {
-    // Unjoined sockets must not consume player seats, and must be timed out after 10 seconds.
+    // Four unjoined sockets are the per-room safety ceiling. A fifth must be rejected
+    // before the Durable Object accepts it, even if the first four never send a message.
+    const pendingSockets = Array.from({ length: 4 }, () => createClient(pendingRoom.websocketUrl + "?mode=pvp"));
+    allClients.push(...pendingSockets);
+    await Promise.all(pendingSockets.map(waitForOpen));
+    const fifthPendingStatus = await expectWebSocketStatus(pendingRoom.websocketUrl + "?mode=pvp", 429);
+    assert.equal(fifthPendingStatus, 429);
+
+    // Unjoined sockets must not consume player seats. Both real players must still join.
     const unjoinedA = createClient(pvpRoom.websocketUrl + "?mode=pvp");
     const unjoinedB = createClient(pvpRoom.websocketUrl + "?mode=pvp");
     allClients.push(unjoinedA, unjoinedB);
@@ -213,13 +225,6 @@ async function run() {
     const pvp2 = await joinRoom(pvpRoom, "pvp");
     allClients.push(pvp2);
     assert.equal(pvp2.playerNumber, 2);
-    const timedOutSockets = await Promise.all([
-      waitForSocketClose(unjoinedA.socket),
-      waitForSocketClose(unjoinedB.socket)
-    ]);
-    assert.ok(timedOutSockets.every(item => item.code === 1008),
-      "Unjoined player sockets should be closed by the join-timeout alarm.");
-
     // A separate PvP room lets the audience-poll test run without disturbing the scoring test.
     const pollPvp1 = await joinRoom(pollPvpRoom, "pvp");
     allClients.push(pollPvp1);
