@@ -186,9 +186,13 @@ async function run() {
   for (const page of [page1, page2]) page.on("pageerror", (error) => pageErrors.push(error.message));
 
   try {
+    // Wait for the response commit, not DOMContentLoaded: both pages load Phaser and its
+    // module graph at once, and a cold CI Chromium can delay DOMContentLoaded on the second
+    // heavy canvas page even though the document and modules are being served successfully.
+    // choosePvp() below explicitly waits for the real MenuScene before interacting.
     await Promise.all([
-      page1.goto(PAGE_URL, { waitUntil: "domcontentloaded", timeout: TIMEOUT }),
-      page2.goto(PAGE_URL, { waitUntil: "domcontentloaded", timeout: TIMEOUT })
+      page1.goto(PAGE_URL, { waitUntil: "commit", timeout: TIMEOUT }),
+      page2.goto(PAGE_URL, { waitUntil: "commit", timeout: TIMEOUT })
     ]);
     await Promise.all([choosePvp(page1), choosePvp(page2)]);
 
