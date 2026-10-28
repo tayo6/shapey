@@ -4,6 +4,8 @@
 import { hashSeatToken, newSeatToken, shortRandomId, cleanChatText, CHAT_HISTORY_LIMIT, audiencePollSnapshot } from "./lib.js";
 import { createGameState, gameViewForPlayer, gameViewForSpectator } from "./game-engine.js";
 
+const CHAT_COOLDOWN_MS = 1_500;
+
 export const RoomSeatsMixin = {
   async joinSeat(ws, data) {
     const rejectJoin = (message) => {
@@ -176,6 +178,13 @@ export const RoomSeatsMixin = {
       ws.send(JSON.stringify({ type: "error", message: "Chat messages cannot be empty." }));
       return;
     }
+    const now = Date.now();
+    if (Number.isFinite(attachment.lastChatAt) && now - attachment.lastChatAt < CHAT_COOLDOWN_MS) {
+      ws.send(JSON.stringify({ type: "error", message: "Please wait a moment before sending another chat message." }));
+      return;
+    }
+    attachment.lastChatAt = now;
+    ws.serializeAttachment(attachment);
     const entry = {
       id: shortRandomId(),
       sender: isPlayer ? "Player " + attachment.playerNumber : "Spectator " + attachment.spectatorId.slice(-4),
