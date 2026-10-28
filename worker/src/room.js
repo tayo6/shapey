@@ -300,14 +300,11 @@ export class Room extends DurableObject {
       if (spectatorCount >= MAX_SPECTATORS_PER_ROOM) {
         return json({ error: "This room has reached its spectator limit." }, 429);
       }
-    } else {
-      // A raw WebSocket is not a claimed seat. Only joined players count toward capacity.
-      const playerSockets = openSockets.filter(ws => {
-        const attachment = ws.deserializeAttachment() || {};
-        return roleOf(ws) === "player" && Number.isInteger(attachment.playerNumber);
-      });
-      if (playerSockets.length >= room.maxPlayers) return json({ error: "Room is full." }, 409);
     }
+    // Do not reject a player handshake merely because all seats are occupied: the
+    // returning player's saved seat token arrives in the first message, after upgrade.
+    // joinSeat() enforces the real seat limit; the pending-socket cap above bounds idle
+    // connections while allowing a legitimate reconnect to reclaim a full room.
 
     const pair = new WebSocketPair();
     const client = pair[0], server = pair[1];
