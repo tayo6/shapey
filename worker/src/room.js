@@ -42,6 +42,15 @@ export class Room extends DurableObject {
 
     // A dedicated singleton instance of this class stores lightweight public room cards.
     // Its internal routes are only reached through the Worker binding, never the public router.
+    if (url.pathname === "/directory/exists" && request.method === "GET") {
+      const roomCode = url.searchParams.get("roomCode");
+      if (!isRoomCode(roomCode)) return json({ error: "Invalid room code." }, 400);
+      const room = await this.ctx.storage.get(LIVE_DIRECTORY_PREFIX + roomCode);
+      const exists = Boolean(room && Number.isFinite(room.expiresAt) && room.expiresAt > Date.now() &&
+        ["waiting", "ready", "starting", "live"].includes(room.status));
+      return json({ exists });
+    }
+
     if (url.pathname === "/directory/list" && request.method === "GET") {
       const now = Date.now();
       const stored = await this.ctx.storage.list({ prefix: LIVE_DIRECTORY_PREFIX });
@@ -56,7 +65,10 @@ export class Room extends DurableObject {
       }
       const requestedMode = url.searchParams.get("mode");
       const requestedStatus = url.searchParams.get("status");
+      const includeWaiting = url.searchParams.get("includeWaiting") === "1";
+      // Waiting room codes act like invite codes; do not publish them in the public directory.
       const filtered = rooms.filter(room =>
+        (includeWaiting || room.status !== "waiting") &&
         (!["pvp", "tag"].includes(requestedMode) || room.mode === requestedMode) &&
         (!["waiting", "ready", "starting", "live"].includes(requestedStatus) || room.status === requestedStatus));
       const statusRank = { live: 0, starting: 1, ready: 2, waiting: 3 };
